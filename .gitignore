@@ -20,6 +20,7 @@ secrets.json
 token.json
 
 # Editor/tool state (not project content)
+.claude/
 .claude.json
 .serena/
 .superpowers/
