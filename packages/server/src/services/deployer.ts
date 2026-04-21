@@ -11,6 +11,14 @@ import {
   shQuote,
   sshWriteFile,
 } from "./shell-safety.js";
+import { resolveInfraConfig } from "./secrets/helpers.js";
+import {
+  dokployDeploy,
+  dokployLogs,
+  dokployRestart,
+  dokployDestroy,
+  type DokployDeployInput,
+} from "./deployers/dokploy-deploy.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -366,6 +374,27 @@ export async function deploy(input: DeployInput): Promise<DeployResult> {
   const infra = infraRows[0];
   if (!infra) throw new Error("Infrastructure config not found");
   if (infra.status !== "ready") throw new Error("Hosting node not ready");
+
+  // Dokploy provider — API-driven, no SSH + no hostingNodeIp needed.
+  if (infra.provider === "dokploy") {
+    const resolved = await resolveInfraConfig(
+      infra.userId,
+      infra.id,
+      JSON.parse(infra.config) as Record<string, unknown>,
+    );
+    const out: DokployDeployInput = {
+      userId: input.userId,
+      infraId: input.infraId,
+      name: input.name,
+    };
+    if (input.domain !== undefined) out.domain = input.domain;
+    if (input.composeConfig !== undefined) out.composeConfig = input.composeConfig;
+    if (input.composePath !== undefined) out.composePath = input.composePath;
+    if (input.envVars !== undefined) out.envVars = input.envVars;
+    if (input.existingDeployId !== undefined) out.existingDeployId = input.existingDeployId;
+    return dokployDeploy(infra, resolved, out);
+  }
+
   if (!infra.hostingNodeIp) throw new Error("Hosting node has no IP");
 
   const hostIp = infra.hostingNodeIp;
@@ -649,7 +678,19 @@ export async function getDeploymentLogs(
     .all();
 
   const infra = infraRows[0];
-  if (!infra?.hostingNodeIp) throw new Error("Hosting node not available");
+  if (!infra) throw new Error("Hosting node not available");
+
+  if (infra.provider === "dokploy") {
+    if (!deployment.containerId) throw new Error("No Dokploy composeId stored");
+    const resolved = await resolveInfraConfig(
+      infra.userId,
+      infra.id,
+      JSON.parse(infra.config) as Record<string, unknown>,
+    );
+    return dokployLogs(resolved, deployment.containerId, lines);
+  }
+
+  if (!infra.hostingNodeIp) throw new Error("Hosting node not available");
 
   assertSafeName(deployment.name);
   const linesStr = String(Number.isFinite(lines) ? Math.max(1, Math.min(10_000, Math.floor(lines))) : 100);
@@ -700,7 +741,24 @@ export async function restartDeployment(
     .all();
 
   const infra = infraRows[0];
-  if (!infra?.hostingNodeIp) throw new Error("Hosting node not available");
+  if (!infra) throw new Error("Hosting node not available");
+
+  if (infra.provider === "dokploy") {
+    if (!deployment.containerId) throw new Error("No Dokploy composeId stored");
+    const resolved = await resolveInfraConfig(
+      infra.userId,
+      infra.id,
+      JSON.parse(infra.config) as Record<string, unknown>,
+    );
+    await dokployRestart(resolved, deployment.containerId);
+    db.update(schema.deployments)
+      .set({ status: "running", statusDetail: null, updatedAt: new Date() })
+      .where(eq(schema.deployments.id, deployId))
+      .run();
+    return;
+  }
+
+  if (!infra.hostingNodeIp) throw new Error("Hosting node not available");
 
   assertSafeName(deployment.name);
   await sshExec(
@@ -737,6 +795,27 @@ export async function destroyDeployment(
     .all();
 
   const infra = infraRows[0];
+
+  if (infra?.provider === "dokploy") {
+    if (deployment.containerId) {
+      try {
+        const resolved = await resolveInfraConfig(
+          infra.userId,
+          infra.id,
+          JSON.parse(infra.config) as Record<string, unknown>,
+        );
+        await dokployDestroy(resolved, deployment.containerId);
+      } catch {
+        // Best-effort — mark destroyed regardless so the user isn't stuck
+      }
+    }
+    db.update(schema.deployments)
+      .set({ status: "destroyed", statusDetail: null, updatedAt: new Date() })
+      .where(eq(schema.deployments.id, deployId))
+      .run();
+    return;
+  }
+
   if (infra?.hostingNodeIp) {
     // Stop and remove containers + volumes
     try {
