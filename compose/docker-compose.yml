@@ -1,0 +1,160 @@
+# AgentHub v2 — base docker-compose bundle
+#
+# What this brings up:
+#   traefik              - reverse proxy, TLS termination (Let's Encrypt if
+#                          DOMAIN is a real hostname, self-signed otherwise)
+#   infisical-postgres   - Infisical's metadata DB
+#   infisical-redis      - Infisical's cache
+#   infisical            - secret store UI + API
+#   agenthub-server      - the platform itself
+#
+# Optional overlays (compose --file ...):
+#   docker-compose.dokploy.yml   - adds bundled Dokploy for local mode
+#
+# Required environment (see .env.example):
+#   DOMAIN, TLS_EMAIL, AGENTHUB_ADMIN_EMAIL, PROVISIONER_MODE,
+#   INFISICAL_PROJECT_ID, INFISICAL_CLIENT_ID, INFISICAL_CLIENT_SECRET
+#
+# The installer (packages/installer) generates a .env and picks the right
+# overlay when it's Dokploy-local mode.
+
+name: agenthub
+
+services:
+  traefik:
+    image: traefik:v3.2
+    restart: unless-stopped
+    command:
+      - --api.dashboard=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      - --certificatesresolvers.le.acme.email=${TLS_EMAIL}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-letsencrypt:/letsencrypt
+    networks:
+      - agenthub
+
+  infisical-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: infisical
+      POSTGRES_PASSWORD: ${INFISICAL_DB_PASSWORD}
+      POSTGRES_DB: infisical
+    volumes:
+      - infisical-pg-data:/var/lib/postgresql/data
+    networks:
+      - agenthub
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infisical"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  infisical-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${INFISICAL_REDIS_PASSWORD}"]
+    volumes:
+      - infisical-redis-data:/data
+    networks:
+      - agenthub
+    healthcheck:
+      test: ["CMD", "redis-cli", "--pass", "${INFISICAL_REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  infisical:
+    image: infisical/infisical:latest-postgres
+    restart: unless-stopped
+    depends_on:
+      infisical-postgres:
+        condition: service_healthy
+      infisical-redis:
+        condition: service_healthy
+    environment:
+      ENCRYPTION_KEY: ${INFISICAL_ENCRYPTION_KEY}
+      AUTH_SECRET: ${INFISICAL_AUTH_SECRET}
+      DB_CONNECTION_URI: postgres://infisical:${INFISICAL_DB_PASSWORD}@infisical-postgres:5432/infisical
+      REDIS_URL: redis://default:${INFISICAL_REDIS_PASSWORD}@infisical-redis:6379
+      SITE_URL: https://secrets.${DOMAIN}
+      TELEMETRY_ENABLED: "false"
+    networks:
+      - agenthub
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.infisical.rule=Host(`secrets.${DOMAIN}`)
+      - traefik.http.routers.infisical.entrypoints=websecure
+      - traefik.http.routers.infisical.tls.certresolver=le
+      - traefik.http.services.infisical.loadbalancer.server.port=8080
+
+  agenthub-server:
+    image: ${AGENTHUB_SERVER_IMAGE:-ghcr.io/physikal/agenthubv2-server:latest}
+    restart: unless-stopped
+    depends_on:
+      - infisical
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_PATH: /data/agenthub.db
+
+      # Public URLs (CORS + .agenthub-env export)
+      AGENTHUB_PUBLIC_URL: https://${DOMAIN}
+      AGENTHUB_PORTAL_URL: http://agenthub-server:3000
+
+      # Provisioner selection (docker | dokploy-local | dokploy-remote)
+      PROVISIONER_MODE: ${PROVISIONER_MODE:-docker}
+      DOCKER_HOST: ${DOCKER_HOST:-}
+      AGENTHUB_DOCKER_NETWORK: agenthub
+      DOKPLOY_URL: ${DOKPLOY_URL:-}
+      DOKPLOY_API_TOKEN: ${DOKPLOY_API_TOKEN:-}
+      DOKPLOY_PROJECT_ID: ${DOKPLOY_PROJECT_ID:-}
+      DOKPLOY_ENVIRONMENT_ID: ${DOKPLOY_ENVIRONMENT_ID:-}
+
+      # Workspace image deployed for each session
+      WORKSPACE_IMAGE: ${WORKSPACE_IMAGE:-ghcr.io/physikal/agenthubv2-workspace:latest}
+
+      # Secrets
+      INFISICAL_URL: http://infisical:8080
+      INFISICAL_PROJECT_ID: ${INFISICAL_PROJECT_ID}
+      INFISICAL_CLIENT_ID: ${INFISICAL_CLIENT_ID}
+      INFISICAL_CLIENT_SECRET: ${INFISICAL_CLIENT_SECRET}
+      INFISICAL_ENVIRONMENT: ${INFISICAL_ENVIRONMENT:-prod}
+    volumes:
+      - agenthub-data:/data
+    networks:
+      - agenthub
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.agenthub.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.agenthub.entrypoints=websecure
+      - traefik.http.routers.agenthub.tls.certresolver=le
+      - traefik.http.services.agenthub.loadbalancer.server.port=3000
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  agenthub:
+    name: agenthub
+    driver: bridge
+
+volumes:
+  traefik-letsencrypt:
+  infisical-pg-data:
+  infisical-redis-data:
+  agenthub-data:
