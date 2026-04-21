@@ -1,16 +1,13 @@
 import React from "react";
-import { render, Text, Box } from "ink";
+import { render } from "ink";
+import { App } from "./app.js";
+import { runHeadless } from "./headless.js";
 
-const App: React.FC = () => (
-  <Box flexDirection="column" padding={1}>
-    <Text bold color="cyan">
-      AgentHub installer (scaffold)
-    </Text>
-    <Text dimColor>
-      Full installer flow lands in Phase 6. This scaffold exists so the
-      monorepo builds end-to-end.
-    </Text>
-  </Box>
-);
+const args = process.argv.slice(2);
+const headless = args.includes("--non-interactive") || !process.stdout.isTTY;
 
-render(<App />);
+if (headless) {
+  void runHeadless();
+} else {
+  render(<App />);
+}
