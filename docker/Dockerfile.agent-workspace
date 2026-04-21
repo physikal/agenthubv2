@@ -1,0 +1,121 @@
+# syntax=docker/dockerfile:1.7
+#
+# AgentHub v2 workspace image.
+#
+# Replaces v1's Proxmox LXC template (infra/lxc-template.sh). Runs the agent
+# daemon + ttyd terminal inside one container; a persistent Docker volume
+# provides /home/coder across sessions.
+#
+# Build (from repo root):
+#   docker build -f docker/Dockerfile.agent-workspace -t agenthubv2-workspace:latest .
+#
+# ---------- Stage 1: build the agent daemon ----------
+FROM node:22-bookworm-slim AS agent-build
+
+RUN corepack enable && corepack prepare pnpm@10.12.1 --activate
+
+WORKDIR /build
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json tsconfig.base.json ./
+COPY packages/agent/package.json packages/agent/tsconfig.json packages/agent/
+RUN pnpm install --filter @agenthub/agent --frozen-lockfile
+
+COPY packages/agent/src packages/agent/src
+RUN pnpm --filter @agenthub/agent build
+
+
+# ---------- Stage 2: workspace runtime ----------
+FROM debian:12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    NODE_VERSION=22 \
+    TTYD_VERSION=1.7.7
+
+# System packages. Keep as few RUN layers as possible for caching.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl wget gnupg sudo \
+      git openssh-client \
+      tmux dtach \
+      build-essential \
+      ripgrep fzf unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js 22 via NodeSource
+RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# ttyd static binary (terminal WebSocket server)
+RUN curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
+      -o /usr/local/bin/ttyd \
+    && chmod +x /usr/local/bin/ttyd
+
+# rclone (for B2 backups)
+RUN curl -fsSL https://rclone.org/install.sh | bash
+
+# GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Global agent tools. Layered AFTER apt to avoid re-pulling large npm blobs
+# every time a system package changes.
+RUN npm install -g \
+      @anthropic-ai/claude-code \
+      opencode-ai \
+      mmx-cli \
+    && npm cache clean --force
+
+# claude-minimax shim — v1 parity.
+RUN printf '#!/bin/bash\nexec claude --model minimax/MiniMax-M2.7 --dangerously-skip-permissions "$@"\n' \
+      > /usr/local/bin/claude-minimax \
+    && chmod +x /usr/local/bin/claude-minimax
+
+# `preview` CLI — reads AGENTHUB_SESSION_ID / AGENTHUB_URL (injected by the
+# server at container create time) and emits the proxy URL.
+COPY <<'PREVIEW' /usr/local/bin/preview
+#!/bin/bash
+set -euo pipefail
+if [ -z "${AGENTHUB_SESSION_ID:-}" ] || [ -z "${AGENTHUB_URL:-}" ]; then
+  echo "Error: not in an AgentHub session" >&2
+  exit 1
+fi
+ARG="${1:?Usage: preview <file-or-port>}"
+BASE="${AGENTHUB_URL}/api/sessions/${AGENTHUB_SESSION_ID}/preview"
+if [[ "$ARG" == :* ]]; then
+  PORT="${ARG#:}"
+  echo "${BASE}/port/${PORT}/"
+else
+  FILEPATH="$(realpath "$ARG")"
+  FILEPATH="${FILEPATH#/}"
+  echo "${BASE}/file/${FILEPATH}"
+fi
+PREVIEW
+RUN chmod +x /usr/local/bin/preview
+
+# coder user (uid 1000) + passwordless sudo. uid 1000 matches the v1 LXC for
+# continuity with any backed-up /home/coder payloads.
+RUN useradd -m -s /bin/bash -u 1000 coder \
+    && echo "coder ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/coder \
+    && chmod 440 /etc/sudoers.d/coder \
+    && echo '[ -f ~/.bashrc ] && . ~/.bashrc' > /home/coder/.bash_profile \
+    && chown coder:coder /home/coder/.bash_profile
+
+# Agent daemon. Copied from the build stage — no deploy-time tar-over-ssh.
+RUN mkdir -p /opt/agenthub-agent
+COPY --from=agent-build /build/packages/agent/dist /opt/agenthub-agent/
+COPY --from=agent-build /build/packages/agent/package.json /opt/agenthub-agent/
+COPY --from=agent-build /build/packages/agent/node_modules /opt/agenthub-agent/node_modules
+
+COPY docker/agent-workspace-entrypoint.sh /usr/local/bin/agenthub-entrypoint
+RUN chmod +x /usr/local/bin/agenthub-entrypoint
+
+EXPOSE 7681 9876
+
+# Declared as a volume so operators who use docker-compose without an explicit
+# `volumes:` entry still get persistent /home/coder.
+VOLUME ["/home/coder"]
+
+ENTRYPOINT ["/usr/local/bin/agenthub-entrypoint"]
