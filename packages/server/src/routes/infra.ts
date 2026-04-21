@@ -13,6 +13,7 @@ import {
   getSecretStore,
   SecretStoreNotConfiguredError,
 } from "../services/secrets/index.js";
+import { getHostingProvider } from "../services/providers/index.js";
 
 /**
  * Phase 2 minimum: manage Cloudflare DNS infra configs. The inner-MCP deploy
@@ -28,7 +29,12 @@ const KNOWN_PROVIDERS: Provider[] = [
   "dokploy",
   "cloudflare",
 ];
-const FULLY_IMPLEMENTED: Provider[] = ["cloudflare"];
+const FULLY_IMPLEMENTED: Provider[] = [
+  "cloudflare",
+  "docker",
+  "digitalocean",
+  "dokploy",
+];
 
 function maskConfig(configJson: string): Record<string, unknown> {
   const parsed = JSON.parse(configJson) as Record<string, unknown>;
@@ -237,6 +243,100 @@ export function infraRoutes() {
       .run();
 
     return c.json({ id, updated: true });
+  });
+
+  // Probe the provider using stored creds — "are my credentials still good?"
+  app.post("/:id/verify", async (c) => {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const row = db
+      .select()
+      .from(schema.infrastructureConfigs)
+      .where(
+        and(
+          eq(schema.infrastructureConfigs.id, id),
+          eq(schema.infrastructureConfigs.userId, user.id),
+        ),
+      )
+      .get();
+    if (!row) return c.json({ error: "Not found" }, 404);
+
+    const provider = getHostingProvider(row.provider);
+    if (!provider) {
+      // Non-hosting provider (cloudflare) has no verify. Return ok.
+      return c.json({ ok: true });
+    }
+    const full = await resolveInfraConfig(
+      user.id,
+      id,
+      JSON.parse(row.config) as Record<string, unknown>,
+    );
+    const result = await provider.verify(full);
+    return c.json(result);
+  });
+
+  // Create hosting node (droplet / bootstrap). No-op for byo-docker + dokploy.
+  app.post("/:id/provision", async (c) => {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const row = db
+      .select()
+      .from(schema.infrastructureConfigs)
+      .where(
+        and(
+          eq(schema.infrastructureConfigs.id, id),
+          eq(schema.infrastructureConfigs.userId, user.id),
+        ),
+      )
+      .get();
+    if (!row) return c.json({ error: "Not found" }, 404);
+
+    const provider = getHostingProvider(row.provider);
+    if (!provider) {
+      return c.json(
+        { error: `provider ${row.provider} does not provision hosting nodes` },
+        400,
+      );
+    }
+
+    db.update(schema.infrastructureConfigs)
+      .set({
+        status: "provisioning",
+        statusDetail: "preparing host",
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.infrastructureConfigs.id, id))
+      .run();
+
+    void (async () => {
+      try {
+        const full = await resolveInfraConfig(
+          user.id,
+          id,
+          JSON.parse(row.config) as Record<string, unknown>,
+        );
+        const result = await provider.provision(full, { userId: user.id, name: row.name });
+        db.update(schema.infrastructureConfigs)
+          .set({
+            status: "ready",
+            statusDetail: null,
+            hostingNodeIp: result.hostingNodeIp,
+            hostingNodeId: result.hostingNodeId,
+            hostingNodeNode: result.hostingNodeLabel ?? null,
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.infrastructureConfigs.id, id))
+          .run();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "unknown";
+        db.update(schema.infrastructureConfigs)
+          .set({ status: "error", statusDetail: msg, updatedAt: new Date() })
+          .where(eq(schema.infrastructureConfigs.id, id))
+          .run();
+      }
+    })();
+
+    return c.json({ provisioning: true });
   });
 
   app.delete("/:id", async (c) => {
