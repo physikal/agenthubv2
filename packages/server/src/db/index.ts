@@ -13,16 +13,17 @@ sqlite.pragma("foreign_keys = ON");
 export const db = drizzle(sqlite, { schema });
 
 export function initDb(): void {
-  // Create core tables
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'creating',
       status_detail TEXT DEFAULT '',
-      lxc_vmid INTEGER,
-      lxc_node TEXT,
-      lxc_ip TEXT,
+      user_id TEXT REFERENCES users(id),
+      workspace_id TEXT,
+      workspace_host TEXT,
+      workspace_ip TEXT,
+      provider_id TEXT,
       agent_token TEXT,
       repo TEXT,
       prompt TEXT,
@@ -54,11 +55,13 @@ export function initDb(): void {
     CREATE TABLE IF NOT EXISTS user_credentials (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       claude_credentials TEXT,
+      backup_config TEXT,
       updated_at INTEGER NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status);
     CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at);
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_session_tokens_user ON session_tokens(user_id);
 
     CREATE TABLE IF NOT EXISTS infrastructure_configs (
@@ -97,17 +100,6 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS idx_deployments_user ON deployments(user_id);
     CREATE INDEX IF NOT EXISTS idx_deployments_infra ON deployments(infra_id);
 
-    CREATE TABLE IF NOT EXISTS pool_containers (
-      vmid INTEGER PRIMARY KEY,
-      node TEXT NOT NULL,
-      ip TEXT,
-      agent_token TEXT NOT NULL,
-      state TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_pool_containers_state ON pool_containers(state);
-
     CREATE TABLE IF NOT EXISTS backup_runs (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -124,45 +116,27 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS idx_backup_runs_user_started ON backup_runs(user_id, started_at);
   `);
 
-  // Migrate: add user_id column to sessions if missing
-  const cols = sqlite
+  // Defensive drop for anyone who imported a v1 database. v2 drops the
+  // warm-pool concept entirely.
+  sqlite.exec("DROP TABLE IF EXISTS pool_containers");
+
+  // Defensive rename for anyone upgrading from an early AgentHub build where
+  // sessions columns still carried Proxmox-specific names.
+  const sessionCols = sqlite
     .prepare("PRAGMA table_info(sessions)")
     .all() as { name: string }[];
-  if (!cols.some((c) => c.name === "user_id")) {
-    sqlite.exec("ALTER TABLE sessions ADD COLUMN user_id TEXT REFERENCES users(id)");
+  if (sessionCols.some((c) => c.name === "lxc_vmid") && !sessionCols.some((c) => c.name === "workspace_id")) {
+    // Preserve any live LXC references as strings in the new workspace_id
+    // column. Hosting/ip don't have structurally compatible values in LXC-land,
+    // so for those we just add the new columns and let reconnect fail old rows.
+    sqlite.exec(`
+      ALTER TABLE sessions ADD COLUMN workspace_id TEXT;
+      ALTER TABLE sessions ADD COLUMN workspace_host TEXT;
+      ALTER TABLE sessions ADD COLUMN workspace_ip TEXT;
+      ALTER TABLE sessions ADD COLUMN provider_id TEXT;
+      UPDATE sessions SET workspace_id = CAST(lxc_vmid AS TEXT), workspace_host = lxc_node, workspace_ip = lxc_ip;
+    `);
   }
-
-  // Index on user_id (safe to run after column exists)
-  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)");
-
-  // Migrate: add name column to infrastructure_configs if missing
-  const infraCols = sqlite
-    .prepare("PRAGMA table_info(infrastructure_configs)")
-    .all() as { name: string }[];
-  if (!infraCols.some((c) => c.name === "name")) {
-    sqlite.exec("ALTER TABLE infrastructure_configs ADD COLUMN name TEXT NOT NULL DEFAULT ''");
-    // Backfill existing configs with provider name
-    sqlite.exec("UPDATE infrastructure_configs SET name = provider WHERE name = ''");
-  }
-
-  // Migrate: add url column to deployments if missing
-  const deployCols = sqlite
-    .prepare("PRAGMA table_info(deployments)")
-    .all() as { name: string }[];
-  if (!deployCols.some((c) => c.name === "url")) {
-    sqlite.exec("ALTER TABLE deployments ADD COLUMN url TEXT");
-  }
-
-  // Migrate: add backup_config column to user_credentials if missing
-  const credCols = sqlite
-    .prepare("PRAGMA table_info(user_credentials)")
-    .all() as { name: string }[];
-  if (!credCols.some((c) => c.name === "backup_config")) {
-    sqlite.exec("ALTER TABLE user_credentials ADD COLUMN backup_config TEXT");
-  }
-
-  // NOTE: Active session reconnection is handled by
-  // SessionManager.reconnectActiveSessions() after Proxmox client is initialized.
 
   // Seed default admin account with random password
   const adminExists = sqlite
@@ -181,7 +155,6 @@ export function initDb(): void {
     console.log("[db] CHANGE THIS PASSWORD IMMEDIATELY via Settings > Change Password");
   }
 
-  // Clean up expired session tokens
   const deleted = sqlite
     .prepare("DELETE FROM session_tokens WHERE expires_at < ?")
     .run(Date.now());
@@ -190,7 +163,6 @@ export function initDb(): void {
   }
 }
 
-// Periodic cleanup of expired tokens (every hour)
 setInterval(() => {
   try {
     sqlite.prepare("DELETE FROM session_tokens WHERE expires_at < ?").run(Date.now());

@@ -4,11 +4,10 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { SessionManager } from "../services/session-manager.js";
 import { authenticateToken } from "../middleware/auth.js";
 import { ALLOWED_ORIGINS } from "../index.js";
-import { isInLxcSubnet } from "../lib/subnet.js";
 
 const TTYD_PORT = 7681;
-/** Drop frames past this point. Bursty ttyd output (e.g. `cat large.log`)
- *  could otherwise buffer tens of MB in Node per slow browser. */
+/** Drop frames past this point. Bursty ttyd output (e.g. `cat large.log`) could
+ *  otherwise buffer tens of MB in Node per slow browser. */
 const BACKPRESSURE_BYTES = 1_000_000;
 /** Ping every 30s, terminate after one missed pong. Half-open TCP sockets
  *  (NAT rebind, closed laptop lid) otherwise live for the OS keepalive
@@ -32,9 +31,6 @@ export function setupTerminalProxy(
 
     const sessionId = match[1];
 
-    // Origin allowlist — WebSocket upgrades are not subject to CORS preflight
-    // but browsers still send Origin. Reject cross-origin opens so a malicious
-    // page loaded by a logged-in user can't hijack their terminal via cookie.
     const origin = req.headers.origin;
     if (!origin || !ALLOWED_ORIGINS.has(origin)) {
       console.log(`[ws] rejected upgrade for ${sessionId}: bad origin ${String(origin)}`);
@@ -42,7 +38,6 @@ export function setupTerminalProxy(
       return;
     }
 
-    // Authenticate via session cookie
     const user = authenticateToken(req.headers.cookie);
     if (!user) {
       console.log(`[ws] rejected upgrade for ${sessionId}: no valid auth cookie`);
@@ -50,7 +45,6 @@ export function setupTerminalProxy(
       return;
     }
 
-    // Verify session ownership
     const session = sessionManager.getSession(sessionId);
     if (!session) {
       console.log(`[ws] rejected upgrade for ${sessionId}: session not found`);
@@ -62,19 +56,8 @@ export function setupTerminalProxy(
       socket.destroy();
       return;
     }
-
-    if (!session.lxcIp) {
-      console.log(`[ws] rejected upgrade for ${sessionId}: no LXC IP`);
-      socket.destroy();
-      return;
-    }
-
-    // Defense-in-depth: session.lxcIp originates from /api/agent/register
-    // which already subnet-validates. Re-check before opening a proxy so
-    // any future bug that smuggles a non-LXC IP into the DB can't be used
-    // to exfiltrate traffic to 127.0.0.1, cloud metadata, or LAN services.
-    if (!isInLxcSubnet(session.lxcIp)) {
-      console.warn(`[ws] rejected upgrade for ${sessionId}: lxcIp ${session.lxcIp} outside subnet`);
+    if (!session.workspaceIp) {
+      console.log(`[ws] rejected upgrade for ${sessionId}: workspace not ready`);
       socket.destroy();
       return;
     }
@@ -91,28 +74,20 @@ function handleBrowserConnection(
   sessionManager: SessionManager,
 ): void {
   const session = sessionManager.getSession(sessionId);
-  if (!session?.lxcIp) {
+  if (!session?.workspaceIp) {
     browserWs.close(4004, "Session not found");
     return;
   }
 
-  // Connect to ttyd WebSocket inside the LXC (subprotocol required for PTY handler)
-  const ttydUrl = `ws://${session.lxcIp}:${String(TTYD_PORT)}/ws`;
+  const ttydUrl = `ws://${session.workspaceIp}:${String(TTYD_PORT)}/ws`;
   const ttydWs = new WebSocket(ttydUrl, ["tty"]);
 
   ttydWs.on("open", () => {
     console.log(`[ws] ttyd connected for session ${sessionId}`);
-
-    // ttyd requires auth handshake before it sends any data
     ttydWs.send(JSON.stringify({ AuthToken: "" }));
-
-    // Also start the terminal via agent control channel
     sessionManager.startTerminal(sessionId);
   });
 
-  // Forward ttyd → browser: only forward output (type 0x30 = ASCII '0').
-  // Backpressure: drop if the browser socket has buffered too much —
-  // better to lose a few frames than OOM the server.
   ttydWs.on("message", (data, isBinary) => {
     if (browserWs.readyState !== WebSocket.OPEN) return;
     if (!isBinary) return;
@@ -128,23 +103,12 @@ function handleBrowserConnection(
     }
   });
 
-  // Forward binary frames: browser → ttyd (same backpressure guard).
   browserWs.on("message", (data, isBinary) => {
     if (ttydWs.readyState !== WebSocket.OPEN) return;
     if (ttydWs.bufferedAmount > BACKPRESSURE_BYTES) return;
     ttydWs.send(data, { binary: isBinary });
   });
 
-  // Browser-side heartbeat only: catches half-open sockets from NAT rebind /
-  // closed laptop lid. We don't ping ttyd — it's reachable over the internal
-  // LXC network (sub-ms RTT, TCP keepalive reliable) and its libwebsockets
-  // stack has been known not to deliver pong frames through the "tty"
-  // subprotocol, which caused this loop to spuriously kill sessions.
-  // If ttyd actually dies, its own `close`/`error` events still tear us down.
-  //
-  // Only terminate after we've observed at least one pong — otherwise a
-  // browser that never pongs (older client, network quirk) would be killed
-  // even though its TCP connection is fine.
   let browserSawPong = false;
   let browserPendingPing = false;
   browserWs.on("pong", () => {

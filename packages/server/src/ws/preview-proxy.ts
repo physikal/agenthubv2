@@ -4,7 +4,6 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { SessionManager } from "../services/session-manager.js";
 import { authenticateToken } from "../middleware/auth.js";
 import { ALLOWED_ORIGINS } from "../index.js";
-import { isInLxcSubnet } from "../lib/subnet.js";
 
 const PATH_PATTERN = /^\/api\/sessions\/([^/]+)\/preview\/port\/(\d+)(\/.*)?$/;
 const BACKPRESSURE_BYTES = 1_000_000;
@@ -26,8 +25,6 @@ export function setupPreviewProxy(
     const port = match[2];
     const remainingPath = match[3] ?? "/";
 
-    // Origin allowlist — prevents cross-origin hijack of preview WebSocket
-    // once the user is logged in. See terminal-proxy for details.
     const origin = req.headers.origin;
     if (!origin || !ALLOWED_ORIGINS.has(origin)) {
       socket.destroy();
@@ -49,49 +46,31 @@ export function setupPreviewProxy(
       socket.destroy();
       return;
     }
-    if (!session.lxcIp) {
-      socket.destroy();
-      return;
-    }
-
-    // Defense-in-depth subnet re-check on lxcIp — see terminal-proxy for
-    // the same guard. Blocks 127.0.0.1, 169.254.169.254 (cloud metadata),
-    // and any LAN targets outside the LXC range.
-    if (!isInLxcSubnet(session.lxcIp)) {
-      console.warn(`[preview-ws] rejected ${sessionId}: lxcIp ${session.lxcIp} outside subnet`);
+    if (!session.workspaceIp) {
       socket.destroy();
       return;
     }
 
     wss.handleUpgrade(req, socket, head, (browserWs) => {
-      const targetUrl = `ws://${session.lxcIp}:${port}${remainingPath}${url.search}`;
+      const targetUrl = `ws://${session.workspaceIp}:${port}${remainingPath}${url.search}`;
       const upstreamWs = new WebSocket(targetUrl);
 
       upstreamWs.on("open", () => {
-        console.log(
-          `[preview-ws] connected ${sessionId} → :${port}${remainingPath}`,
-        );
+        console.log(`[preview-ws] connected ${sessionId} → :${port}${remainingPath}`);
       });
 
-      // Forward upstream → browser (with backpressure drop)
       upstreamWs.on("message", (data, isBinary) => {
         if (browserWs.readyState !== WebSocket.OPEN) return;
         if (browserWs.bufferedAmount > BACKPRESSURE_BYTES) return;
         browserWs.send(data, { binary: isBinary });
       });
 
-      // Forward browser → upstream (with backpressure drop)
       browserWs.on("message", (data, isBinary) => {
         if (upstreamWs.readyState !== WebSocket.OPEN) return;
         if (upstreamWs.bufferedAmount > BACKPRESSURE_BYTES) return;
         upstreamWs.send(data, { binary: isBinary });
       });
 
-      // Browser-side heartbeat only — upstream is a user-app dev server
-      // whose WebSocket pong behavior is unpredictable (Vite HMR, Next.js
-      // fast-refresh, etc). Terminating on a missed upstream pong caused
-      // spurious disconnects. Only kill the connection when the browser
-      // side has demonstrably gone silent (pong support proven then dropped).
       let browserSawPong = false;
       let browserPendingPing = false;
       browserWs.on("pong", () => {
@@ -119,9 +98,7 @@ export function setupPreviewProxy(
       });
 
       upstreamWs.on("error", (err) => {
-        console.error(
-          `[preview-ws] upstream error ${sessionId}:${port}: ${err.message}`,
-        );
+        console.error(`[preview-ws] upstream error ${sessionId}:${port}: ${err.message}`);
         cleanup();
         if (browserWs.readyState === WebSocket.OPEN) {
           browserWs.close(4003, "Upstream error");

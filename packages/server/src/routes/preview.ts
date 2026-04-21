@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import { stream } from "hono/streaming";
 import type { SessionManager } from "../services/session-manager.js";
 import type { AuthUser } from "../middleware/auth.js";
-import { isInLxcSubnet } from "../lib/subnet.js";
 
 const AGENT_FILE_SERVER_PORT = 9877;
 
@@ -30,11 +29,8 @@ export function previewRoutes(sessionManager: SessionManager) {
     if (session.userId !== user.id && user.role !== "admin") {
       return c.json({ error: "Forbidden" }, 403);
     }
-    if (!session.lxcIp) {
-      return c.json({ error: "Container not ready" }, 503);
-    }
-    if (!isInLxcSubnet(session.lxcIp)) {
-      return c.json({ error: "Invalid container IP" }, 502);
+    if (!session.workspaceIp) {
+      return c.json({ error: "Workspace not ready" }, 503);
     }
 
     // Extract file path from URL after /preview/file/
@@ -46,7 +42,7 @@ export function previewRoutes(sessionManager: SessionManager) {
     );
     if (!filePath) return c.json({ error: "No file path" }, 400);
 
-    const fileUrl = `http://${session.lxcIp}:${String(AGENT_FILE_SERVER_PORT)}/${filePath}`;
+    const fileUrl = `http://${session.workspaceIp}:${String(AGENT_FILE_SERVER_PORT)}/${filePath}`;
 
     try {
       const upstream = await fetch(fileUrl);
@@ -98,11 +94,8 @@ export function previewRoutes(sessionManager: SessionManager) {
     if (session.userId !== user.id && user.role !== "admin") {
       return c.json({ error: "Forbidden" }, 403);
     }
-    if (!session.lxcIp) {
-      return c.json({ error: "Container not ready" }, 503);
-    }
-    if (!isInLxcSubnet(session.lxcIp)) {
-      return c.json({ error: "Invalid container IP" }, 502);
+    if (!session.workspaceIp) {
+      return c.json({ error: "Workspace not ready" }, 503);
     }
 
     const portNum = parseInt(port, 10);
@@ -120,7 +113,7 @@ export function previewRoutes(sessionManager: SessionManager) {
     const queryString = url.search;
 
     const targetUrl =
-      `http://${session.lxcIp}:${String(portNum)}/${remainingPath}${queryString}`;
+      `http://${session.workspaceIp}:${String(portNum)}/${remainingPath}${queryString}`;
 
     try {
       // Forward the request with original method, headers, and body.
@@ -160,7 +153,7 @@ export function previewRoutes(sessionManager: SessionManager) {
               0,
               prefixIdx !== -1 ? prefixIdx + portPrefix.length : 0,
             );
-            if (loc.hostname === session.lxcIp) {
+            if (loc.hostname === session.workspaceIp) {
               responseHeaders.set(
                 key,
                 `${proxyBase}${loc.pathname.slice(1)}${loc.search}`,

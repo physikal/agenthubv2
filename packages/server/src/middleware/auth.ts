@@ -57,24 +57,16 @@ export const adminMiddleware = createMiddleware<{
 });
 
 /**
- * Middleware for agent-authenticated requests (MCP server inside LXC).
+ * Middleware for agent-authenticated requests (MCP server inside workspace).
  *
- * Primary path:
+ * Only path:
  *   Authorization: AgentToken <per-session-token>
- *   — Token is the value of `sessions.agentToken` for the claimed container.
- *     Bound to one session; cross-session impersonation is impossible.
+ *   — Token is the value of `sessions.agentToken` for this workspace. Bound
+ *     to one session; cross-session impersonation is impossible.
  *
- * Legacy path (transitional — will be removed):
- *   Authorization: AgentToken <shared AGENT_AUTH_TOKEN>
- *   X-Vmid: <vmid>
- *   — Any container that holds the shared token could forge X-Vmid and
- *     impersonate any session's user. Logged as a deprecation warning.
- *
- * Remove the legacy path once all pool containers have been cycled at
- * least once (default TTL: 7 days) and logs confirm no legacy traffic.
+ * The v1 shared-token + X-Vmid legacy path is removed — that fallback was only
+ * needed during LXC-pool bootstrap, which v2 no longer has.
  */
-let warnedLegacyAuth = false;
-
 export const agentAuthMiddleware = createMiddleware<{
   Variables: { user: AuthUser };
 }>(async (c, next) => {
@@ -88,8 +80,7 @@ export const agentAuthMiddleware = createMiddleware<{
     return c.json({ error: "Empty agent token" }, 401);
   }
 
-  // --- Primary path: per-session agentToken ---
-  const perSession = db
+  const rows = db
     .select({
       userId: schema.sessions.userId,
       username: schema.users.username,
@@ -100,49 +91,13 @@ export const agentAuthMiddleware = createMiddleware<{
     .where(eq(schema.sessions.agentToken, token))
     .all();
 
-  const sess = perSession[0];
-  if (sess?.userId) {
-    c.set("user", { id: sess.userId, username: sess.username, role: sess.role });
-    await next();
-    return;
+  const sess = rows[0];
+  if (!sess?.userId) {
+    return c.json({ error: "Invalid agent token" }, 401);
   }
 
-  // --- Legacy path: shared AGENT_AUTH_TOKEN + X-Vmid ---
-  const sharedToken = process.env["AGENT_AUTH_TOKEN"];
-  const vmidHeader = c.req.header("X-Vmid");
-  if (sharedToken && token === sharedToken && vmidHeader) {
-    const vmid = parseInt(vmidHeader, 10);
-    if (Number.isNaN(vmid)) {
-      return c.json({ error: "Invalid VMID" }, 400);
-    }
-
-    const byVmid = db
-      .select({
-        userId: schema.sessions.userId,
-        username: schema.users.username,
-        role: schema.users.role,
-      })
-      .from(schema.sessions)
-      .innerJoin(schema.users, eq(schema.sessions.userId, schema.users.id))
-      .where(eq(schema.sessions.lxcVmid, vmid))
-      .all();
-
-    const legacy = byVmid[0];
-    if (legacy?.userId) {
-      if (!warnedLegacyAuth) {
-        console.warn(
-          "[auth] agent using legacy shared-token + X-Vmid auth. " +
-            "Per-session tokens are available; legacy path will be removed.",
-        );
-        warnedLegacyAuth = true;
-      }
-      c.set("user", { id: legacy.userId, username: legacy.username, role: legacy.role });
-      await next();
-      return;
-    }
-  }
-
-  return c.json({ error: "Invalid agent token" }, 401);
+  c.set("user", { id: sess.userId, username: sess.username, role: sess.role });
+  await next();
 });
 
 /** Look up a session token from a raw cookie header string (for WebSocket upgrades). */
