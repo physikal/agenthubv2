@@ -138,21 +138,30 @@ export function initDb(): void {
     `);
   }
 
-  // Seed default admin account with random password
+  // Seed default admin account. Password priority:
+  //   1. AGENTHUB_ADMIN_PASSWORD env var (installer writes this into .env)
+  //   2. random UUID slice if unset — surfaces once in stdout, must be rotated
   const adminExists = sqlite
     .prepare("SELECT 1 FROM users WHERE username = 'admin'")
     .get();
   if (!adminExists) {
     const id = randomUUID();
-    const password = randomUUID().slice(0, 16);
+    const envPassword = process.env["AGENTHUB_ADMIN_PASSWORD"];
+    const password = envPassword && envPassword.length >= 8
+      ? envPassword
+      : randomUUID().slice(0, 16);
     const hash = hashSync(password, 12);
     sqlite
       .prepare(
         "INSERT INTO users (id, username, password_hash, display_name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       )
       .run(id, "admin", hash, "Admin", "admin", Date.now());
-    console.log(`[db] seeded admin account — password: ${password}`);
-    console.log("[db] CHANGE THIS PASSWORD IMMEDIATELY via Settings > Change Password");
+    if (envPassword && envPassword.length >= 8) {
+      console.log("[db] seeded admin account — password from AGENTHUB_ADMIN_PASSWORD env");
+    } else {
+      console.log(`[db] seeded admin account — password: ${password}`);
+      console.log("[db] CHANGE THIS PASSWORD IMMEDIATELY via Settings > Change Password");
+    }
   }
 
   const deleted = sqlite

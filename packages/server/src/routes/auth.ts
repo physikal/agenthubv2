@@ -5,7 +5,7 @@ import { setCookie, getCookie, deleteCookie } from "hono/cookie";
 import { compareSync, hashSync } from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
-import type { AuthUser } from "../middleware/auth.js";
+import { authMiddleware, type AuthUser } from "../middleware/auth.js";
 
 /**
  * Get the real client IP for rate limiting. Previously this trusted
@@ -128,6 +128,13 @@ export function authRoutes() {
     deleteCookie(c, "session_token", { path: "/" });
     return c.json({ ok: true });
   });
+
+  // Middleware-protected routes. Registered with authMiddleware directly
+  // on this sub-app so we don't rely on the outer index.ts duplicate-get
+  // shim (which Hono's trie didn't actually invoke because the sub-app
+  // route matched first).
+  app.use("/me", authMiddleware);
+  app.use("/change-password", authMiddleware);
 
   app.post("/change-password", async (c) => {
     const user = c.get("user");

@@ -131,6 +131,10 @@ services:
       INFISICAL_CLIENT_ID: ${INFISICAL_CLIENT_ID}
       INFISICAL_CLIENT_SECRET: ${INFISICAL_CLIENT_SECRET}
       INFISICAL_ENVIRONMENT: ${INFISICAL_ENVIRONMENT:-prod}
+
+      # Admin bootstrap — if set, initDb() seeds this password on first boot
+      # instead of generating a random one. Blank = random (logged once).
+      AGENTHUB_ADMIN_PASSWORD: ${AGENTHUB_ADMIN_PASSWORD:-}
     volumes:
       - agenthub-data:/data
     networks:

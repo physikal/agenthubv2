@@ -49,7 +49,10 @@ export function composeUp(opts: ComposeUpOptions): Promise<void> {
 }
 
 export function composePull(opts: ComposeUpOptions): Promise<void> {
-  return runCompose(["pull"], opts);
+  // --ignore-pull-failures so locally-built images (`agenthubv2-server:local`,
+  // etc.) don't break the install. Registry pulls still happen for everything
+  // else (Postgres, Redis, Traefik, Infisical).
+  return runCompose(["pull", "--ignore-pull-failures"], opts);
 }
 
 function runCompose(

@@ -84,7 +84,7 @@ app.use("/api/*", async (c, next) => {
   return next();
 });
 
-// --- Public routes (no auth) ---
+// --- /api/auth (login/logout public; /me + /change-password auth-protected inside authRoutes) ---
 app.route("/api/auth", authRoutes());
 app.get("/api/health", (c) => c.json({ status: "ok" }));
 
@@ -93,10 +93,6 @@ const agentDeployApp = new Hono();
 agentDeployApp.use("*", agentAuthMiddleware);
 agentDeployApp.route("/", deployRoutes());
 app.route("/api/agent/deploy", agentDeployApp);
-
-// --- Auth-protected routes under /api/auth ---
-app.get("/api/auth/me", authMiddleware);
-app.post("/api/auth/change-password", authMiddleware);
 
 // --- Authenticated routes (skip agent-auth paths) ---
 app.use("/api/*", async (c, next) => {
