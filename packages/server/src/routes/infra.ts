@@ -3,6 +3,16 @@ import { Hono } from "hono";
 import { eq, and } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import type { AuthUser } from "../middleware/auth.js";
+import {
+  splitSecrets,
+  resolveInfraConfig,
+  storeInfraSecrets,
+  deleteInfraSecrets,
+} from "../services/secrets/helpers.js";
+import {
+  getSecretStore,
+  SecretStoreNotConfiguredError,
+} from "../services/secrets/index.js";
 
 /**
  * Phase 2 minimum: manage Cloudflare DNS infra configs. The inner-MCP deploy
@@ -40,7 +50,7 @@ function isValidCloudflareConfig(config: Record<string, unknown>): boolean {
 export function infraRoutes() {
   const app = new Hono<{ Variables: { user: AuthUser } }>();
 
-  app.get("/", (c) => {
+  app.get("/", async (c) => {
     const user = c.get("user");
     const rows = db
       .select()
@@ -48,12 +58,14 @@ export function infraRoutes() {
       .where(eq(schema.infrastructureConfigs.userId, user.id))
       .all();
 
+    // Metadata-only render — secrets stay in Infisical. Listing many configs
+    // does not pay the per-config Infisical round-trip.
     return c.json(
       rows.map((row) => ({ ...row, config: maskConfig(row.config) })),
     );
   });
 
-  app.get("/:id", (c) => {
+  app.get("/:id", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");
     const row = db
@@ -67,7 +79,11 @@ export function infraRoutes() {
       )
       .get();
     if (!row) return c.json({ error: "Not found" }, 404);
-    return c.json({ ...row, config: maskConfig(row.config) });
+    // Single-config view: resolve secrets from Infisical so the UI can show
+    // the masked real value (last 4 chars) instead of blank fields.
+    const metadata = JSON.parse(row.config) as Record<string, unknown>;
+    const full = await resolveInfraConfig(user.id, id, metadata);
+    return c.json({ ...row, config: maskConfig(JSON.stringify(full)) });
   });
 
   app.post("/", async (c) => {
@@ -125,15 +141,33 @@ export function infraRoutes() {
       return c.json({ error: `Config "${body.name.trim()}" already exists` }, 409);
     }
 
+    const { metadata, secrets } = splitSecrets(body.provider, body.config);
+    const store = getSecretStore();
+    if (Object.keys(secrets).length > 0 && !store.configured) {
+      return c.json(
+        { error: "Secret store not configured — cannot store provider credentials" },
+        503,
+      );
+    }
+
     const now = new Date();
     const id = randomUUID();
+    try {
+      await storeInfraSecrets(user.id, id, secrets);
+    } catch (err) {
+      if (err instanceof SecretStoreNotConfiguredError) {
+        return c.json({ error: err.message }, 503);
+      }
+      throw err;
+    }
+
     db.insert(schema.infrastructureConfigs)
       .values({
         id,
         userId: user.id,
         name: body.name.trim(),
         provider: body.provider as Provider,
-        config: JSON.stringify(body.config),
+        config: JSON.stringify(metadata),
         status: "ready",
         createdAt: now,
         updatedAt: now,
@@ -173,15 +207,28 @@ export function infraRoutes() {
     }
 
     if (body.config) {
-      const oldConfig = JSON.parse(row.config) as Record<string, unknown>;
-      const newConfig = { ...body.config } as Record<string, string | undefined>;
-      for (const field of MASKED_FIELDS) {
-        const val = newConfig[field];
-        if (!val || val.startsWith("•")) {
-          newConfig[field] = oldConfig[field] as string;
-        }
+      const { metadata: newMeta, secrets: newSecrets } = splitSecrets(
+        row.provider,
+        body.config,
+      );
+
+      // Merge: unchanged/masked secret fields preserve the existing Infisical
+      // value. Only write the fields the user actually changed.
+      const changedSecrets: Record<string, string> = {};
+      for (const [k, v] of Object.entries(newSecrets)) {
+        if (v && !v.startsWith("•")) changedSecrets[k] = v;
       }
-      updates.config = JSON.stringify(newConfig);
+
+      try {
+        await storeInfraSecrets(user.id, id, changedSecrets);
+      } catch (err) {
+        if (err instanceof SecretStoreNotConfiguredError) {
+          return c.json({ error: err.message }, 503);
+        }
+        throw err;
+      }
+
+      updates.config = JSON.stringify(newMeta);
     }
 
     db.update(schema.infrastructureConfigs)
@@ -192,7 +239,7 @@ export function infraRoutes() {
     return c.json({ id, updated: true });
   });
 
-  app.delete("/:id", (c) => {
+  app.delete("/:id", async (c) => {
     const user = c.get("user");
     const id = c.req.param("id");
 
@@ -218,6 +265,13 @@ export function infraRoutes() {
 
     if (activeDeploys.length > 0) {
       return c.json({ error: "Cannot delete: active deployments exist" }, 409);
+    }
+
+    try {
+      await deleteInfraSecrets(user.id, id);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "unknown";
+      console.warn(`[infra] failed to purge secrets for ${id}: ${msg} — continuing delete`);
     }
 
     db.delete(schema.infrastructureConfigs)

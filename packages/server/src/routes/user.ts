@@ -11,6 +11,15 @@ import {
   assertSafeBucketName,
   assertSafeUserId,
 } from "../services/shell-safety.js";
+import {
+  getSecretStore,
+  SecretStoreNotConfiguredError,
+} from "../services/secrets/index.js";
+
+const BACKUP_SECRET_NAMES = ["b2KeyId", "b2AppKey", "b2Bucket"] as const;
+function backupPath(userId: string): string {
+  return `/users/${userId}/b2`;
+}
 
 // RFC3339-ish: 2024-01-15T12:30:00.000Z or with +hh:mm offset. Strict enough
 // to reject anything that could confuse rclone's flag parser; loose enough to
@@ -41,18 +50,25 @@ function maskKey(key: string): string {
   return "\u2022".repeat(key.length - 4) + key.slice(-4);
 }
 
-function getBackupConfig(userId: string): BackupConfig | null {
-  const rows = db
-    .select()
-    .from(schema.userCredentials)
-    .where(eq(schema.userCredentials.userId, userId))
-    .all();
+async function getBackupConfig(userId: string): Promise<BackupConfig | null> {
+  const store = getSecretStore();
+  if (!store.configured) return null;
+  const secrets = await store.getAllSecrets(backupPath(userId));
+  const { b2KeyId, b2AppKey, b2Bucket } = secrets;
+  if (!b2KeyId || !b2AppKey || !b2Bucket) return null;
+  return { b2KeyId, b2AppKey, b2Bucket };
+}
 
-  if (!rows[0]?.backupConfig) return null;
-  try {
-    return JSON.parse(rows[0].backupConfig) as BackupConfig;
-  } catch {
-    return null;
+async function setBackupConfig(userId: string, cfg: BackupConfig): Promise<void> {
+  const store = getSecretStore();
+  await store.setSecrets(backupPath(userId), { ...cfg });
+}
+
+async function deleteBackupConfig(userId: string): Promise<void> {
+  const store = getSecretStore();
+  if (!store.configured) return;
+  for (const name of BACKUP_SECRET_NAMES) {
+    await store.deleteSecret(backupPath(userId), name);
   }
 }
 
@@ -164,13 +180,18 @@ export function userRoutes() {
 
   // --- Backup Config ---
 
-  app.get("/backup", (c) => {
+  app.get("/backup", async (c) => {
     const user = c.get("user");
-    const config = getBackupConfig(user.id);
-    if (!config) return c.json({ configured: false });
+    const store = getSecretStore();
+    if (!store.configured) {
+      return c.json({ configured: false, storeReady: false });
+    }
+    const config = await getBackupConfig(user.id);
+    if (!config) return c.json({ configured: false, storeReady: true });
 
     return c.json({
       configured: true,
+      storeReady: true,
       b2KeyId: config.b2KeyId,
       b2AppKey: maskKey(config.b2AppKey),
       b2Bucket: config.b2Bucket,
@@ -191,8 +212,6 @@ export function userRoutes() {
       b2Bucket: body.b2Bucket.trim(),
     };
 
-    // Fail-closed validation so bad data never reaches the shell or the rclone
-    // config file (where a newline in b2KeyId could inject a fake section).
     try {
       validateBackupConfig(parsed);
     } catch (err) {
@@ -200,40 +219,28 @@ export function userRoutes() {
       return c.json({ error: msg }, 400);
     }
 
-    const config = JSON.stringify(parsed);
-
-    db.insert(schema.userCredentials)
-      .values({ userId: user.id, backupConfig: config, updatedAt: new Date() })
-      .onConflictDoUpdate({
-        target: schema.userCredentials.userId,
-        set: { backupConfig: config, updatedAt: new Date() },
-      })
-      .run();
-
-    // Update rclone config on NFS if home dir exists
-    const homePath = `/homes/${user.id}`;
-    if (existsSync(homePath)) {
-      const rcloneDir = `${homePath}/.config/rclone`;
-      mkdirSync(rcloneDir, { recursive: true });
-      writeFileSync(
-        `${rcloneDir}/rclone.conf`,
-        `[b2]\ntype = b2\naccount = ${parsed.b2KeyId}\nkey = ${parsed.b2AppKey}\n`,
-        { mode: 0o600 },
-      );
-      chownSync(`${rcloneDir}/rclone.conf`, 101000, 101000);
+    try {
+      await setBackupConfig(user.id, parsed);
+    } catch (err) {
+      if (err instanceof SecretStoreNotConfiguredError) {
+        return c.json({ error: err.message }, 503);
+      }
+      throw err;
     }
 
     return c.json({ ok: true });
   });
 
-  app.delete("/backup", (c) => {
+  app.delete("/backup", async (c) => {
     const user = c.get("user");
-
-    db.update(schema.userCredentials)
-      .set({ backupConfig: null, updatedAt: new Date() })
-      .where(eq(schema.userCredentials.userId, user.id))
-      .run();
-
+    try {
+      await deleteBackupConfig(user.id);
+    } catch (err) {
+      if (err instanceof SecretStoreNotConfiguredError) {
+        return c.json({ error: err.message }, 503);
+      }
+      throw err;
+    }
     return c.json({ ok: true });
   });
 
@@ -241,7 +248,7 @@ export function userRoutes() {
 
   app.get("/backup/status", async (c) => {
     const user = c.get("user");
-    const config = getBackupConfig(user.id);
+    const config = await getBackupConfig(user.id);
     if (!config) return c.json({ error: "Backup not configured" }, 400);
 
     const username = getUsername(user.id);
@@ -264,7 +271,7 @@ export function userRoutes() {
 
   app.get("/backup/files", async (c) => {
     const user = c.get("user");
-    const config = getBackupConfig(user.id);
+    const config = await getBackupConfig(user.id);
     if (!config) return c.json({ error: "Backup not configured" }, 400);
 
     const username = getUsername(user.id);
@@ -296,7 +303,7 @@ export function userRoutes() {
 
   app.post("/backup/save", async (c) => {
     const user = c.get("user");
-    const config = getBackupConfig(user.id);
+    const config = await getBackupConfig(user.id);
     if (!config) return c.json({ error: "Backup not configured" }, 400);
 
     const homePath = `/homes/${user.id}`;
@@ -346,7 +353,7 @@ export function userRoutes() {
 
   app.post("/backup/restore", async (c) => {
     const user = c.get("user");
-    const config = getBackupConfig(user.id);
+    const config = await getBackupConfig(user.id);
     if (!config) return c.json({ error: "Backup not configured" }, 400);
 
     // Optional { snapshotAt } — ISO timestamp. When present, rclone uses
@@ -410,7 +417,7 @@ export function userRoutes() {
   //   unknown  — rclone errored or returned something unparseable
   app.get("/backup/versioning", async (c) => {
     const user = c.get("user");
-    const config = getBackupConfig(user.id);
+    const config = await getBackupConfig(user.id);
     if (!config) return c.json({ error: "Backup not configured" }, 400);
 
     let confPath: string;
