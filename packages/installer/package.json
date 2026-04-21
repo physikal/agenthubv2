@@ -16,7 +16,8 @@
     "dev": "tsx src/index.tsx",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "ink": "5.0.1",
@@ -30,6 +31,7 @@
     "@types/node": "22.15.32",
     "@types/react": "18.3.12",
     "tsx": "4.19.4",
-    "typescript": "5.8.3"
+    "typescript": "5.8.3",
+    "vitest": "2.1.8"
   }
 }
