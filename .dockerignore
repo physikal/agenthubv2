@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+dist
+**/dist
+*.db
+*.sqlite
+.env
+.env.*
+.git
+.github
+.omc
+docs
+compose
+*.md
+!README.md

@@ -1,0 +1,29 @@
+node_modules/
+dist/
+*.db
+*.sqlite
+*.tsbuildinfo
+
+# Secrets & credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_ed25519
+id_rsa
+*.p12
+*.pfx
+credentials.json
+.credentials.json
+secrets.json
+token.json
+
+# Editor/tool state (not project content)
+.claude.json
+.serena/
+.superpowers/
+.omc/
+.vscode/
+.idea/
+
