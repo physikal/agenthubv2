@@ -610,9 +610,21 @@ export async function deploy(input: DeployInput): Promise<DeployResult> {
           : cfConfigs[0];
 
         if (cfConfig) {
-          const cf = JSON.parse(cfConfig.config) as { apiToken: string; zoneId: string };
-          updateDeployment(deployId, { statusDetail: "Creating DNS record..." });
-          await createCloudflareDns(cf.apiToken, cf.zoneId, input.domain, hostIp);
+          // Metadata-only on the row (apiToken lives in Infisical via splitSecrets).
+          // resolveInfraConfig merges them back so we have the full config.
+          const cf = (await resolveInfraConfig(
+            input.userId,
+            cfConfig.id,
+            JSON.parse(cfConfig.config) as Record<string, unknown>,
+          )) as { apiToken?: string; zoneId?: string };
+          if (!cf.apiToken || !cf.zoneId) {
+            console.warn(
+              `[deploy] Cloudflare config ${cfConfig.id} missing apiToken or zoneId; skipping DNS`,
+            );
+          } else {
+            updateDeployment(deployId, { statusDetail: "Creating DNS record..." });
+            await createCloudflareDns(cf.apiToken, cf.zoneId, input.domain, hostIp);
+          }
         }
       }
 
@@ -845,8 +857,14 @@ export async function destroyDeployment(
       const cfConfig = cfConfigs[0];
       if (cfConfig) {
         try {
-          const cf = JSON.parse(cfConfig.config) as { apiToken: string; zoneId: string };
-          await deleteCloudflareDns(cf.apiToken, cf.zoneId, deployment.domain);
+          const cf = (await resolveInfraConfig(
+            userId,
+            cfConfig.id,
+            JSON.parse(cfConfig.config) as Record<string, unknown>,
+          )) as { apiToken?: string; zoneId?: string };
+          if (cf.apiToken && cf.zoneId) {
+            await deleteCloudflareDns(cf.apiToken, cf.zoneId, deployment.domain);
+          }
         } catch {
           // Best effort
         }

@@ -9,6 +9,7 @@ const SECRET_FIELDS: Record<string, readonly string[]> = {
   docker: ["sshPrivateKey"],
   digitalocean: ["apiToken"],
   dokploy: ["apiToken"],
+  b2: ["b2AppKey"],
 };
 
 /**

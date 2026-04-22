@@ -79,7 +79,7 @@ export const infrastructureConfigs = sqliteTable("infrastructure_configs", {
     .references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull().default(""),
   provider: text("provider", {
-    enum: ["docker", "digitalocean", "dokploy", "cloudflare"],
+    enum: ["docker", "digitalocean", "dokploy", "cloudflare", "b2"],
   }).notNull(),
   config: text("config").notNull(),
   hostingNodeIp: text("hosting_node_ip"),

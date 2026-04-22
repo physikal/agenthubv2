@@ -1,10 +1,23 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "../lib/api.ts";
 
+type Provider = "cloudflare" | "digitalocean" | "docker" | "dokploy" | "b2";
+
+const PROVIDER_LABEL: Record<Provider, string> = {
+  cloudflare: "Cloudflare DNS",
+  digitalocean: "DigitalOcean",
+  docker: "Docker host",
+  dokploy: "Dokploy",
+  b2: "Backblaze B2",
+};
+
+// Compute providers have a hosting node to provision/destroy.
+const COMPUTE_PROVIDERS: ReadonlySet<Provider> = new Set(["docker", "digitalocean", "dokploy"]);
+
 interface InfraConfig {
   id: string;
   name: string;
-  provider: string;
+  provider: Provider;
   config: Record<string, string | undefined>;
   hostingNodeIp: string | null;
   hostingNodeId: string | null;
@@ -17,7 +30,6 @@ interface StatusResponse {
   statusDetail: string | null;
   hostingNodeIp: string | null;
   hostingNodeId: string | null;
-  healthy?: boolean;
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -35,7 +47,7 @@ const STATUS_COLOR: Record<string, string> = {
 };
 
 const STATUS_LABEL: Record<string, string> = {
-  ready: "Active",
+  ready: "Ready",
   provisioning: "Provisioning...",
   error: "Failed",
   pending: "Not provisioned",
@@ -53,6 +65,7 @@ function ConfigCard({
   const [current, setCurrent] = useState(infra);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [provisioning, setProvisioning] = useState(false);
+  const isCompute = COMPUTE_PROVIDERS.has(current.provider);
 
   useEffect(() => setCurrent(infra), [infra]);
 
@@ -86,6 +99,24 @@ function ConfigCard({
     return () => clearInterval(interval);
   }, [current.id, current.status, onRefresh]);
 
+  const handleVerify = async () => {
+    setMessage(null);
+    try {
+      const res = await api(`/api/infra/${current.id}/verify`, { method: "POST" });
+      const body = (await res.json()) as { ok?: boolean; issues?: string[]; error?: string };
+      if (res.ok && body.ok) {
+        setMessage({ text: "Verified", error: false });
+      } else {
+        setMessage({
+          text: body.error ?? body.issues?.join(", ") ?? "Verify failed",
+          error: true,
+        });
+      }
+    } catch {
+      setMessage({ text: "Verify failed", error: true });
+    }
+  };
+
   const handleProvision = async () => {
     setProvisioning(true);
     setMessage(null);
@@ -104,8 +135,8 @@ function ConfigCard({
     }
   };
 
-  const handleDestroy = async () => {
-    if (!confirm(`Destroy hosting node for "${current.name}"? All deployed apps on it will be lost.`)) return;
+  const handleDestroyNode = async () => {
+    if (!confirm(`Destroy hosting node for "${current.name}"? Apps deployed to it will be lost.`)) return;
     try {
       const res = await api(`/api/infra/${current.id}/hosting-node`, { method: "DELETE" });
       if (res.ok) {
@@ -121,7 +152,7 @@ function ConfigCard({
   };
 
   const handleDelete = async () => {
-    if (!confirm(`Delete "${current.name}" configuration?`)) return;
+    if (!confirm(`Delete "${current.name}" integration?`)) return;
     try {
       const res = await api(`/api/infra/${current.id}`, { method: "DELETE" });
       if (res.ok) onRefresh();
@@ -142,16 +173,18 @@ function ConfigCard({
             <span className={`w-2 h-2 rounded-full ${STATUS_DOT[current.status] ?? "bg-zinc-500"} ${current.status === "provisioning" ? "animate-pulse" : ""}`} />
             <h3 className="font-medium text-zinc-100">{current.name}</h3>
           </div>
-          <span className="text-xs text-zinc-500">{current.provider}</span>
+          <span className="text-xs text-zinc-500">{PROVIDER_LABEL[current.provider] ?? current.provider}</span>
         </div>
-        <span className={`text-xs ${STATUS_COLOR[current.status] ?? "text-zinc-500"}`}>
-          {STATUS_LABEL[current.status] ?? current.status}
-        </span>
+        {isCompute && (
+          <span className={`text-xs ${STATUS_COLOR[current.status] ?? "text-zinc-500"}`}>
+            {STATUS_LABEL[current.status] ?? current.status}
+          </span>
+        )}
       </div>
 
       {current.hostingNodeIp && (
         <p className="text-sm text-zinc-300 mb-1">
-          IP: <code className="text-zinc-100">{current.hostingNodeIp}</code>
+          {current.provider === "dokploy" ? "URL" : "IP"}: <code className="text-zinc-100">{current.hostingNodeIp}</code>
           {current.hostingNodeId && <span className="text-xs text-zinc-500 ml-2">ID: {current.hostingNodeId}</span>}
         </p>
       )}
@@ -162,8 +195,14 @@ function ConfigCard({
         </p>
       )}
 
-      <div className="flex gap-2 mt-2">
-        {(current.status === "pending" || current.status === "error") && (
+      <div className="flex flex-wrap gap-2 mt-2">
+        <button
+          onClick={() => void handleVerify()}
+          className="px-3 py-1.5 text-xs text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-800 transition-colors"
+        >
+          Verify
+        </button>
+        {isCompute && (current.status === "pending" || current.status === "error") && (
           <button
             onClick={() => void handleProvision()}
             disabled={provisioning}
@@ -172,9 +211,9 @@ function ConfigCard({
             {provisioning ? "Provisioning..." : current.status === "error" ? "Retry" : "Provision"}
           </button>
         )}
-        {current.status === "ready" && (
+        {isCompute && current.status === "ready" && (
           <button
-            onClick={() => void handleDestroy()}
+            onClick={() => void handleDestroyNode()}
             className="px-3 py-1.5 text-xs text-red-400 border border-zinc-700 rounded-lg hover:bg-zinc-800 transition-colors"
           >
             Destroy Node
@@ -182,7 +221,7 @@ function ConfigCard({
         )}
         <button
           onClick={() => void handleDelete()}
-          className="px-3 py-1.5 text-xs text-zinc-400 border border-zinc-700 rounded-lg hover:text-zinc-200 transition-colors"
+          className="px-3 py-1.5 text-xs text-zinc-400 border border-zinc-700 rounded-lg hover:text-zinc-200 transition-colors ml-auto"
         >
           Delete
         </button>
@@ -197,36 +236,111 @@ function ConfigCard({
 
 // --- Add Config Form ---
 
+type FieldValues = Record<string, string>;
+
+function renderFields(
+  provider: Provider,
+  values: FieldValues,
+  setValue: (key: string, value: string) => void,
+): React.ReactNode {
+  const input = (
+    key: string,
+    label: string,
+    placeholder: string,
+    type: "text" | "password" = "text",
+    span?: 1 | 2,
+  ) => (
+    <div className={span === 2 ? "col-span-2" : undefined}>
+      <label className="block text-xs text-zinc-500 mb-1">{label}</label>
+      <input
+        type={type}
+        value={values[key] ?? ""}
+        onChange={(e) => setValue(key, e.target.value)}
+        placeholder={placeholder}
+        className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none"
+      />
+    </div>
+  );
+
+  const textarea = (key: string, label: string, placeholder: string) => (
+    <div className="col-span-2">
+      <label className="block text-xs text-zinc-500 mb-1">{label}</label>
+      <textarea
+        value={values[key] ?? ""}
+        onChange={(e) => setValue(key, e.target.value)}
+        placeholder={placeholder}
+        rows={4}
+        className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm font-mono focus:border-purple-500 focus:outline-none"
+      />
+    </div>
+  );
+
+  switch (provider) {
+    case "cloudflare":
+      return (
+        <>
+          {input("apiToken", "API Token", "CF API token", "password")}
+          {input("zoneId", "Zone ID", "Zone ID from CF dashboard")}
+        </>
+      );
+    case "digitalocean":
+      return (
+        <>
+          {input("apiToken", "API Token", "dop_v1_...", "password", 2)}
+          {input("region", "Region", "sfo3, nyc3, lon1…")}
+          {input("size", "Size (optional)", "s-2vcpu-4gb")}
+          {input("image", "Image (optional)", "docker-20-04")}
+          {input("sshKeyId", "SSH Key ID", "numeric ID or fingerprint")}
+        </>
+      );
+    case "docker":
+      return (
+        <>
+          {input("hostIp", "Host IP or hostname", "1.2.3.4", "text", 2)}
+          {input("sshUser", "SSH user (optional)", "root")}
+          {input("", "", "", "text")}
+          {textarea("sshPrivateKey", "SSH Private Key", "-----BEGIN OPENSSH PRIVATE KEY-----")}
+        </>
+      );
+    case "dokploy":
+      return (
+        <>
+          {input("baseUrl", "Base URL", "https://dokploy.example.com", "text", 2)}
+          {input("apiToken", "API Token", "Dokploy API token", "password", 2)}
+          {input("projectId", "Project ID", "proj_...")}
+          {input("environmentId", "Environment ID", "env_...")}
+        </>
+      );
+    case "b2":
+      return (
+        <>
+          {input("b2KeyId", "Application Key ID", "00abc1234def")}
+          {input("b2Bucket", "Bucket Name", "my-backup-bucket")}
+          {input("b2AppKey", "Application Key", "K001xxxx...", "password", 2)}
+        </>
+      );
+  }
+}
+
 function AddConfigForm({ onCreated }: { onCreated: () => void }) {
-  const [provider, setProvider] = useState("proxmox");
+  const [provider, setProvider] = useState<Provider>("cloudflare");
   const [name, setName] = useState("");
+  const [values, setValues] = useState<FieldValues>({});
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
 
-  // Proxmox fields
-  const [apiUrl, setApiUrl] = useState("");
-  const [tokenId, setTokenId] = useState("");
-  const [tokenSecret, setTokenSecret] = useState("");
-  const [node, setNode] = useState("");
-  const [storage, setStorage] = useState("");
-
-  // Cloudflare
-  const [cfToken, setCfToken] = useState("");
-  const [cfZoneId, setCfZoneId] = useState("");
+  const setValue = (key: string, value: string) => {
+    setValues((prev) => ({ ...prev, [key]: value }));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) { setMessage({ text: "Name required", error: true }); return; }
 
-    let config: Record<string, string> = {};
-    if (provider === "proxmox") {
-      if (!apiUrl || !tokenId || !tokenSecret || !node || !storage) {
-        setMessage({ text: "All Proxmox fields required", error: true }); return;
-      }
-      config = { apiUrl, tokenId, tokenSecret, node, storage };
-    } else if (provider === "cloudflare") {
-      if (!cfToken || !cfZoneId) { setMessage({ text: "API token and Zone ID required", error: true }); return; }
-      config = { apiToken: cfToken, zoneId: cfZoneId };
+    // Strip empty values so backend's validation sees only provided fields.
+    const config: Record<string, string> = {};
+    for (const [k, v] of Object.entries(values)) {
+      if (k && v.trim()) config[k] = v.trim();
     }
 
     setSaving(true);
@@ -239,8 +353,8 @@ function AddConfigForm({ onCreated }: { onCreated: () => void }) {
       });
       if (res.ok) {
         setMessage({ text: "Created", error: false });
-        setName(""); setApiUrl(""); setTokenId(""); setTokenSecret("");
-        setNode(""); setStorage(""); setCfToken(""); setCfZoneId("");
+        setName("");
+        setValues({});
         onCreated();
       } else {
         const body = (await res.json()) as { error?: string };
@@ -261,7 +375,7 @@ function AddConfigForm({ onCreated }: { onCreated: () => void }) {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. proxmox-home, do-staging"
+            placeholder="e.g. cf-prod, do-staging, home-docker"
             className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none"
           />
         </div>
@@ -269,56 +383,25 @@ function AddConfigForm({ onCreated }: { onCreated: () => void }) {
           <label className="block text-xs text-zinc-500 mb-1">Provider</label>
           <select
             value={provider}
-            onChange={(e) => setProvider(e.target.value)}
+            onChange={(e) => {
+              setProvider(e.target.value as Provider);
+              setValues({});
+              setMessage(null);
+            }}
             className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none"
           >
             <option value="cloudflare">Cloudflare DNS</option>
+            <option value="digitalocean">DigitalOcean</option>
+            <option value="docker">Docker host</option>
+            <option value="dokploy">Dokploy</option>
+            <option value="b2">Backblaze B2 (backups)</option>
           </select>
         </div>
       </div>
 
-      {provider === "cloudflare" ? (
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs text-zinc-500 mb-1">API Token</label>
-            <input type="password" value={cfToken} onChange={(e) => setCfToken(e.target.value)} placeholder="CF API token"
-              className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none" />
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-500 mb-1">Zone ID</label>
-            <input value={cfZoneId} onChange={(e) => setCfZoneId(e.target.value)} placeholder="Zone ID from CF dashboard"
-              className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none" />
-          </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">
-            <label className="block text-xs text-zinc-500 mb-1">API URL</label>
-            <input value={apiUrl} onChange={(e) => setApiUrl(e.target.value)} placeholder="https://192.168.5.100:8006/api2/json"
-              className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none" />
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-500 mb-1">Token ID</label>
-            <input value={tokenId} onChange={(e) => setTokenId(e.target.value)} placeholder="root@pam!deploy"
-              className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none" />
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-500 mb-1">Token Secret</label>
-            <input type="password" value={tokenSecret} onChange={(e) => setTokenSecret(e.target.value)} placeholder="xxxxxxxx-xxxx-xxxx"
-              className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none" />
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-500 mb-1">Node</label>
-            <input value={node} onChange={(e) => setNode(e.target.value)} placeholder="pve05"
-              className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none" />
-          </div>
-          <div>
-            <label className="block text-xs text-zinc-500 mb-1">Storage</label>
-            <input value={storage} onChange={(e) => setStorage(e.target.value)} placeholder="local-lvm"
-              className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none" />
-          </div>
-        </div>
-      )}
+      <div className="grid grid-cols-2 gap-3">
+        {renderFields(provider, values, setValue)}
+      </div>
 
       {message && (
         <p className={`text-sm ${message.error ? "text-red-400" : "text-green-400"}`}>{message.text}</p>
@@ -329,7 +412,7 @@ function AddConfigForm({ onCreated }: { onCreated: () => void }) {
         disabled={saving || !name.trim()}
         className="w-full py-2 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
       >
-        {saving ? "Creating..." : "Add Infrastructure"}
+        {saving ? "Creating..." : "Add integration"}
       </button>
     </form>
   );
@@ -337,7 +420,7 @@ function AddConfigForm({ onCreated }: { onCreated: () => void }) {
 
 // --- Main Page ---
 
-export function Infrastructure() {
+export function Integrations() {
   const [configs, setConfigs] = useState<InfraConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -355,7 +438,7 @@ export function Infrastructure() {
   if (loading) {
     return (
       <div className="flex-1 overflow-auto p-6">
-        <h2 className="text-2xl font-semibold mb-6">Infrastructure</h2>
+        <h2 className="text-2xl font-semibold mb-6">Integrations</h2>
         <p className="text-sm text-zinc-500">Loading...</p>
       </div>
     );
@@ -364,27 +447,27 @@ export function Infrastructure() {
   return (
     <div className="flex-1 overflow-auto p-6">
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-2xl font-semibold">Infrastructure</h2>
+        <h2 className="text-2xl font-semibold">Integrations</h2>
         <button
           onClick={() => setShowAdd(!showAdd)}
           className="px-4 py-2 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-500 transition-colors"
         >
-          {showAdd ? "Cancel" : "Add Config"}
+          {showAdd ? "Cancel" : "Add integration"}
         </button>
       </div>
       <p className="text-sm text-zinc-500 mb-6">
-        Add multiple infrastructure configs. Each gets its own hosting node for deployments.
+        Credentials your agent can use: DNS providers, deploy targets, backup storage.
       </p>
 
-      <div className="max-w-lg space-y-4">
+      <div className="max-w-2xl space-y-4">
         {showAdd && (
           <AddConfigForm onCreated={() => { setShowAdd(false); void fetchConfigs(); }} />
         )}
 
         {configs.length === 0 && !showAdd ? (
           <div className="text-center py-12">
-            <p className="text-zinc-500 text-sm mb-2">No infrastructure configured</p>
-            <p className="text-zinc-600 text-xs">Add a Proxmox or DigitalOcean config to get started.</p>
+            <p className="text-zinc-500 text-sm mb-2">No integrations configured</p>
+            <p className="text-zinc-600 text-xs">Add Cloudflare DNS, a Docker host, DigitalOcean, Dokploy, or Backblaze B2.</p>
           </div>
         ) : (
           configs.map((c) => (

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import type { AuthUser } from "../middleware/auth.js";
 import {
@@ -12,6 +12,11 @@ import {
   getSecretStore,
   SecretStoreNotConfiguredError,
 } from "../services/secrets/index.js";
+import {
+  deleteInfraSecrets,
+  resolveInfraConfig,
+  storeInfraSecrets,
+} from "../services/secrets/helpers.js";
 import type {
   BackupParams,
   BackupResult,
@@ -27,8 +32,11 @@ interface BackupConfig {
   b2Bucket: string;
 }
 
+// Legacy Infisical path used before B2 became a first-class row in
+// infrastructure_configs. Still read as a fallback so users who configured
+// B2 before the refactor don't lose access; wiped on next setBackupConfig.
 const BACKUP_SECRET_NAMES = ["b2KeyId", "b2AppKey", "b2Bucket"] as const;
-function backupPath(userId: string): string {
+function legacyBackupPath(userId: string): string {
   return `/users/${userId}/b2`;
 }
 
@@ -43,25 +51,109 @@ function maskKey(key: string): string {
   return "•".repeat(key.length - 4) + key.slice(-4);
 }
 
+function getB2Row(userId: string) {
+  return db
+    .select()
+    .from(schema.infrastructureConfigs)
+    .where(
+      and(
+        eq(schema.infrastructureConfigs.userId, userId),
+        eq(schema.infrastructureConfigs.provider, "b2"),
+      ),
+    )
+    .get();
+}
+
 async function getBackupConfig(userId: string): Promise<BackupConfig | null> {
+  // New path: one row in infrastructure_configs with provider='b2'.
+  const row = getB2Row(userId);
+  if (row) {
+    const full = await resolveInfraConfig(
+      userId,
+      row.id,
+      JSON.parse(row.config) as Record<string, unknown>,
+    );
+    const b2KeyId = typeof full["b2KeyId"] === "string" ? full["b2KeyId"] : "";
+    const b2AppKey = typeof full["b2AppKey"] === "string" ? full["b2AppKey"] : "";
+    const b2Bucket = typeof full["b2Bucket"] === "string" ? full["b2Bucket"] : "";
+    if (b2KeyId && b2AppKey && b2Bucket) return { b2KeyId, b2AppKey, b2Bucket };
+  }
+
+  // Legacy path: secrets under /users/{u}/b2 from before the refactor.
   const store = getSecretStore();
   if (!store.configured) return null;
-  const secrets = await store.getAllSecrets(backupPath(userId));
+  const secrets = await store.getAllSecrets(legacyBackupPath(userId));
   const { b2KeyId, b2AppKey, b2Bucket } = secrets;
   if (!b2KeyId || !b2AppKey || !b2Bucket) return null;
   return { b2KeyId, b2AppKey, b2Bucket };
 }
 
 async function setBackupConfig(userId: string, cfg: BackupConfig): Promise<void> {
+  const existing = getB2Row(userId);
+  const now = new Date();
+  const metadata = { b2KeyId: cfg.b2KeyId, b2Bucket: cfg.b2Bucket };
+  const secrets = { b2AppKey: cfg.b2AppKey };
+
+  if (existing) {
+    await storeInfraSecrets(userId, existing.id, secrets);
+    db.update(schema.infrastructureConfigs)
+      .set({ config: JSON.stringify(metadata), status: "ready", updatedAt: now })
+      .where(eq(schema.infrastructureConfigs.id, existing.id))
+      .run();
+  } else {
+    const id = randomUUID();
+    await storeInfraSecrets(userId, id, secrets);
+    db.insert(schema.infrastructureConfigs)
+      .values({
+        id,
+        userId,
+        name: "backups",
+        provider: "b2",
+        config: JSON.stringify(metadata),
+        status: "ready",
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+  }
+
+  // Tidy up any legacy Infisical entries so they don't linger as a stale
+  // fallback after migration. Best-effort — not fatal if missing.
   const store = getSecretStore();
-  await store.setSecrets(backupPath(userId), { ...cfg });
+  if (store.configured) {
+    for (const name of BACKUP_SECRET_NAMES) {
+      try {
+        await store.deleteSecret(legacyBackupPath(userId), name);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
 
 async function deleteBackupConfig(userId: string): Promise<void> {
+  const row = getB2Row(userId);
+  if (row) {
+    try {
+      await deleteInfraSecrets(userId, row.id);
+    } catch {
+      /* best-effort */
+    }
+    db.delete(schema.infrastructureConfigs)
+      .where(eq(schema.infrastructureConfigs.id, row.id))
+      .run();
+  }
+
+  // Also purge legacy secrets from before the refactor.
   const store = getSecretStore();
-  if (!store.configured) return;
-  for (const name of BACKUP_SECRET_NAMES) {
-    await store.deleteSecret(backupPath(userId), name);
+  if (store.configured) {
+    for (const name of BACKUP_SECRET_NAMES) {
+      try {
+        await store.deleteSecret(legacyBackupPath(userId), name);
+      } catch {
+        /* ignore */
+      }
+    }
   }
 }
 

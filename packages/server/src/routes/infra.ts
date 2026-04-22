@@ -21,19 +21,26 @@ import { getHostingProvider } from "../services/providers/index.js";
  * land in Phase 5 with their own provision/verify/destroy flows.
  */
 
-const MASKED_FIELDS = new Set(["tokenSecret", "apiToken"]);
+const MASKED_FIELDS = new Set([
+  "tokenSecret",
+  "apiToken",
+  "sshPrivateKey",
+  "b2AppKey",
+]);
 type Provider = (typeof schema.infrastructureConfigs.$inferSelect)["provider"];
 const KNOWN_PROVIDERS: Provider[] = [
   "docker",
   "digitalocean",
   "dokploy",
   "cloudflare",
+  "b2",
 ];
 const FULLY_IMPLEMENTED: Provider[] = [
   "cloudflare",
   "docker",
   "digitalocean",
   "dokploy",
+  "b2",
 ];
 
 function maskConfig(configJson: string): Record<string, unknown> {
@@ -49,8 +56,29 @@ function maskConfig(configJson: string): Record<string, unknown> {
   return masked;
 }
 
-function isValidCloudflareConfig(config: Record<string, unknown>): boolean {
-  return !!(config["apiToken"] && config["zoneId"]);
+function validateConfigForProvider(
+  provider: string,
+  config: Record<string, unknown>,
+): { ok: boolean; issues: string[] } {
+  // Non-compute providers validated inline here (no HostingProvider class):
+  if (provider === "cloudflare") {
+    const issues: string[] = [];
+    if (!config["apiToken"]) issues.push("apiToken required");
+    if (!config["zoneId"]) issues.push("zoneId required");
+    return { ok: issues.length === 0, issues };
+  }
+  if (provider === "b2") {
+    const issues: string[] = [];
+    if (!config["b2KeyId"]) issues.push("b2KeyId required");
+    if (!config["b2AppKey"]) issues.push("b2AppKey required");
+    if (!config["b2Bucket"]) issues.push("b2Bucket required");
+    return { ok: issues.length === 0, issues };
+  }
+  // Compute providers: defer to the HostingProvider's own validate() so we
+  // don't duplicate the per-provider field list here.
+  const hostingProvider = getHostingProvider(provider);
+  if (hostingProvider) return hostingProvider.validate(config);
+  return { ok: false, issues: [`unknown provider: ${provider}`] };
 }
 
 export function infraRoutes() {
@@ -143,15 +171,16 @@ export function infraRoutes() {
       );
     }
 
-    if (body.provider === "cloudflare" && !isValidCloudflareConfig(body.config)) {
-      return c.json({ error: "apiToken and zoneId required" }, 400);
+    const validation = validateConfigForProvider(body.provider, body.config);
+    if (!validation.ok) {
+      return c.json({ error: validation.issues.join(", ") }, 400);
     }
 
     if (!(FULLY_IMPLEMENTED as string[]).includes(body.provider)) {
       return c.json(
         {
           error:
-            `provider "${body.provider}" is scaffolded but not yet wired — coming in Phase 5`,
+            `provider "${body.provider}" is scaffolded but not yet wired`,
         },
         501,
       );

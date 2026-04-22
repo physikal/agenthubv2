@@ -5,7 +5,7 @@ import { Sessions } from "./pages/Sessions.tsx";
 import { Settings } from "./pages/Settings.tsx";
 import { Backups } from "./pages/Backups.tsx";
 import { Admin } from "./pages/Admin.tsx";
-import { Infrastructure } from "./pages/Infrastructure.tsx";
+import { Integrations } from "./pages/Integrations.tsx";
 import { Deployments } from "./pages/Deployments.tsx";
 import { Login } from "./pages/Login.tsx";
 import { useAuthStore } from "./stores/auth.ts";
@@ -20,7 +20,7 @@ function Layout() {
           <Route path="/settings" element={<Settings />} />
           <Route path="/deployments" element={<Deployments />} />
           <Route path="/backups" element={<Backups />} />
-          <Route path="/infrastructure" element={<Infrastructure />} />
+          <Route path="/integrations" element={<Integrations />} />
           <Route path="/admin/users" element={<Admin />} />
         </Routes>
       </main>

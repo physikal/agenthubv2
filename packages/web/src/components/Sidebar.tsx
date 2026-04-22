@@ -5,7 +5,7 @@ const links = [
   { to: "/", label: "My Sessions", icon: "●" },
   { to: "/deployments", label: "Deployments", icon: "●" },
   { to: "/backups", label: "Backups", icon: "●" },
-  { to: "/infrastructure", label: "Infrastructure", icon: "●" },
+  { to: "/integrations", label: "Integrations", icon: "●" },
   { to: "/settings", label: "Settings", icon: "●" },
 ] as const;
 

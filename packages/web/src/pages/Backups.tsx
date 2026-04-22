@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState, useCallback } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../lib/api.ts";
 
 interface BackupConfig {
@@ -68,13 +69,8 @@ function formatRelative(ts: number): string {
 }
 
 export function Backups() {
-  // Config state
+  // Config state — credentials themselves are managed on the Integrations page.
   const [config, setConfig] = useState<BackupConfig | null>(null);
-  const [b2KeyId, setB2KeyId] = useState("");
-  const [b2AppKey, setB2AppKey] = useState("");
-  const [b2Bucket, setB2Bucket] = useState("");
-  const [configSaving, setConfigSaving] = useState(false);
-  const [configMessage, setConfigMessage] = useState<{ text: string; error: boolean } | null>(null);
 
   // Status state
   const [size, setSize] = useState<BackupSize | null>(null);
@@ -98,13 +94,7 @@ export function Backups() {
     try {
       const res = await api("/api/user/backup");
       if (res.ok) {
-        const data = (await res.json()) as BackupConfig;
-        setConfig(data);
-        if (data.configured) {
-          setB2KeyId(data.b2KeyId ?? "");
-          setB2Bucket(data.b2Bucket ?? "");
-          setB2AppKey("");
-        }
+        setConfig((await res.json()) as BackupConfig);
       }
     } catch {
       // ignore
@@ -161,54 +151,6 @@ export function Backups() {
       void fetchVersioning();
     }
   }, [config?.configured, fetchSize, fetchRuns, fetchVersioning]);
-
-  const handleSaveConfig = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!b2KeyId.trim() || !b2AppKey.trim() || !b2Bucket.trim()) {
-      setConfigMessage({ text: "All fields required", error: true });
-      return;
-    }
-
-    setConfigSaving(true);
-    setConfigMessage(null);
-
-    try {
-      const res = await api("/api/user/backup", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ b2KeyId: b2KeyId.trim(), b2AppKey: b2AppKey.trim(), b2Bucket: b2Bucket.trim() }),
-      });
-
-      if (res.ok) {
-        setConfigMessage({ text: "Saved", error: false });
-        void fetchConfig();
-        void fetchSize();
-        void fetchRuns();
-      } else {
-        const body = (await res.json()) as { error?: string };
-        setConfigMessage({ text: body.error ?? "Failed", error: true });
-      }
-    } catch {
-      setConfigMessage({ text: "Failed to save", error: true });
-    } finally {
-      setConfigSaving(false);
-    }
-  };
-
-  const handleClearConfig = async () => {
-    try {
-      await api("/api/user/backup", { method: "DELETE" });
-      setConfig({ configured: false });
-      setB2KeyId("");
-      setB2AppKey("");
-      setB2Bucket("");
-      setSize(null);
-      setRuns([]);
-      setConfigMessage({ text: "Cleared", error: false });
-    } catch {
-      setConfigMessage({ text: "Failed to clear", error: true });
-    }
-  };
 
   const handleBackup = async () => {
     setOperating("save");
@@ -281,8 +223,14 @@ export function Backups() {
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 bg-green-400 rounded-full" />
                 <span className="text-sm text-zinc-300">Connected to B2</span>
+                <span className="text-xs text-zinc-500">· {config.b2Bucket}</span>
               </div>
-              <span className="text-xs text-zinc-500">{config.b2Bucket}</span>
+              <Link
+                to="/integrations"
+                className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              >
+                manage in Integrations →
+              </Link>
             </div>
 
             <div className="flex items-baseline gap-2 mb-4">
@@ -458,74 +406,27 @@ export function Backups() {
           </div>
         )}
 
-        {/* Config Form */}
-        <div>
-          <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-4">
-            {config?.configured ? "Configuration" : "Setup Backblaze B2"}
-          </h3>
-          <form
-            onSubmit={(e) => void handleSaveConfig(e)}
-            className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3"
-          >
-            <div>
-              <label className="block text-xs text-zinc-500 mb-1">B2 Application Key ID</label>
-              <input
-                value={b2KeyId}
-                onChange={(e) => setB2KeyId(e.target.value)}
-                placeholder="00abc1234def"
-                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-zinc-500 mb-1">B2 Application Key</label>
-              <input
-                type="password"
-                value={b2AppKey}
-                onChange={(e) => setB2AppKey(e.target.value)}
-                placeholder={config?.configured ? "Enter new key to update" : "K001xxxx..."}
-                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-zinc-500 mb-1">Bucket Name</label>
-              <input
-                value={b2Bucket}
-                onChange={(e) => setB2Bucket(e.target.value)}
-                placeholder="my-backup-bucket"
-                className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none"
-              />
-            </div>
-
-            {configMessage && (
-              <p className={`text-sm ${configMessage.error ? "text-red-400" : "text-green-400"}`}>
-                {configMessage.text}
-              </p>
-            )}
-
-            <div className="flex gap-2">
-              <button
-                type="submit"
-                disabled={configSaving || !b2KeyId || !b2AppKey || !b2Bucket}
-                className="flex-1 py-2 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {configSaving ? "Saving..." : "Save"}
-              </button>
-              {config?.configured && (
-                <button
-                  type="button"
-                  onClick={() => void handleClearConfig()}
-                  className="px-4 py-2 text-sm text-zinc-400 border border-zinc-700 rounded-lg hover:text-zinc-200 transition-colors"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-
-            <p className="text-xs text-zinc-600">
-              You can also run <code className="text-zinc-400">backup save</code> or <code className="text-zinc-400">backup restore</code> directly in your terminal session.
+        {/* Not-configured CTA */}
+        {config && !config.configured && (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+            <h3 className="text-sm font-medium text-zinc-200 mb-2">Backblaze B2 not configured</h3>
+            <p className="text-sm text-zinc-400 mb-4">
+              Backups save <code className="text-zinc-300">/home/coder</code> to a Backblaze B2 bucket via rclone. Add B2 credentials on the Integrations page to enable backups.
             </p>
-          </form>
-        </div>
+            <Link
+              to="/integrations"
+              className="inline-block px-4 py-2 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-500 transition-colors"
+            >
+              Go to Integrations
+            </Link>
+          </div>
+        )}
+
+        {config?.configured && (
+          <p className="text-xs text-zinc-600">
+            You can also run <code className="text-zinc-400">backup save</code> or <code className="text-zinc-400">backup restore</code> directly in your terminal session.
+          </p>
+        )}
       </div>
     </div>
   );
