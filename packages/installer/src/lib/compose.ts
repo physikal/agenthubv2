@@ -55,6 +55,18 @@ export function composePull(opts: ComposeUpOptions): Promise<void> {
   return runCompose(["pull", "--ignore-pull-failures"], opts);
 }
 
+export interface RecreateServiceOptions extends ComposeUpOptions {
+  service: string;
+}
+
+/** `docker compose up -d --force-recreate <service>` to pick up new env. */
+export function recreateService(opts: RecreateServiceOptions): Promise<void> {
+  return runCompose(
+    ["up", "-d", "--force-recreate", opts.service],
+    opts,
+  );
+}
+
 function runCompose(
   subcommand: string[],
   opts: ComposeUpOptions,

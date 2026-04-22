@@ -92,6 +92,10 @@ services:
       TELEMETRY_ENABLED: "false"
     networks:
       - agenthub
+    # Bind only to loopback on the host so the installer can hit it for
+    # first-run bootstrap. External traffic still goes through Traefik.
+    ports:
+      - "127.0.0.1:8080:8080"
     labels:
       - traefik.enable=true
       - traefik.http.routers.infisical.rule=Host(`secrets.${DOMAIN}`)

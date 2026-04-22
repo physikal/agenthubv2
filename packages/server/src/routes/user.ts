@@ -1,7 +1,4 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, writeFileSync, chownSync } from "node:fs";
-import { promisify } from "node:util";
 import { Hono } from "hono";
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
@@ -15,18 +12,14 @@ import {
   getSecretStore,
   SecretStoreNotConfiguredError,
 } from "../services/secrets/index.js";
+import type {
+  BackupParams,
+  BackupResult,
+  SessionManager,
+} from "../services/session-manager.js";
 
-const BACKUP_SECRET_NAMES = ["b2KeyId", "b2AppKey", "b2Bucket"] as const;
-function backupPath(userId: string): string {
-  return `/users/${userId}/b2`;
-}
-
-// RFC3339-ish: 2024-01-15T12:30:00.000Z or with +hh:mm offset. Strict enough
-// to reject anything that could confuse rclone's flag parser; loose enough to
-// accept whatever `new Date().toISOString()` produces on the client.
+// RFC3339-ish: 2024-01-15T12:30:00.000Z or with +hh:mm offset.
 const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
-
-const execFileAsync = promisify(execFile);
 
 interface BackupConfig {
   b2KeyId: string;
@@ -34,11 +27,11 @@ interface BackupConfig {
   b2Bucket: string;
 }
 
-/**
- * Validate stored config before using in shell commands. Throws if any field
- * fails the allowlist check — fail-closed. Older rows with invalid data
- * should refuse to run rather than silently allow injection.
- */
+const BACKUP_SECRET_NAMES = ["b2KeyId", "b2AppKey", "b2Bucket"] as const;
+function backupPath(userId: string): string {
+  return `/users/${userId}/b2`;
+}
+
 function validateBackupConfig(config: BackupConfig): void {
   assertSafeB2Credential(config.b2KeyId, "b2KeyId");
   assertSafeB2Credential(config.b2AppKey, "b2AppKey");
@@ -46,8 +39,8 @@ function validateBackupConfig(config: BackupConfig): void {
 }
 
 function maskKey(key: string): string {
-  if (key.length <= 4) return "\u2022".repeat(key.length);
-  return "\u2022".repeat(key.length - 4) + key.slice(-4);
+  if (key.length <= 4) return "•".repeat(key.length);
+  return "•".repeat(key.length - 4) + key.slice(-4);
 }
 
 async function getBackupConfig(userId: string): Promise<BackupConfig | null> {
@@ -73,44 +66,13 @@ async function deleteBackupConfig(userId: string): Promise<void> {
 }
 
 function getUsername(userId: string): string {
+  assertSafeUserId(userId);
   const rows = db
     .select({ username: schema.users.username })
     .from(schema.users)
     .where(eq(schema.users.id, userId))
     .all();
   return rows[0]?.username ?? userId;
-}
-
-/**
- * Write a temporary rclone config for server-side operations. Returns config path.
- * Caller must call validateBackupConfig() first — unvalidated credentials
- * with a newline would inject fake config sections (e.g. redirecting `type`).
- */
-function writeRcloneConfig(userId: string, config: BackupConfig): string {
-  assertSafeUserId(userId);
-  validateBackupConfig(config);
-  const dir = `/tmp/rclone-${userId}`;
-  mkdirSync(dir, { recursive: true });
-  const confPath = `${dir}/rclone.conf`;
-  writeFileSync(confPath, `[b2]\ntype = b2\naccount = ${config.b2KeyId}\nkey = ${config.b2AppKey}\n`, { mode: 0o600 });
-  return confPath;
-}
-
-/**
- * Run rclone with arguments passed as an argv array — never a shell string.
- *
- * Async (`execFile`) so long-running rclone calls (`sync`/`copy` with 5 min
- * timeout) don't block every other HTTP request, WebSocket upgrade, and pool
- * tick on the single Node event loop. Previously `execFileSync` could freeze
- * the whole server while one user's backup ran.
- */
-async function rcloneExec(confPath: string, args: string[], timeoutMs: number): Promise<string> {
-  const { stdout } = await execFileAsync(
-    "rclone",
-    ["--config", confPath, ...args],
-    { timeout: timeoutMs, encoding: "utf-8", maxBuffer: 16 * 1024 * 1024 },
-  );
-  return stdout;
 }
 
 function startBackupRun(
@@ -149,33 +111,22 @@ function finishBackupRun(
     .run();
 }
 
-async function safeRcloneSize(confPath: string, bucket: string): Promise<{ count: number; bytes: number } | null> {
-  try {
-    const output = await rcloneExec(confPath, ["size", bucket, "--json"], 30_000);
-    return JSON.parse(output) as { count: number; bytes: number };
-  } catch {
-    return null;
-  }
+function toAgentParams(
+  cfg: BackupConfig,
+  username: string,
+  snapshotAt?: string,
+): BackupParams {
+  const params: BackupParams = {
+    b2KeyId: cfg.b2KeyId,
+    b2AppKey: cfg.b2AppKey,
+    b2Bucket: cfg.b2Bucket,
+    subdir: username,
+  };
+  if (snapshotAt) params.snapshotAt = snapshotAt;
+  return params;
 }
 
-/**
- * Extract a useful error string from a failed execFile call. Node's default
- * `err.message` is just "Command failed: <cmd>" when stderr is empty, which
- * tells us nothing about what rclone actually complained about. We fall back
- * through stderr → stdout → exit code → message so we always surface the
- * most informative piece.
- */
-function extractExecError(err: unknown, fallback: string): string {
-  const e = err as { stderr?: string | Buffer; stdout?: string | Buffer; code?: number | string; message?: string };
-  const stderr = typeof e.stderr === "string" ? e.stderr : e.stderr?.toString("utf-8") ?? "";
-  const stdout = typeof e.stdout === "string" ? e.stdout : e.stdout?.toString("utf-8") ?? "";
-  const text = (stderr.trim() || stdout.trim()).slice(-2000);
-  if (text) return text;
-  if (e.code !== undefined) return `${fallback} (exit ${String(e.code)})`;
-  return e.message ?? fallback;
-}
-
-export function userRoutes() {
+export function userRoutes(sessionManager: SessionManager) {
   const app = new Hono<{ Variables: { user: AuthUser } }>();
 
   // --- Backup Config ---
@@ -244,60 +195,26 @@ export function userRoutes() {
     return c.json({ ok: true });
   });
 
-  // --- Backup Operations ---
+  // --- Backup Operations (all delegated to the agent daemon inside the workspace) ---
 
   app.get("/backup/status", async (c) => {
     const user = c.get("user");
     const config = await getBackupConfig(user.id);
     if (!config) return c.json({ error: "Backup not configured" }, 400);
 
-    const username = getUsername(user.id);
-    let confPath: string;
     try {
-      confPath = writeRcloneConfig(user.id, config);
-    } catch {
-      return c.json({ error: "Stored backup config is invalid" }, 400);
-    }
-    const bucket = `b2:${config.b2Bucket}/${username}`;
-
-    try {
-      const output = await rcloneExec(confPath, ["size", bucket, "--json"], 30_000);
-      const size = JSON.parse(output) as { count: number; bytes: number };
-      return c.json({ count: size.count, bytes: size.bytes });
-    } catch {
-      return c.json({ count: 0, bytes: 0 });
-    }
-  });
-
-  app.get("/backup/files", async (c) => {
-    const user = c.get("user");
-    const config = await getBackupConfig(user.id);
-    if (!config) return c.json({ error: "Backup not configured" }, 400);
-
-    const username = getUsername(user.id);
-    let confPath: string;
-    try {
-      confPath = writeRcloneConfig(user.id, config);
-    } catch {
-      return c.json({ error: "Stored backup config is invalid" }, 400);
-    }
-    const bucket = `b2:${config.b2Bucket}/${username}`;
-
-    try {
-      const output = await rcloneExec(
-        confPath,
-        ["lsjson", bucket, "--recursive", "--no-modtime", "--no-mimetype"],
-        30_000,
+      const result = await sessionManager.backupViaAgent(
+        user.id,
+        "size",
+        toAgentParams(config, getUsername(user.id)),
       );
-      const files = JSON.parse(output) as { Path: string; Size: number; IsDir: boolean }[];
-      // Return top-level entries only (dirs + files at root)
-      const topLevel = files
-        .filter((f) => !f.Path.includes("/") || f.IsDir)
-        .filter((f) => !f.IsDir || !f.Path.includes("/"))
-        .slice(0, 100);
-      return c.json(topLevel);
-    } catch {
-      return c.json([]);
+      if (!result.ok) {
+        return c.json({ count: 0, bytes: 0, error: result.error });
+      }
+      return c.json({ count: result.fileCount ?? 0, bytes: result.bytes ?? 0 });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "unknown";
+      return c.json({ count: 0, bytes: 0, error: msg });
     }
   });
 
@@ -306,49 +223,29 @@ export function userRoutes() {
     const config = await getBackupConfig(user.id);
     if (!config) return c.json({ error: "Backup not configured" }, 400);
 
-    const homePath = `/homes/${user.id}`;
-    if (!existsSync(homePath)) {
-      return c.json({ error: "No home directory found" }, 400);
-    }
-
-    const username = getUsername(user.id);
-    let confPath: string;
-    try {
-      confPath = writeRcloneConfig(user.id, config);
-    } catch {
-      return c.json({ error: "Stored backup config is invalid" }, 400);
-    }
-    const bucket = `b2:${config.b2Bucket}/${username}`;
-
     const runId = startBackupRun(user.id, "save", null);
+    let result: BackupResult;
     try {
-      // Drop -q (log level ERROR) — it silences rclone errors in some
-      // failure modes, leaving us with "Command failed: ..." and no reason.
-      // `--stats=0` suppresses periodic progress output, so stderr stays
-      // small and any error rclone emits goes straight to the caught err.
-      await rcloneExec(
-        confPath,
-        [
-          "sync", homePath, bucket,
-          "--exclude", ".cache/**",
-          "--exclude", "**/node_modules/**",
-          "--exclude", ".local/**",
-          "--stats=0",
-        ],
-        300_000,
+      result = await sessionManager.backupViaAgent(
+        user.id,
+        "save",
+        toAgentParams(config, getUsername(user.id)),
       );
-      const size = await safeRcloneSize(confPath, bucket);
-      finishBackupRun(runId, "success", {
-        bytes: size?.bytes ?? null,
-        fileCount: size?.count ?? null,
-      });
-      return c.json({ ok: true, runId });
     } catch (err) {
-      const msg = extractExecError(err, "Backup failed");
+      const msg = err instanceof Error ? err.message : "unknown";
       finishBackupRun(runId, "failed", { error: msg });
-      console.error(`[backup] save failed for ${user.id}: ${msg}`);
       return c.json({ error: msg }, 500);
     }
+
+    if (!result.ok) {
+      finishBackupRun(runId, "failed", { error: result.error ?? "unknown error" });
+      return c.json({ error: result.error ?? "Backup failed" }, 500);
+    }
+    finishBackupRun(runId, "success", {
+      bytes: result.bytes ?? null,
+      fileCount: result.fileCount ?? null,
+    });
+    return c.json({ ok: true, runId, bytes: result.bytes, fileCount: result.fileCount });
   });
 
   app.post("/backup/restore", async (c) => {
@@ -356,10 +253,8 @@ export function userRoutes() {
     const config = await getBackupConfig(user.id);
     if (!config) return c.json({ error: "Backup not configured" }, 400);
 
-    // Optional { snapshotAt } — ISO timestamp. When present, rclone uses
-    // `--b2-versions-at` to pull file versions as they existed at that moment.
-    // This only works if B2 has preserved those versions (bucket-level setting).
-    let snapshotAt: string | null = null;
+    // Optional { snapshotAt }
+    let snapshotAt: string | undefined;
     if (c.req.header("content-length") && c.req.header("content-length") !== "0") {
       try {
         const body = await c.req.json<{ snapshotAt?: string }>();
@@ -370,123 +265,37 @@ export function userRoutes() {
           snapshotAt = body.snapshotAt;
         }
       } catch {
-        // No body — treat as latest restore.
+        // no body — treat as latest restore
       }
     }
 
-    const homePath = `/homes/${user.id}`;
-    if (!existsSync(homePath)) {
-      mkdirSync(homePath, { recursive: true });
-      chownSync(homePath, 101000, 101000);
-    }
-
-    const username = getUsername(user.id);
-    let confPath: string;
+    const runId = startBackupRun(
+      user.id,
+      "restore",
+      snapshotAt ? new Date(snapshotAt) : null,
+    );
+    let result: BackupResult;
     try {
-      confPath = writeRcloneConfig(user.id, config);
-    } catch {
-      return c.json({ error: "Stored backup config is invalid" }, 400);
-    }
-    const bucket = `b2:${config.b2Bucket}/${username}`;
-
-    const runId = startBackupRun(user.id, "restore", snapshotAt ? new Date(snapshotAt) : null);
-    try {
-      const args = ["copy", bucket, homePath, "--stats=0"];
-      if (snapshotAt) args.push("--b2-versions-at", snapshotAt);
-      await rcloneExec(confPath, args, 300_000);
-      // Fix ownership after restore — async + argv-only, no shell, non-blocking.
-      await execFileAsync("chown", ["-R", "101000:101000", homePath], { timeout: 30_000 });
-      finishBackupRun(runId, "success");
-      return c.json({ ok: true, runId });
-    } catch (err) {
-      const msg = extractExecError(err, "Restore failed");
-      finishBackupRun(runId, "failed", { error: msg });
-      console.error(`[backup] restore failed for ${user.id}: ${msg}`);
-      return c.json({ error: msg }, 500);
-    }
-  });
-
-  // Probe whether the B2 bucket retains old file versions — needed for
-  // point-in-time restore. Reads lifecycle rules via `rclone backend lifecycle`.
-  //
-  // Only rules whose prefix covers this user's directory (`<username>/`) count.
-  // Status mapping:
-  //   enabled  — no applicable rule, or rule never deletes old versions
-  //   limited  — rule deletes old versions after N days (> 1)
-  //   disabled — rule deletes old versions within 1 day
-  //   unknown  — rclone errored or returned something unparseable
-  app.get("/backup/versioning", async (c) => {
-    const user = c.get("user");
-    const config = await getBackupConfig(user.id);
-    if (!config) return c.json({ error: "Backup not configured" }, 400);
-
-    let confPath: string;
-    try {
-      confPath = writeRcloneConfig(user.id, config);
-    } catch {
-      return c.json({ error: "Stored backup config is invalid" }, 400);
-    }
-
-    const username = getUsername(user.id);
-    const userPrefix = `${username}/`;
-
-    try {
-      const output = await rcloneExec(
-        confPath,
-        ["backend", "lifecycle", `b2:${config.b2Bucket}`],
-        15_000,
+      result = await sessionManager.backupViaAgent(
+        user.id,
+        "restore",
+        toAgentParams(config, getUsername(user.id), snapshotAt),
       );
-      const rules = JSON.parse(output) as Array<{
-        fileNamePrefix?: string;
-        daysFromHidingToDeleting?: number | null;
-        daysFromUploadingToHiding?: number | null;
-      }>;
-
-      if (!Array.isArray(rules) || rules.length === 0) {
-        return c.json({ status: "enabled", retentionDays: null, rules: [] });
-      }
-
-      // Filter rules that actually apply to this user's backup path. A rule
-      // with an empty prefix matches everything; a rule with a prefix matches
-      // only if that prefix is a parent of our path.
-      const applicable = rules.filter((r) => {
-        const p = r.fileNamePrefix ?? "";
-        return p === "" || userPrefix.startsWith(p);
-      });
-
-      if (applicable.length === 0) {
-        return c.json({ status: "enabled", retentionDays: null, rules });
-      }
-
-      let minDays: number | null = null;
-      let hasUnlimited = false;
-      for (const r of applicable) {
-        if (r.daysFromHidingToDeleting == null) {
-          hasUnlimited = true;
-        } else if (minDays === null || r.daysFromHidingToDeleting < minDays) {
-          minDays = r.daysFromHidingToDeleting;
-        }
-      }
-
-      // If *every* applicable rule keeps versions forever, we're good.
-      // A single fast-delete rule poisons it even if another rule says forever,
-      // because B2 applies whichever rule matches each file.
-      if (minDays === null && hasUnlimited) {
-        return c.json({ status: "enabled", retentionDays: null, rules });
-      }
-      if (minDays !== null && minDays <= 1) {
-        return c.json({ status: "disabled", retentionDays: minDays, rules });
-      }
-      return c.json({ status: "limited", retentionDays: minDays, rules });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown";
-      console.error(`[backup] versioning probe failed for ${user.id}: ${msg}`);
-      return c.json({ status: "unknown" });
+      finishBackupRun(runId, "failed", { error: msg });
+      return c.json({ error: msg }, 500);
     }
+
+    if (!result.ok) {
+      finishBackupRun(runId, "failed", { error: result.error ?? "unknown error" });
+      return c.json({ error: result.error ?? "Restore failed" }, 500);
+    }
+    finishBackupRun(runId, "success");
+    return c.json({ ok: true, runId });
   });
 
-  // Returns recent backup runs for the current user, newest first. Capped at
-  // 50 so the UI table stays manageable and the response small.
+  // Backup run history
   app.get("/backup/runs", (c) => {
     const user = c.get("user");
     const rows = db

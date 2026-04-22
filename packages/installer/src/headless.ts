@@ -28,15 +28,17 @@ export async function runHeadless(): Promise<void> {
   }
 
   try {
-    const url = await runInstall(cfg, (line) => {
-      // In headless mode we pipe installer output straight to stdout so the
-      // invoking agent can scrape progress.
-      console.log(line);
-    });
+    const art = await runInstall(cfg, (line) => console.log(line));
     console.log("");
-    console.log(`AgentHub is up at ${url}`);
-    console.log(`Admin user: admin`);
-    console.log(`Admin password: ${cfg.adminPassword}`);
+    console.log(`AgentHub is up at ${art.url}`);
+    console.log(`  Admin user:     admin`);
+    console.log(`  Admin password: ${art.adminPassword}`);
+    console.log("");
+    console.log(`Infisical console: https://secrets.${cfg.domain}/`);
+    console.log(`  Admin email:    ${art.infisicalAdminEmail}`);
+    console.log(`  Admin password: ${art.infisicalAdminPassword}`);
+    console.log("");
+    console.log("Save these credentials — they are also written to .env.");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`Install failed: ${msg}`);

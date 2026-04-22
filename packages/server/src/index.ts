@@ -101,7 +101,7 @@ app.use("/api/*", async (c, next) => {
 });
 app.route("/api/sessions", sessionsRoutes(sessionManager));
 app.route("/api/sessions", previewRoutes(sessionManager));
-app.route("/api/user", userRoutes());
+app.route("/api/user", userRoutes(sessionManager));
 app.route("/api/settings", settingsRoutes());
 app.route("/api/infra", infraRoutes());
 app.route("/api", deployRoutes());

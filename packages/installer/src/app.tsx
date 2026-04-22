@@ -9,7 +9,7 @@ import {
   type ProvisionerMode,
 } from "./lib/config.js";
 import { checkPrereqs, type PrereqResult } from "./lib/prereq.js";
-import { runInstall } from "./run.js";
+import { runInstall, type InstallArtifacts } from "./run.js";
 
 type Step =
   | "welcome"
@@ -29,7 +29,7 @@ export const App: React.FC = () => {
   const [cfg, setCfg] = useState<InstallConfig>(() => emptyConfig());
   const [prereq, setPrereq] = useState<PrereqResult | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
-  const [finalUrl, setFinalUrl] = useState<string>("");
+  const [artifacts, setArtifacts] = useState<InstallArtifacts | null>(null);
   const [error, setError] = useState<string>("");
 
   // Auto-advance the welcome step after a tick so the banner is visible.
@@ -197,8 +197,8 @@ export const App: React.FC = () => {
       <RunStep
         cfg={cfg}
         onLog={(line) => setLogs((l) => [...l.slice(-8), line])}
-        onDone={(url) => {
-          setFinalUrl(url);
+        onDone={(art) => {
+          setArtifacts(art);
           setStep("done");
         }}
         onError={(msg) => {
@@ -220,14 +220,22 @@ export const App: React.FC = () => {
         </Box>
       );
     }
-    const adminPw = cfg.adminPassword || "(see server logs — generated on first boot)";
     return (
       <Box flexDirection="column" padding={1}>
         <Text bold color="green">AgentHub v2 is up.</Text>
-        <Text>URL: {finalUrl}</Text>
-        <Text>Admin user: admin</Text>
-        <Text>Admin password: {adminPw}</Text>
-        <Text dimColor>Log in to change the password and configure Cloudflare / B2.</Text>
+        {artifacts && (
+          <>
+            <Text>URL: {artifacts.url}</Text>
+            <Text>Admin user: admin</Text>
+            <Text>Admin password: {artifacts.adminPassword}</Text>
+            <Box marginTop={1} />
+            <Text dimColor>Infisical console: https://secrets.{cfg.domain}/</Text>
+            <Text dimColor>  email: {artifacts.infisicalAdminEmail}</Text>
+            <Text dimColor>  password: {artifacts.infisicalAdminPassword}</Text>
+            <Box marginTop={1} />
+            <Text dimColor>Credentials also written to .env.</Text>
+          </>
+        )}
         <ExitAfter exit={exit} ms={500} />
       </Box>
     );
@@ -318,14 +326,14 @@ const RunStep: React.FC<{
   cfg: InstallConfig;
   logs: string[];
   onLog: (line: string) => void;
-  onDone: (url: string) => void;
+  onDone: (art: InstallArtifacts) => void;
   onError: (msg: string) => void;
 }> = ({ cfg, logs, onLog, onDone, onError }) => {
   useEffect(() => {
     let cancelled = false;
     runInstall(cfg, onLog)
-      .then((url) => {
-        if (!cancelled) onDone(url);
+      .then((art) => {
+        if (!cancelled) onDone(art);
       })
       .catch((err: unknown) => {
         if (!cancelled) {

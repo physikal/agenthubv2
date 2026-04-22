@@ -1,22 +1,32 @@
+import { readFileSync, writeFileSync } from "node:fs";
 import { randomPassword } from "./lib/secrets.js";
 import type { InstallConfig } from "./lib/config.js";
+import { renderEnv } from "./lib/config.js";
 import {
   findComposeDir,
   writeEnvFile,
   composePull,
   composeUp,
+  recreateService,
 } from "./lib/compose.js";
+import { bootstrapInfisical } from "./lib/infisical-bootstrap.js";
+
+export interface InstallArtifacts {
+  url: string;
+  adminPassword: string;
+  infisicalAdminEmail: string;
+  infisicalAdminPassword: string;
+}
 
 /**
- * Shared install runner used by both the interactive app and the headless
- * path. Returns the final URL the user should visit.
+ * Shared install runner used by both interactive and headless paths.
  */
 export async function runInstall(
   cfg: InstallConfig,
   onLog: (line: string) => void,
-): Promise<string> {
-  // Generate an admin password if the user left it blank. Stored in .env so
-  // the server's seed path picks it up on first boot.
+): Promise<InstallArtifacts> {
+  // Generate an admin password if blank. Persisted to .env so the server's
+  // initDb() seeds it on first boot.
   const final: InstallConfig = {
     ...cfg,
     adminPassword: cfg.adminPassword || randomPassword(20),
@@ -26,22 +36,67 @@ export async function runInstall(
   const envFile = writeEnvFile(final, composeDir);
   onLog(`wrote ${envFile}`);
 
-  onLog("pulling images (this can take a minute)…");
-  await composePull({
-    composeDir,
-    envFile,
-    withDokployOverlay: final.mode === "dokploy-local",
-    onLine: onLog,
-  });
+  const withDokploy = final.mode === "dokploy-local";
+
+  onLog("pulling images…");
+  await composePull({ composeDir, envFile, withDokployOverlay: withDokploy, onLine: onLog });
 
   onLog("starting services…");
-  await composeUp({
+  await composeUp({ composeDir, envFile, withDokployOverlay: withDokploy, onLine: onLog });
+
+  // Bootstrap Infisical first-run setup: create admin, org, project, machine
+  // identity, and write INFISICAL_PROJECT_ID/CLIENT_ID/CLIENT_SECRET back to
+  // .env. Then recreate the server so it picks up the real creds (it booted
+  // earlier with UnconfiguredStore).
+  const bootstrap = await bootstrapInfisical(
+    {
+      baseUrl: "http://localhost:8080",
+      adminEmail: "admin@agenthub.local",
+      orgName: "AgentHub",
+      projectName: "agenthub",
+    },
+    onLog,
+  );
+
+  // Merge bootstrap results into .env
+  const next: InstallConfig = {
+    ...final,
+    infisicalProjectId: bootstrap.projectId,
+    infisicalClientId: bootstrap.clientId,
+    infisicalClientSecret: bootstrap.clientSecret,
+  };
+  writeFileSync(envFile, renderEnv(next), { mode: 0o600 });
+  onLog("wrote Infisical creds to .env");
+
+  onLog("restarting agenthub-server with secret store enabled…");
+  await recreateService({
     composeDir,
     envFile,
-    withDokployOverlay: final.mode === "dokploy-local",
+    withDokployOverlay: withDokploy,
+    service: "agenthub-server",
     onLine: onLog,
   });
 
   const scheme = final.domain === "localhost" ? "http" : "https";
-  return `${scheme}://${final.domain}`;
+  const url = `${scheme}://${final.domain}`;
+
+  return {
+    url,
+    adminPassword: final.adminPassword,
+    infisicalAdminEmail: bootstrap.adminEmail,
+    infisicalAdminPassword: bootstrap.adminPassword,
+  };
 }
+
+// Kept for backwards-compat with the earlier app.tsx signature that expected
+// a single URL — will remove once the UI consumes InstallArtifacts.
+export async function runInstallSimple(
+  cfg: InstallConfig,
+  onLog: (line: string) => void,
+): Promise<string> {
+  const res = await runInstall(cfg, onLog);
+  return res.url;
+}
+
+// Silence unused-import warning until headless.ts picks up readFileSync.
+void readFileSync;
