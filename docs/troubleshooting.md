@@ -189,7 +189,12 @@ docker compose -f compose/docker-compose.yml up -d --force-recreate agenthub-ser
 
 - Every service logs to stdout; `docker compose logs <service>` is your primary tool
 - The installer writes `compose/.env` with mode 0600; all secrets are there
-- The full E2E test script at `/tmp/agenthub-e2e-full.js` (in the agenthub-server container after install) runs 21 checks — use it as a full-surface sanity test: `docker exec -e ADMIN_PASSWORD=<pw> agenthub-agenthub-server-1 node /tmp/e2e.js`
+- The full E2E test script at `scripts/e2e-full.js` runs 21 app-logic checks plus automatic cleanup — use it as a full-surface sanity test. Copy it into the server container and run:
+  ```bash
+  docker cp scripts/e2e-full.js agenthub-agenthub-server-1:/tmp/e2e.js
+  docker exec -e ADMIN_PASSWORD=<pw> agenthub-agenthub-server-1 node /tmp/e2e.js
+  ```
+  The script is self-cleaning: any infra configs, backup credentials, or sessions it creates are removed before exit, so re-runs start clean and a freshly-installed user never sees test fixtures.
 - For session-specific debugging: `docker logs agenthub-ws-<workspace-id>` gives the agent-side view
 
 ## Still stuck?

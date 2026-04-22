@@ -62,7 +62,11 @@ See `compose/.env.example` for the full list with comments.
 
 Unit tests (vitest): `pnpm test`. Only pure-function tests today; add more under `**/*.test.ts` in installer + server.
 
-Full E2E (requires a fresh Debian 12 Docker host): use `/tmp/agenthub-e2e-full.js` — 21-check script covering health, auth, Infisical round-trip (Cloudflare + B2), session creation, workspace agent, and backup plumbing. Intended to be run via `docker exec agenthub-agenthub-server-1 node /tmp/e2e.js` after an install.
+Full E2E (requires a fresh Debian 12 Docker host): use `scripts/e2e-full.js` — 21-check script covering health, auth, Infisical round-trip (Cloudflare + B2), session creation, workspace agent, and backup plumbing. Self-cleaning: unwinds every fixture it creates before exit. Invocation:
+```bash
+docker cp scripts/e2e-full.js agenthub-agenthub-server-1:/tmp/e2e.js
+docker exec -e ADMIN_PASSWORD=<pw> agenthub-agenthub-server-1 node /tmp/e2e.js
+```
 
 ## Release flow
 
