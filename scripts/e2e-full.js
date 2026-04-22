@@ -150,7 +150,75 @@ async function main() {
     `got ${JSON.stringify(maskedToken)}`,
   );
 
-  console.log("\n=== 6. B2 backup config (Infisical /users/*/b2 path) ===");
+  console.log("\n=== 5b. Provisioning-status endpoint (regression: was 404) ===");
+  const statusRes = await req(`/api/infra/${infraId}/status`);
+  check("GET /api/infra/:id/status → 200", statusRes.status === 200, `got ${statusRes.status}`);
+  check(
+    "status payload has {status, statusDetail, hostingNodeIp, hostingNodeId}",
+    statusRes.body != null &&
+      "status" in statusRes.body &&
+      "statusDetail" in statusRes.body &&
+      "hostingNodeIp" in statusRes.body &&
+      "hostingNodeId" in statusRes.body,
+    `got ${JSON.stringify(statusRes.body)}`,
+  );
+
+  console.log("\n=== 5c. Docker host: provision + DELETE /hosting-node (regression: was 404) ===");
+  const docker = await req("/api/infra", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "e2e-docker",
+      provider: "docker",
+      config: {
+        hostIp: "10.255.255.1",
+        sshUser: "root",
+        sshPrivateKey: "-----BEGIN FAKE KEY-----\nnot-a-real-key\n-----END FAKE KEY-----",
+      },
+    }),
+  });
+  check("POST /api/infra docker → 201", docker.status === 201, `got ${docker.status} ${JSON.stringify(docker.body)}`);
+  const dockerId = docker.body.id;
+  if (dockerId) created.infraIds.push(dockerId);
+
+  // Pre-provision: no hosting node yet, DELETE /hosting-node should reject.
+  const prematureDestroy = await req(`/api/infra/${dockerId}/hosting-node`, { method: "DELETE" });
+  check(
+    "DELETE /hosting-node before provision → 400",
+    prematureDestroy.status === 400,
+    `got ${prematureDestroy.status} ${JSON.stringify(prematureDestroy.body)}`,
+  );
+
+  // DockerHostingProvider.provision is a no-op that just synthesizes a
+  // hostingNodeId from the hostIp — should reach status=ready quickly.
+  const provision = await req(`/api/infra/${dockerId}/provision`, { method: "POST" });
+  check("POST /api/infra/:id/provision → 200", provision.status === 200, `got ${provision.status}`);
+
+  let dockerReady = false;
+  for (let i = 0; i < 20; i++) {
+    await sleep(500);
+    const s = await req(`/api/infra/${dockerId}/status`);
+    if (s.body?.status === "ready") { dockerReady = true; break; }
+    if (s.body?.status === "error") break;
+  }
+  check("docker infra reached status=ready", dockerReady, "did not settle within 10s");
+
+  // Now the real path: destroy the hosting node. Docker provider destroy is
+  // a no-op (user owns the host), so this should succeed immediately.
+  const destroyNode = await req(`/api/infra/${dockerId}/hosting-node`, { method: "DELETE" });
+  check(
+    "DELETE /hosting-node after provision → 200",
+    destroyNode.status === 200,
+    `got ${destroyNode.status} ${JSON.stringify(destroyNode.body)}`,
+  );
+
+  const postDestroy = await req(`/api/infra/${dockerId}/status`);
+  check(
+    "hosting-node cleared on row (status=pending, hostingNodeId=null)",
+    postDestroy.body?.status === "pending" && postDestroy.body?.hostingNodeId === null,
+    `got ${JSON.stringify(postDestroy.body)}`,
+  );
+
+  console.log("\n=== 6. B2 backup config (now a provider='b2' row in infrastructure_configs) ===");
   const b2put = await req("/api/user/backup", {
     method: "PUT",
     body: JSON.stringify({
@@ -166,6 +234,42 @@ async function main() {
   check("GET /api/user/backup → configured: true", b2get.body.configured === true);
   check("b2Bucket round-trip exact", b2get.body.b2Bucket === FAKE_B2_BUCKET);
   check("b2AppKey masked", typeof b2get.body.b2AppKey === "string" && b2get.body.b2AppKey.endsWith(FAKE_B2_APP_KEY.slice(-4)) && b2get.body.b2AppKey.startsWith("•"));
+
+  // After the refactor, PUT /api/user/backup should produce a real row on
+  // /api/infra with provider='b2' — single source of truth, visible on the
+  // Integrations page.
+  const infraAfterB2 = await req("/api/infra");
+  const b2Row = Array.isArray(infraAfterB2.body)
+    ? infraAfterB2.body.find((r) => r.provider === "b2")
+    : null;
+  check(
+    "GET /api/infra includes a provider='b2' row after PUT /backup",
+    !!b2Row,
+    `got ${JSON.stringify(infraAfterB2.body)}`,
+  );
+  if (b2Row) {
+    // List view renders metadata only — no per-row Infisical round-trip —
+    // so secrets should be absent here.
+    check(
+      "list view: b2 row has metadata, no secrets",
+      b2Row.config?.b2KeyId === FAKE_B2_KEY_ID &&
+        b2Row.config?.b2Bucket === FAKE_B2_BUCKET &&
+        b2Row.config?.b2AppKey === undefined,
+      `got config=${JSON.stringify(b2Row.config)}`,
+    );
+
+    // Single view resolves from Infisical and masks — proves the b2AppKey
+    // actually landed in the secret store on PUT.
+    const b2Single = await req(`/api/infra/${b2Row.id}`);
+    check("GET /api/infra/:id (b2 row) → 200", b2Single.status === 200, `got ${b2Single.status}`);
+    check(
+      "single view: b2AppKey masked (proves Infisical round-trip for b2)",
+      typeof b2Single.body?.config?.b2AppKey === "string" &&
+        b2Single.body.config.b2AppKey.startsWith("•") &&
+        b2Single.body.config.b2AppKey.endsWith(FAKE_B2_APP_KEY.slice(-4)),
+      `got ${JSON.stringify(b2Single.body?.config)}`,
+    );
+  }
 
   console.log("\n=== 7. Session creation (outer Docker driver) ===");
   const sess = await req("/api/sessions", {
