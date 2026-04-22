@@ -3,7 +3,7 @@ import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket } from "ws";
 import type { SessionManager } from "../services/session-manager.js";
 import { authenticateToken } from "../middleware/auth.js";
-import { ALLOWED_ORIGINS } from "../index.js";
+import { isOriginAllowed } from "../middleware/origin.js";
 
 const PATH_PATTERN = /^\/api\/sessions\/([^/]+)\/preview\/port\/(\d+)(\/.*)?$/;
 const BACKPRESSURE_BYTES = 1_000_000;
@@ -25,8 +25,7 @@ export function setupPreviewProxy(
     const port = match[2];
     const remainingPath = match[3] ?? "/";
 
-    const origin = req.headers.origin;
-    if (!origin || !ALLOWED_ORIGINS.has(origin)) {
+    if (!isOriginAllowed(req.headers.origin, req.headers.host)) {
       socket.destroy();
       return;
     }

@@ -3,7 +3,7 @@ import type { Duplex } from "node:stream";
 import { WebSocketServer, WebSocket } from "ws";
 import type { SessionManager } from "../services/session-manager.js";
 import { authenticateToken } from "../middleware/auth.js";
-import { ALLOWED_ORIGINS } from "../index.js";
+import { isOriginAllowed } from "../middleware/origin.js";
 
 const TTYD_PORT = 7681;
 /** Drop frames past this point. Bursty ttyd output (e.g. `cat large.log`) could
@@ -32,7 +32,7 @@ export function setupTerminalProxy(
     const sessionId = match[1];
 
     const origin = req.headers.origin;
-    if (!origin || !ALLOWED_ORIGINS.has(origin)) {
+    if (!isOriginAllowed(origin, req.headers.host)) {
       console.log(`[ws] rejected upgrade for ${sessionId}: bad origin ${String(origin)}`);
       socket.destroy();
       return;

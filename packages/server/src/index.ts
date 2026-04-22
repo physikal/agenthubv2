@@ -16,6 +16,7 @@ import { userRoutes } from "./routes/user.js";
 import { infraRoutes } from "./routes/infra.js";
 import { deployRoutes } from "./routes/deploy.js";
 import { authMiddleware, adminMiddleware, agentAuthMiddleware } from "./middleware/auth.js";
+import { ALLOWED_ORIGINS, isOriginAllowed } from "./middleware/origin.js";
 import { setupTerminalProxy } from "./ws/terminal-proxy.js";
 import { setupPreviewProxy } from "./ws/preview-proxy.js";
 import { previewRoutes } from "./routes/preview.js";
@@ -47,63 +48,22 @@ const app = new Hono();
 app.use("*", logger());
 app.use("*", secureHeaders());
 
-function parseOrigins(): Set<string> {
-  const base = new Set<string>([
-    "http://localhost:5173",
-    "http://localhost:3000",
-    `http://localhost:${String(PORT)}`,
-  ]);
-  const configured = process.env["AGENTHUB_PUBLIC_URL"];
-  if (configured) base.add(configured.replace(/\/$/, ""));
-  const extra = process.env["AGENTHUB_ALLOWED_ORIGINS"];
-  if (extra) {
-    for (const o of extra.split(",").map((s) => s.trim()).filter(Boolean)) {
-      base.add(o);
-    }
-  }
-  return base;
-}
-
-export const ALLOWED_ORIGINS = parseOrigins();
-
 app.use(
   "/api/*",
   cors({ origin: [...ALLOWED_ORIGINS], credentials: true }),
 );
 
 // CSRF protection: require a trusted Origin on state-changing requests.
-//
-// Two paths accept the request:
-//   1. Origin is in the explicit allowlist (dev ports, AGENTHUB_PUBLIC_URL,
-//      AGENTHUB_ALLOWED_ORIGINS) — covers legitimate cross-origin callers.
-//   2. Origin is SAME-ORIGIN as the request itself (its host equals the Host
-//      header). Browsers won't let cross-site pages spoof the Origin header,
-//      so a same-origin POST is by definition not CSRF. This is what lets a
-//      localhost-domain install be reached from a LAN IP, SSH tunnel, or
-//      dynamic hostname without the operator having to enumerate every
-//      reachable URL at install time.
+// See isOriginAllowed for the policy (explicit allowlist OR same-origin).
 app.use("/api/*", async (c, next) => {
   const method = c.req.method;
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
   if (c.req.header("Authorization")?.startsWith("AgentToken ")) return next();
 
-  const origin = c.req.header("Origin");
-  if (!origin) {
+  if (!isOriginAllowed(c.req.header("Origin"), c.req.header("Host"))) {
     return c.json({ error: "Invalid origin" }, 403);
   }
-
-  if (ALLOWED_ORIGINS.has(origin)) return next();
-
-  const host = c.req.header("Host");
-  if (host) {
-    try {
-      if (new URL(origin).host === host) return next();
-    } catch {
-      /* malformed Origin — fall through to reject */
-    }
-  }
-
-  return c.json({ error: "Invalid origin" }, 403);
+  return next();
 });
 
 // --- /api/auth (login/logout public; /me + /change-password auth-protected inside authRoutes) ---
