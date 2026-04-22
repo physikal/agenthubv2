@@ -58,12 +58,16 @@ export async function runInstall(
     onLog,
   );
 
-  // Merge bootstrap results into .env
+  // Merge bootstrap results into .env. Admin email/password are persisted so
+  // the operator can retrieve them later via the Secrets page "Reveal
+  // Infisical login" flow — Infisical disables self-registration by default.
   const next: InstallConfig = {
     ...final,
     infisicalProjectId: bootstrap.projectId,
     infisicalClientId: bootstrap.clientId,
     infisicalClientSecret: bootstrap.clientSecret,
+    infisicalAdminEmail: bootstrap.adminEmail,
+    infisicalAdminPassword: bootstrap.adminPassword,
   };
   writeFileSync(envFile, renderEnv(next), { mode: 0o600 });
   onLog("wrote Infisical creds to .env");

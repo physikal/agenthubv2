@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { Hono } from "hono";
-import { hashSync } from "bcryptjs";
+import { compareSync, hashSync } from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import type { SessionManager } from "../services/session-manager.js";
@@ -263,6 +263,55 @@ export function adminRoutes(sessionManager: SessionManager) {
       },
       202,
     );
+  });
+
+  // --- Infisical console credentials ---
+  //
+  // Returns the bundled Infisical admin email + password so operators can
+  // log into the console at :8443. Gated by re-entering the caller's
+  // current AgentHub admin password (same bcrypt-compare dance as
+  // /api/auth/change-password) so a stolen session cookie alone can't
+  // leak the Infisical admin login.
+  //
+  // Values come from env vars wired by compose — installer writes them to
+  // .env during first-run bootstrap. If not set (e.g., pre-existing
+  // Infisical instance we didn't bootstrap), we return 404 with a hint.
+  app.post("/infisical-credentials", async (c) => {
+    const user = c.get("user");
+    const body = await c.req
+      .json<{ currentPassword?: string }>()
+      .catch((): { currentPassword?: string } => ({}));
+
+    if (!body.currentPassword) {
+      return c.json({ error: "Current password required" }, 400);
+    }
+
+    const rows = db
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.id, user.id))
+      .all();
+    const dbUser = rows[0];
+    if (!dbUser || !compareSync(body.currentPassword, dbUser.passwordHash)) {
+      return c.json({ error: "Current password is incorrect" }, 401);
+    }
+
+    const email = process.env["INFISICAL_ADMIN_EMAIL"] ?? "";
+    const password = process.env["INFISICAL_ADMIN_PASSWORD"] ?? "";
+    if (!email || !password) {
+      return c.json(
+        {
+          error:
+            "Infisical admin credentials are not stored on this install. " +
+            "This happens when AgentHub was pointed at an existing Infisical " +
+            "instance instead of the bundled one. Log in with the credentials " +
+            "you set when that instance was provisioned.",
+        },
+        404,
+      );
+    }
+
+    return c.json({ email, password });
   });
 
   return app;

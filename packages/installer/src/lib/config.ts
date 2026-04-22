@@ -18,6 +18,13 @@ export interface InstallConfig {
   infisicalClientId: string;
   infisicalClientSecret: string;
 
+  // Infisical console login (admin user created during bootstrap). Persisted
+  // to .env so the operator can retrieve them later via the web UI reveal
+  // flow on the Secrets page — Infisical ships with self-registration
+  // disabled, so losing these would lock the console out.
+  infisicalAdminEmail: string;
+  infisicalAdminPassword: string;
+
   // Dokploy-remote only.
   dokployUrl: string;
   dokployApiToken: string;
@@ -45,6 +52,8 @@ export function emptyConfig(): InstallConfig {
     infisicalProjectId: "",
     infisicalClientId: "",
     infisicalClientSecret: "",
+    infisicalAdminEmail: "",
+    infisicalAdminPassword: "",
     dokployUrl: "",
     dokployApiToken: "",
     dokployProjectId: "",
@@ -100,6 +109,8 @@ export function renderEnv(cfg: InstallConfig): string {
     `INFISICAL_CLIENT_ID=${cfg.infisicalClientId}`,
     `INFISICAL_CLIENT_SECRET=${cfg.infisicalClientSecret}`,
     `INFISICAL_ENVIRONMENT=prod`,
+    `INFISICAL_ADMIN_EMAIL=${cfg.infisicalAdminEmail}`,
+    `INFISICAL_ADMIN_PASSWORD=${cfg.infisicalAdminPassword}`,
     "",
     `AGENTHUB_ADMIN_PASSWORD=${cfg.adminPassword}`,
     "",

@@ -151,6 +151,13 @@ services:
       INFISICAL_CLIENT_SECRET: ${INFISICAL_CLIENT_SECRET}
       INFISICAL_ENVIRONMENT: ${INFISICAL_ENVIRONMENT:-prod}
 
+      # Infisical console login (admin user created during bootstrap).
+      # Retrievable via the Secrets page "Reveal" flow (admin-only, gated by
+      # AgentHub admin password). Empty when running against an existing
+      # Infisical instance that wasn't bootstrapped by our installer.
+      INFISICAL_ADMIN_EMAIL: ${INFISICAL_ADMIN_EMAIL:-}
+      INFISICAL_ADMIN_PASSWORD: ${INFISICAL_ADMIN_PASSWORD:-}
+
       # Admin bootstrap — if set, initDb() seeds this password on first boot
       # instead of generating a random one. Blank = random (logged once).
       AGENTHUB_ADMIN_PASSWORD: ${AGENTHUB_ADMIN_PASSWORD:-}
