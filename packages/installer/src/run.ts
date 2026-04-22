@@ -54,6 +54,8 @@ export async function runInstall(
       adminEmail: "admin@agenthub.local",
       orgName: "AgentHub",
       projectName: "agenthub",
+      composeDir,
+      envFile,
     },
     onLog,
   );

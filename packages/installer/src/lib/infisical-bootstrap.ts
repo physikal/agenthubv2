@@ -32,6 +32,11 @@ export interface BootstrapInput {
   adminEmail: string;
   orgName: string;
   projectName: string;
+  /** Directory holding docker-compose.yml — used for the post-bootstrap
+   * psql grant that makes the admin user a project member. */
+  composeDir: string;
+  /** Path to the rendered compose .env, fed to `docker compose --env-file`. */
+  envFile: string;
 }
 
 export interface BootstrapResult {
@@ -226,52 +231,10 @@ async function attachUniversalAuth(
   return { clientId, clientSecret };
 }
 
-/**
- * Log in as the admin user and return an org-scoped access token.
- *
- * Infisical's auth is a two-step flow: /api/v3/auth/login exchanges email +
- * password for a generic access token (no org context), then
- * /api/v3/auth/select-organization binds that token to an org so subsequent
- * workspace/project operations have the context they need.
- *
- * Using the admin user's token (rather than the machine identity's bearer)
- * for project creation is important: Infisical auto-adds the project
- * creator as a member. If the identity creates the project, only the
- * identity is a member — the admin user logs into the UI and sees nothing.
- */
-async function loginAdminUser(
-  baseUrl: string,
-  email: string,
-  password: string,
-  orgId: string,
-): Promise<string> {
-  const login = await authFetch<{ accessToken: string }>(
-    `${baseUrl}/api/v3/auth/login`,
-    "",
-    {
-      method: "POST",
-      body: JSON.stringify({ email, password }),
-      headers: {},
-    },
-  );
-  const selected = await authFetch<{ token: string }>(
-    `${baseUrl}/api/v3/auth/select-organization`,
-    login.accessToken,
-    {
-      method: "POST",
-      body: JSON.stringify({ organizationId: orgId }),
-    },
-  );
-  return selected.token;
-}
-
-/**
- * Create the project as the admin user (so they become a member), then
- * attach the machine identity so the AgentHub server can authenticate.
- */
+/** Create a project + attach the identity with admin role. */
 async function createProjectAndAttach(
   baseUrl: string,
-  userBearer: string,
+  bearerToken: string,
   orgId: string,
   identityId: string,
   projectName: string,
@@ -279,7 +242,7 @@ async function createProjectAndAttach(
   const proj = await authFetch<{
     project?: { id: string };
     workspace?: { id: string };
-  }>(`${baseUrl}/api/v2/workspace`, userBearer, {
+  }>(`${baseUrl}/api/v2/workspace`, bearerToken, {
     method: "POST",
     body: JSON.stringify({
       projectName,
@@ -290,12 +253,14 @@ async function createProjectAndAttach(
   const projectId = proj.project?.id ?? proj.workspace?.id;
   if (!projectId) throw new Error("workspace create returned no id");
 
-  // Admin user is auto-added because they created the project. Now attach
-  // the machine identity so the AgentHub server can authenticate.
+  // The project creator's identity is auto-added as a member when the
+  // workspace is created, so this attach is typically a no-op. We still
+  // issue it to handle edge cases where project creation was handed off
+  // or the API stops auto-adding — 400 "already exists" is fine.
   try {
     await authFetch(
       `${baseUrl}/api/v2/workspace/${projectId}/identity-memberships/${identityId}`,
-      userBearer,
+      bearerToken,
       {
         method: "POST",
         body: JSON.stringify({ role: "admin" }),
@@ -307,6 +272,92 @@ async function createProjectAndAttach(
   }
 
   return projectId;
+}
+
+/**
+ * Add the admin user as an admin member of the AgentHub project so the UI
+ * actually shows the project + its secrets.
+ *
+ * The Infisical REST API for adding project members requires
+ * workspace-encryption keys (legacy E2E crypto fields) that neither the
+ * identity bearer nor the admin user can supply post-bootstrap — the admin
+ * user is also created with a legacy encryption scheme and can't even log
+ * into the modern v3 password endpoint. The current DB schema no longer
+ * stores those fields for new members, so a plain two-row insert lines up
+ * with how the UI would have recorded membership had it been able to.
+ *
+ * We execute via `docker compose exec` against the Infisical Postgres
+ * service. The installer runs on the same host as the compose stack, so
+ * this is transport-local; we're not widening the network surface.
+ */
+async function grantAdminUserProjectMembership(input: {
+  composeDir: string;
+  envFile: string;
+  adminEmail: string;
+  projectId: string;
+  log: (line: string) => void;
+}): Promise<void> {
+  const sql = `
+DO $$
+DECLARE
+  v_user_id   text;
+  v_project_exists int;
+  v_membership_id text;
+BEGIN
+  SELECT id INTO v_user_id FROM users WHERE email = '${input.adminEmail.replace(/'/g, "''")}';
+  SELECT COUNT(*) INTO v_project_exists FROM projects WHERE id = '${input.projectId}';
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'admin user not found';
+  END IF;
+  IF v_project_exists = 0 THEN
+    RAISE EXCEPTION 'project not found';
+  END IF;
+  IF EXISTS (SELECT 1 FROM project_memberships WHERE "userId" = v_user_id AND "projectId" = '${input.projectId}') THEN
+    RETURN;
+  END IF;
+  v_membership_id := gen_random_uuid()::text;
+  INSERT INTO project_memberships (id, "userId", "projectId", "createdAt", "updatedAt")
+    VALUES (v_membership_id, v_user_id, '${input.projectId}', now(), now());
+  INSERT INTO project_user_membership_roles
+    (id, role, "projectMembershipId", "createdAt", "updatedAt", "isTemporary")
+    VALUES (gen_random_uuid()::text, 'admin', v_membership_id, now(), now(), false);
+END $$;
+`.trim();
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(
+      "docker",
+      [
+        "compose",
+        "--env-file",
+        input.envFile,
+        "-f",
+        `${input.composeDir}/docker-compose.yml`,
+        "exec",
+        "-T",
+        "infisical-postgres",
+        "sh",
+        "-c",
+        // DB password is available as env inside the container via
+        // POSTGRES_PASSWORD set by compose. psql respects PGPASSWORD.
+        'PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -U infisical -d infisical',
+      ],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    let stderr = "";
+    proc.stdout.on("data", (d: Buffer) => {
+      for (const line of d.toString().split(/\r?\n/)) {
+        if (line.trim()) input.log(`[psql] ${line.trim()}`);
+      }
+    });
+    proc.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`psql grant admin membership failed (exit ${String(code)}): ${stderr.slice(-500)}`));
+    });
+    proc.stdin.end(sql);
+  });
 }
 
 export async function bootstrapInfisical(
@@ -357,25 +408,29 @@ export async function bootstrapInfisical(
     identityId,
   );
 
-  // Log in as the admin USER (not the identity) so the admin is auto-added
-  // as a project member. Otherwise they log into the Infisical UI and see
-  // an empty project list, while AgentHub-written secrets are invisible.
-  log("[infisical] logging in as admin user to scope project creation…");
-  const userBearer = await loginAdminUser(
-    input.baseUrl,
-    input.adminEmail,
-    adminPassword,
-    orgId,
-  );
-
   log(`[infisical] creating project "${input.projectName}" + attaching identity…`);
   const projectId = await createProjectAndAttach(
     input.baseUrl,
-    userBearer,
+    bearer,
     orgId,
     identityId,
     input.projectName,
   );
+
+  // The bootstrap CLI creates the admin user with Infisical's legacy
+  // encryption scheme, which the modern v3 password-login endpoint
+  // refuses. Without this step the user can log into the UI but sees no
+  // projects, while AgentHub silently reads/writes secrets through the
+  // machine identity. Grant admin-level membership directly via the
+  // Infisical Postgres to bring the UI in line with reality.
+  log("[infisical] granting admin user project membership…");
+  await grantAdminUserProjectMembership({
+    composeDir: input.composeDir,
+    envFile: input.envFile,
+    adminEmail: input.adminEmail,
+    projectId,
+    log,
+  });
 
   log(`[infisical] project ${projectId} ready`);
   return {
