@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   applyEnvOverrides,
   emptyConfig,
@@ -16,6 +17,33 @@ import { randomPassword } from "./lib/secrets.js";
  *   2  missing required env var
  *   3  install failure
  */
+
+/**
+ * Front-door probe. Hits the advertised URL through Traefik so we catch
+ * routing / TLS / Docker-provider failures that an in-container app-logic
+ * E2E would miss. `--resolve` sidesteps DNS so real-domain installs don't
+ * fail the probe just because their A record hasn't propagated yet.
+ */
+function probeFrontDoor(domain: string): void {
+  try {
+    execFileSync(
+      "curl",
+      [
+        "-ksf",
+        "-m", "10",
+        "--resolve", `${domain}:443:127.0.0.1`,
+        `https://${domain}/api/health`,
+      ],
+      { stdio: "pipe" },
+    );
+  } catch {
+    throw new Error(
+      `Install completed but https://${domain}/api/health is unreachable through the front-door proxy. ` +
+        `Check 'docker logs agenthub-traefik-1' for routing or Docker-provider errors.`,
+    );
+  }
+}
+
 export async function runHeadless(): Promise<void> {
   const cfg = applyEnvOverrides(emptyConfig());
   if (!cfg.adminPassword) cfg.adminPassword = randomPassword(20);
@@ -29,6 +57,8 @@ export async function runHeadless(): Promise<void> {
 
   try {
     const art = await runInstall(cfg, (line) => console.log(line));
+    console.log("verifying front-door routing via Traefik…");
+    probeFrontDoor(cfg.domain);
     console.log("");
     console.log(`AgentHub is up at ${art.url}`);
     console.log(`  Admin user:     admin`);
