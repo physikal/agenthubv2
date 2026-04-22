@@ -1,26 +1,55 @@
 # Installer flow
 
-Visual reference for what happens when you run `./scripts/install.sh` (or the one-liner that wraps it). If you're writing an agent that drives this headless, use this to understand which env var answers which prompt.
+Visual reference for what happens when you run `quick-install.sh` (or `./scripts/install.sh` after a manual clone). Agents driving this headless: use the step → env-var mapping at the bottom.
 
-## One-liner (interactive)
+## Two phases
+
+**Phase 1 — bootstrap** (`quick-install.sh`): auto-provisions any missing prereq with your consent, clones the repo, then execs Phase 2.
+
+**Phase 2 — install** (`./scripts/install.sh`): builds images, writes `.env`, `docker compose up`, bootstraps Infisical, prints credentials.
+
+## Phase 1: bootstrap
+
+```
+┌─────────────────────────────────────────────────────┐
+│  detect OS (debian/rhel/arch/alpine) + sudo state   │
+└──────────────────────────┬──────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────┐
+│  For each of: git, docker, compose plugin,          │
+│               node 22+, pnpm                        │
+│    present?  → skip                                 │
+│    missing?  → confirm → install → verify           │
+└──────────────────────────┬──────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────┐
+│  git clone → ./agenthubv2                           │
+│  exec ./scripts/install.sh "$@"                     │
+└─────────────────────────────────────────────────────┘
+```
+
+`AGENTHUB_AUTO_INSTALL=true` skips every confirmation. Required when the script is piped through `bash` (stdin not a TTY).
+
+## Phase 1 one-liner
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh | bash
 ```
 
-This downloads `quick-install.sh`, verifies prereqs, clones the repo to `./agenthubv2`, and hands off to `./scripts/install.sh`. The TUI starts automatically.
-
-## One-liner (headless / agent-driven)
+Headless variant:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh \
-  | AGENTHUB_MODE=docker \
+  | AGENTHUB_AUTO_INSTALL=true \
+    AGENTHUB_MODE=docker \
     AGENTHUB_DOMAIN=localhost \
     AGENTHUB_ADMIN_PASSWORD=change-me \
     bash -s -- --non-interactive
 ```
 
-Same bootstrap, but `--non-interactive` is passed through to the Node installer, which consumes env vars instead of prompting. Exit codes: 0 ok, 2 missing required env, 3 install failure.
+Exit codes bubble up from `./scripts/install.sh`: 0 ok, 2 missing required env var, 3 install failure. Plus Phase 1 may exit with 1 for prereq installation failures — those print the exact distro command you'd need to run manually.
+
+## Phase 2: TUI step flow
 
 ## TUI step flow
 

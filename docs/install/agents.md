@@ -4,15 +4,20 @@ Target audience: Claude Code, OpenClaw, Hermes, or any other coding agent drivin
 
 ## One-shot install
 
-**One-liner** (pipes through bash, cleans up after itself):
+**One-liner** (pipes through bash, auto-installs every prereq without prompting):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh \
-  | AGENTHUB_MODE=docker \
+  | AGENTHUB_AUTO_INSTALL=true \
+    AGENTHUB_MODE=docker \
     AGENTHUB_DOMAIN=localhost \
     AGENTHUB_ADMIN_PASSWORD=change-me-please \
     bash -s -- --non-interactive
 ```
+
+`AGENTHUB_AUTO_INSTALL=true` is **required** when the script is piped through bash — stdin isn't a TTY, so the script can't ask for consent. Without it, the script will die with a clear error pointing to this flag.
+
+The script detects the host's distro (Debian/Ubuntu, Fedora/RHEL/Rocky, Arch, Alpine) and installs any of git, Docker, Docker Compose plugin, Node 22, or pnpm that's missing. Uses the canonical path for each (get.docker.com, NodeSource, etc.). Requires `sudo` (passwordless or entered at first use).
 
 **Clone-first** (when the one-liner is blocked or you want to pin a ref):
 

@@ -2,29 +2,14 @@
 
 Gets you from "nothing" to "logged into a running AgentHub" in about 10 minutes.
 
-## Prerequisites
+## Requirements
 
-One Linux host with:
-
-- **Docker 24+** (`docker info` works as the user you'll run the installer as)
-- **Docker Compose plugin** (`docker compose version` works)
-- **Node.js 22+** and `pnpm` (installer uses them)
+- Supported Linux host: Debian/Ubuntu, Fedora/RHEL/Rocky/Alma, Arch, Alpine
+- Internet access + sudo (the installer auto-provisions missing prereqs)
 - **Ports 80 and 443 free** (Traefik binds these)
 - **4 GB RAM, 20 GB disk** minimum
 
-### Node + pnpm
-
-If you don't have them:
-
-```bash
-# Node 22 (Debian/Ubuntu)
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# pnpm via corepack
-sudo corepack enable
-corepack prepare pnpm@10.12.1 --activate
-```
+The installer auto-installs what's missing, with your consent, for each of: git, Docker, Docker Compose plugin, Node 22+, pnpm. If everything is already present it skips straight to the TUI.
 
 ### Domain (optional)
 
@@ -38,15 +23,24 @@ corepack prepare pnpm@10.12.1 --activate
 curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh | bash
 ```
 
-Prefer to read the script first? Good. Download it, review, then run:
+This asks you (once, per missing prereq) before installing anything. Prefer to read the script first? Good — it's ~360 lines of readable bash:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh -o quick-install.sh
-less quick-install.sh        # ~80 lines of readable bash
+less quick-install.sh
 bash quick-install.sh
 ```
 
-The script is idempotent — it's safe to re-run whenever you want to pull updates.
+Idempotent — safe to re-run to pull updates.
+
+### Fully unattended
+
+Skip the confirmation prompts (useful in automation / CI / fresh VMs you control):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh \
+  | AGENTHUB_AUTO_INSTALL=true bash
+```
 
 ### Manual (clone-first)
 

@@ -6,7 +6,7 @@ Self-hostable web platform for running coding-agent sessions in isolated contain
 
 ## Install
 
-Prerequisites: **Docker 24+** and Docker Compose plugin, on one Linux host, ports 80 and 443 free, 4 GB RAM, 20 GB disk.
+**Requirements:** any supported Linux host with sudo access, internet, 4 GB RAM, 20 GB disk. The installer auto-provisions git, Docker, Docker Compose plugin, Node 22, and pnpm if they're missing. Supported distros: Debian/Ubuntu, Fedora/RHEL/Rocky/Alma, Arch, Alpine.
 
 ### One-liner
 
@@ -14,13 +14,14 @@ Prerequisites: **Docker 24+** and Docker Compose plugin, on one Linux host, port
 curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh | bash
 ```
 
-That script checks prereqs, clones the repo to `./agenthubv2`, and launches the TUI. Re-running it later is a safe self-updater.
+Interactive: asks for your consent before installing any missing prereq, then launches the TUI. Re-running later is a safe self-updater.
 
-Headless / agent-driven? Pass env vars and `--non-interactive`:
+Headless / agent-driven (no prompts for anything, including prereq installs):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh \
-  | AGENTHUB_MODE=docker \
+  | AGENTHUB_AUTO_INSTALL=true \
+    AGENTHUB_MODE=docker \
     AGENTHUB_DOMAIN=localhost \
     AGENTHUB_ADMIN_PASSWORD=change-me-please \
     bash -s -- --non-interactive
