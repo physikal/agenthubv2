@@ -129,7 +129,7 @@ Adding a new inner provider: implement the interface, register it in `services/p
 8. Session status flips to `active`
 9. Browser opens `/ws/sessions/{id}/terminal` → server proxies to `ws://{ip}:7681/ws` (ttyd inside the workspace)
 
-No `/api/agent/register` — v1's self-registration endpoint is gone. The server knows the IP from the driver; the container never self-reports.
+There is no `/api/agent/register` self-registration endpoint. The server knows the IP from the driver; the container never self-reports.
 
 ## Request flow: backup save
 
@@ -157,7 +157,7 @@ Transitions come from agent WS messages (`type: "status"`) or from driver `statu
 ## Auth
 
 - Cookie-based session tokens (`session_token`, httpOnly, sameSite=Lax, 30-day TTL)
-- Agent-to-server: `Authorization: AgentToken {per-session-agentToken}`. One workspace → one session → one token. No shared-token / `X-Vmid` fallback (that was v1's pool-bootstrap workaround, no longer needed).
+- Agent-to-server: `Authorization: AgentToken {per-session-agentToken}`. One workspace → one session → one token.
 - Admin role gates `/api/admin/*`. Single-tenant platform; no tenant isolation in code, just user isolation.
 
 ## Terminal protocol
@@ -179,12 +179,3 @@ Logs to stdout — `docker compose logs <service>` is the intended inspection to
 
 Metrics / tracing are deliberately out of scope for v2. Users who want them can layer Grafana/Loki on top of the compose stack.
 
-## Migration from v1
-
-v2 is a fresh install — there's no migration path for v1 data. Reasons:
-
-- v1 stores NFS paths in `sessions.lxc_vmid` which don't map to Docker volumes
-- v1's `pool_containers` table has no v2 equivalent (warm pool dropped)
-- v1's `userCredentials.backupConfig` JSON needs to land in Infisical
-
-A defensive `DROP TABLE IF EXISTS pool_containers` runs on startup in case a v1 DB is accidentally mounted. `sessions` column rename is also handled. Nothing else is attempted.

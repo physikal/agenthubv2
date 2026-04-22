@@ -8,17 +8,17 @@ import { db, schema } from "../db/index.js";
 import { authMiddleware, type AuthUser } from "../middleware/auth.js";
 
 /**
- * Get the real client IP for rate limiting. Previously this trusted
- * `X-Forwarded-For` from the client — any attacker could send a fresh header
- * value each attempt to rotate through the rate limit bucket. Now we only
- * trust `X-Real-IP` (set by our k3s/Nginx ingress) in production; otherwise
- * fall back to the socket remote address.
+ * Get the real client IP for rate limiting. Trusting `X-Forwarded-For` from
+ * the client would let an attacker send a fresh header value each attempt to
+ * rotate through the rate limit bucket. In production we only trust
+ * `X-Real-IP` (set by the reverse proxy in front of AgentHub, e.g. Traefik);
+ * otherwise we fall back to the socket remote address.
  */
 function getClientIp(c: Context): string {
   if (process.env["NODE_ENV"] === "production") {
-    // k3s/Kubero ingress strips any client-sent X-Real-IP and sets it to the
-    // real peer. If the header is missing we intentionally bucket to "unknown"
-    // rather than trust a client-forged X-Forwarded-For.
+    // A correctly-configured reverse proxy strips any client-sent X-Real-IP
+    // and sets it to the real peer. If the header is missing we intentionally
+    // bucket to "unknown" rather than trust a client-forged X-Forwarded-For.
     const realIp = c.req.header("x-real-ip")?.trim();
     if (realIp) return realIp;
   }

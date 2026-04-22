@@ -65,11 +65,6 @@ export function Sessions() {
             <span className="text-sm font-medium text-zinc-200">
               {selectedSession.name}
             </span>
-            {selectedSession.lxcNode && (
-              <span className="text-xs text-zinc-500">
-                lxc-{selectedSession.lxcNode}-{String(selectedSession.lxcVmid)}
-              </span>
-            )}
           </div>
           <div className="flex items-center gap-2">
             <button

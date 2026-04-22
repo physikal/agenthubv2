@@ -4,34 +4,14 @@
  * Calls the AgentHub server API to deploy/manage apps.
  *
  * Environment:
- *   PORTAL_URL        — AgentHub server URL (e.g. http://10.0.0.1:3000)
- *   AGENT_TOKEN       — Per-session agent token (preferred)
- *   AGENT_AUTH_TOKEN  — Legacy shared token (fallback during transition)
- *
- * VMID is derived from the container hostname (only sent when falling back
- * to the legacy shared token).
+ *   PORTAL_URL   — AgentHub server URL
+ *   AGENT_TOKEN  — Per-session agent token
  */
-
-import { hostname } from "node:os";
 
 // --- Config ---
 
 const PORTAL_URL = process.env["PORTAL_URL"] ?? "";
-// Prefer the per-session token. Falling back to the shared token keeps
-// legacy pool containers working during the rollout; remove the fallback
-// once the pool has cycled (default 7-day TTL).
-const PER_SESSION_TOKEN = process.env["AGENT_TOKEN"] ?? "";
-const LEGACY_SHARED_TOKEN = process.env["AGENT_AUTH_TOKEN"] ?? "";
-const AUTH_TOKEN = PER_SESSION_TOKEN || LEGACY_SHARED_TOKEN;
-const USING_LEGACY_AUTH = !PER_SESSION_TOKEN && Boolean(LEGACY_SHARED_TOKEN);
-
-function getVmid(): string | null {
-  const h = hostname();
-  const match = /(?:lxc-pool-|lxc-agent-)(\d+)/.exec(h);
-  return match?.[1] ?? null;
-}
-
-const VMID = getVmid();
+const AUTH_TOKEN = process.env["AGENT_TOKEN"] ?? "";
 
 // --- HTTP client ---
 
@@ -48,9 +28,6 @@ async function apiCall(
     Authorization: `AgentToken ${AUTH_TOKEN}`,
     "Content-Type": "application/json",
   };
-  // X-Vmid is only needed by the legacy server path; sending it unconditionally
-  // is harmless since the new server ignores it.
-  if (USING_LEGACY_AUTH && VMID) headers["X-Vmid"] = VMID;
 
   const url = `${PORTAL_URL}/api/agent/deploy${path}`;
   const init: RequestInit = { method, headers };

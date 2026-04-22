@@ -108,9 +108,7 @@ If you see `Cannot find package 'ws'`, the workspace image was built without a f
 docker build --no-cache -f docker/Dockerfile.agent-workspace -t agenthubv2-workspace:local .
 ```
 
-**b. Agent token mismatch.** The server injects `AGENT_TOKEN=<per-session>` but if you're running a stale workspace image that only reads `AGENT_AUTH_TOKEN`, auth fails. Rebuild the workspace image.
-
-**c. Network isolation.** The server can't reach the workspace on the `agenthub` bridge network. This is rare but check:
+**b. Network isolation.** The server can't reach the workspace on the `agenthub` bridge network. This is rare but check:
 ```bash
 docker network inspect agenthub | jq -r '.[0].Containers | to_entries[] | "\(.value.Name) \(.value.IPv4Address)"'
 ```

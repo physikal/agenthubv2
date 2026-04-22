@@ -83,11 +83,6 @@ export function SessionCard({ session, selected, onClick, onDelete }: SessionCar
     "idle",
   ].includes(session.status);
 
-  const lxcName =
-    session.lxcNode && session.lxcVmid
-      ? `lxc-${session.lxcNode}-${String(session.lxcVmid)}`
-      : "provisioning...";
-
   return (
     <button
       onClick={onClick}
@@ -108,8 +103,7 @@ export function SessionCard({ session, selected, onClick, onDelete }: SessionCar
         )}
       </div>
       <p className="text-xs text-zinc-500 mb-2">
-        {isActive ? "Started" : "Finished"} {timeAgo(session.createdAt)} ·{" "}
-        {lxcName}
+        {isActive ? "Started" : "Finished"} {timeAgo(session.createdAt)}
       </p>
       <div className="flex items-center justify-between min-w-0">
         <div className="flex items-center gap-1.5 px-2 py-1 bg-zinc-800/50 rounded text-xs font-mono min-w-0 flex-1 mr-2">

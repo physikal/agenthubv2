@@ -59,13 +59,9 @@ export const adminMiddleware = createMiddleware<{
 /**
  * Middleware for agent-authenticated requests (MCP server inside workspace).
  *
- * Only path:
  *   Authorization: AgentToken <per-session-token>
  *   — Token is the value of `sessions.agentToken` for this workspace. Bound
  *     to one session; cross-session impersonation is impossible.
- *
- * The v1 shared-token + X-Vmid legacy path is removed — that fallback was only
- * needed during LXC-pool bootstrap, which v2 no longer has.
  */
 export const agentAuthMiddleware = createMiddleware<{
   Variables: { user: AuthUser };

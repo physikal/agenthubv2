@@ -116,28 +116,6 @@ export function initDb(): void {
     CREATE INDEX IF NOT EXISTS idx_backup_runs_user_started ON backup_runs(user_id, started_at);
   `);
 
-  // Defensive drop for anyone who imported a v1 database. v2 drops the
-  // warm-pool concept entirely.
-  sqlite.exec("DROP TABLE IF EXISTS pool_containers");
-
-  // Defensive rename for anyone upgrading from an early AgentHub build where
-  // sessions columns still carried Proxmox-specific names.
-  const sessionCols = sqlite
-    .prepare("PRAGMA table_info(sessions)")
-    .all() as { name: string }[];
-  if (sessionCols.some((c) => c.name === "lxc_vmid") && !sessionCols.some((c) => c.name === "workspace_id")) {
-    // Preserve any live LXC references as strings in the new workspace_id
-    // column. Hosting/ip don't have structurally compatible values in LXC-land,
-    // so for those we just add the new columns and let reconnect fail old rows.
-    sqlite.exec(`
-      ALTER TABLE sessions ADD COLUMN workspace_id TEXT;
-      ALTER TABLE sessions ADD COLUMN workspace_host TEXT;
-      ALTER TABLE sessions ADD COLUMN workspace_ip TEXT;
-      ALTER TABLE sessions ADD COLUMN provider_id TEXT;
-      UPDATE sessions SET workspace_id = CAST(lxc_vmid AS TEXT), workspace_host = lxc_node, workspace_ip = lxc_ip;
-    `);
-  }
-
   // Seed default admin account. Password priority:
   //   1. AGENTHUB_ADMIN_PASSWORD env var (installer writes this into .env)
   //   2. random UUID slice if unset — surfaces once in stdout, must be rotated

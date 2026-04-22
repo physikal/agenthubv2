@@ -1,7 +1,7 @@
 {
   "name": "@agenthub/installer",
   "version": "0.1.0",
-  "private": false,
+  "private": true,
   "type": "module",
   "bin": {
     "agenthub-install": "./bin/agenthub-install.js"

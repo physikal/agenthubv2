@@ -7,9 +7,6 @@ export interface Session {
   status: string;
   statusDetail: string;
   userId: string | null;
-  lxcVmid: number | null;
-  lxcNode: string | null;
-  lxcIp: string | null;
   repo: string | null;
   prompt: string | null;
   createdAt: string;

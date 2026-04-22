@@ -8,8 +8,8 @@ const AGENT_FILE_SERVER_PORT = 9877;
 /**
  * Headers we never forward UPSTREAM — prevents the preview-port proxy from
  * leaking user auth to a workspace web server. An attacker-controlled app
- * running in the LXC would otherwise see the browser's AgentHub cookie
- * (already stripped elsewhere) and the raw `Authorization` header.
+ * running in the workspace container would otherwise see the browser's
+ * AgentHub cookie (already stripped elsewhere) and the raw `Authorization` header.
  */
 const OUTBOUND_BLOCKLIST = new Set([
   "host", "connection", "keep-alive", "transfer-encoding", "upgrade",
@@ -142,8 +142,8 @@ export function previewRoutes(sessionManager: SessionManager) {
         ) return;
 
         // Location rewrite for redirects. Any Location pointing outside
-        // the LXC IP is replaced with a safe path-only redirect back to
-        // the proxy root — stops upstream-controlled open redirects that
+        // the workspace IP is replaced with a safe path-only redirect back
+        // to the proxy root — stops upstream-controlled open redirects that
         // could leak the AgentHub session cookie to a third-party host
         // when the browser follows the 3xx in an iframe context.
         if (lower === "location" && upstream.status >= 300 && upstream.status < 400) {

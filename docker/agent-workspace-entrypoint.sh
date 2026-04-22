@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Entrypoint for the AgentHub v2 workspace container.
+# Entrypoint for the AgentHub workspace container.
 #
 # Starts two processes:
 #   1. ttyd (as `coder`, port 7681) — terminal WebSocket server
@@ -40,8 +40,8 @@ cat > /etc/profile.d/agenthub-env.sh <<'EOF'
 EOF
 
 # Start ttyd as coder with dtach for session persistence. `-W` enables write
-# access (ttyd defaults to read-only). The -t cmd options match v1's LXC
-# template: allow titleChange, no reconnect timeout.
+# access (ttyd defaults to read-only). The -t options allow titleChange and
+# disable ttyd's reconnect timeout.
 sudo -u coder /usr/local/bin/ttyd \
   -W \
   -p "${TTYD_PORT}" \

@@ -37,8 +37,7 @@ const sessionManager = new SessionManager({
   portalUrl,
 });
 
-// Reconnect active sessions on startup. Previously this also hydrated a warm
-// pool and cleaned up orphaned LXCs — v2 has neither.
+// Reconnect active sessions on startup.
 void (async () => {
   await sessionManager.reconnectActiveSessions();
 })();

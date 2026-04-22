@@ -1,10 +1,9 @@
 # syntax=docker/dockerfile:1.7
 #
-# AgentHub v2 workspace image.
+# AgentHub workspace image.
 #
-# Replaces v1's Proxmox LXC template (infra/lxc-template.sh). Runs the agent
-# daemon + ttyd terminal inside one container; a persistent Docker volume
-# provides /home/coder across sessions.
+# Runs the agent daemon + ttyd terminal inside one container; a persistent
+# Docker volume provides /home/coder across sessions.
 #
 # Build (from repo root):
 #   docker build -f docker/Dockerfile.agent-workspace -t agenthubv2-workspace:latest .
@@ -68,7 +67,7 @@ RUN npm install -g \
       mmx-cli \
     && npm cache clean --force
 
-# claude-minimax shim — v1 parity.
+# claude-minimax shim — runs Claude Code with the MiniMax model preset.
 RUN printf '#!/bin/bash\nexec claude --model minimax/MiniMax-M2.7 --dangerously-skip-permissions "$@"\n' \
       > /usr/local/bin/claude-minimax \
     && chmod +x /usr/local/bin/claude-minimax
@@ -95,8 +94,7 @@ fi
 PREVIEW
 RUN chmod +x /usr/local/bin/preview
 
-# coder user (uid 1000) + passwordless sudo. uid 1000 matches the v1 LXC for
-# continuity with any backed-up /home/coder payloads.
+# coder user (uid 1000) + passwordless sudo.
 RUN useradd -m -s /bin/bash -u 1000 coder \
     && echo "coder ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/coder \
     && chmod 440 /etc/sudoers.d/coder \

@@ -1,11 +1,11 @@
-# AgentHub v2 — Development Guide
+# AgentHub — Development Guide
 
 ## What is this?
-Self-hostable web platform for running coding-agent sessions in containers. Successor to AgentHub v1 (`github.com/physikal/agenthub`). v1 required Proxmox + k3s; v2 runs on plain Docker or Dokploy.
+Self-hostable web platform for running coding-agent sessions in containers. Runs on plain Docker or Dokploy.
 
 Monorepo packages:
-- `packages/web` — React 19 + Vite frontend (unchanged from v1)
-- `packages/server` — Hono backend (provisioner layer rewritten)
+- `packages/web` — React 19 + Vite frontend
+- `packages/server` — Hono backend
 - `packages/agent` — daemon inside workspace container (backup ops + terminal control)
 - `packages/installer` — Ink TUI, `./scripts/install.sh`
 
@@ -13,7 +13,7 @@ Monorepo packages:
 - **Database**: SQLite at `/data/agenthub.db` (Drizzle ORM)
 - **Secrets**: Infisical (bundled service, bootstrapped by the installer; SDK = `@infisical/sdk`)
 - **Provisioner modes**: `docker` | `dokploy-local` | `dokploy-remote` (env var `PROVISIONER_MODE`)
-- **Agent image**: `docker/Dockerfile.agent-workspace` (replaces v1's `infra/lxc-template.sh`)
+- **Agent image**: `docker/Dockerfile.agent-workspace`
 - **Server image**: `docker/Dockerfile.server`
 - **Compose bundle**: `compose/docker-compose.yml` (+ `docker-compose.dokploy.yml` overlay)
 
@@ -32,9 +32,9 @@ pnpm build        # production build
 - **Infisical for all provider secrets** — Cloudflare tokens, B2 keys, DO tokens live in Infisical at `/users/{userId}/...` paths, not SQLite JSON. SQLite stores only metadata/references. Bootstrap is automated via `npx @infisical/cli bootstrap` (see `packages/installer/src/lib/infisical-bootstrap.ts`).
 - **Cookie auth** (not JWT) — carries WebSocket upgrade automatically.
 - **ttyd + dtach** for terminal persistence (`packages/server/src/ws/terminal-proxy.ts` has the ASCII type-byte framing).
-- **No warm pool** — v1's `ContainerPool` was compensating for slow Proxmox clone. Docker cold-start is ~2-3s; pool dropped for simplicity.
-- **Single Docker image for workspaces** — agent daemon baked in at build time, not deployed at provision time (simpler than v1).
-- **Backup runs inside the workspace** — the agent daemon receives a `{type: "backup", op, requestId, params}` WS message from the server and runs rclone locally against `/home/coder`. Requires an active session; `/homes/{userId}` NFS paths from v1 are gone.
+- **No warm pool** — Docker cold-start is ~2-3s, so sessions are provisioned on demand.
+- **Single Docker image for workspaces** — agent daemon baked in at build time, not deployed at provision time.
+- **Backup runs inside the workspace** — the agent daemon receives a `{type: "backup", op, requestId, params}` WS message from the server and runs rclone locally against `/home/coder`. Requires an active session.
 
 ## Key runtime env vars (in compose/.env)
 ```
@@ -54,9 +54,9 @@ See `compose/.env.example` for the full list with comments.
 - Infisical needs Postgres migration on first boot — installer waits up to 180s for `/api/status` before running `infisical bootstrap`.
 - `docker compose up` re-probes the registry for locally-tagged images even after `pull --ignore-pull-failures` — that's why we pin `--pull never` on `up` (registry images are cached by the preceding pull step).
 - pnpm's symlinked node_modules don't survive `docker COPY` — the workspace Dockerfile uses `npm install --omit=dev` for agent deps to get a real flat tree.
-- Per-session `AGENT_TOKEN` env var injected by SessionManager — the agent reads it as `AGENT_TOKEN` first, falls back to v1's `AGENT_AUTH_TOKEN`.
+- Per-session `AGENT_TOKEN` env var injected by SessionManager — the agent reads it as `AGENT_TOKEN`.
 - Session-creation → `active` requires about 5-15 seconds (container start + agent WS handshake). Tests should poll, not block-sleep.
-- SQLite `sessions` table renamed v1→v2: `lxcVmid`/`lxcNode`/`lxcIp` → `workspaceId`/`workspaceHost`/`workspaceIp`. Provider-generic.
+- SQLite `sessions` table uses provider-generic columns: `workspaceId`/`workspaceHost`/`workspaceIp`.
 
 ## Testing
 

@@ -2,7 +2,7 @@
 
 Self-hostable web platform for running coding-agent sessions in isolated containers. Log in through the browser, spin up a workspace with Claude Code / OpenCode / MiniMax pre-installed, and let the agent deploy its own workloads through the bundled `agentdeploy` MCP.
 
-**v2 vs v1.** v1 (`github.com/physikal/agenthub`) required a Proxmox cluster + k3s + NFS. v2 runs on **one host with Docker**. One command, ~5 minutes, you're running.
+Runs on **one host with Docker**. One command, ~5 minutes, you're running.
 
 ## Install
 
