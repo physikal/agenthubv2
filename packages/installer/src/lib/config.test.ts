@@ -50,6 +50,20 @@ describe("renderEnv", () => {
     expect(env).toContain("DOKPLOY_URL=");
     expect(env).toContain("DOKPLOY_API_TOKEN=");
   });
+
+  it("uses a permissive PathPrefix host rule for localhost installs", () => {
+    const cfg = emptyConfig();
+    cfg.domain = "localhost";
+    const env = renderEnv(cfg);
+    expect(env).toContain("AGENTHUB_HOST_RULE=PathPrefix(`/`)");
+  });
+
+  it("uses a strict Host() rule for real-domain installs", () => {
+    const cfg = emptyConfig();
+    cfg.domain = "agents.acme.io";
+    const env = renderEnv(cfg);
+    expect(env).toContain("AGENTHUB_HOST_RULE=Host(`agents.acme.io`)");
+  });
 });
 
 describe("applyEnvOverrides", () => {

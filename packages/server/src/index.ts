@@ -72,15 +72,38 @@ app.use(
 );
 
 // CSRF protection: require a trusted Origin on state-changing requests.
+//
+// Two paths accept the request:
+//   1. Origin is in the explicit allowlist (dev ports, AGENTHUB_PUBLIC_URL,
+//      AGENTHUB_ALLOWED_ORIGINS) — covers legitimate cross-origin callers.
+//   2. Origin is SAME-ORIGIN as the request itself (its host equals the Host
+//      header). Browsers won't let cross-site pages spoof the Origin header,
+//      so a same-origin POST is by definition not CSRF. This is what lets a
+//      localhost-domain install be reached from a LAN IP, SSH tunnel, or
+//      dynamic hostname without the operator having to enumerate every
+//      reachable URL at install time.
 app.use("/api/*", async (c, next) => {
   const method = c.req.method;
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
   if (c.req.header("Authorization")?.startsWith("AgentToken ")) return next();
+
   const origin = c.req.header("Origin");
-  if (!origin || !ALLOWED_ORIGINS.has(origin)) {
+  if (!origin) {
     return c.json({ error: "Invalid origin" }, 403);
   }
-  return next();
+
+  if (ALLOWED_ORIGINS.has(origin)) return next();
+
+  const host = c.req.header("Host");
+  if (host) {
+    try {
+      if (new URL(origin).host === host) return next();
+    } catch {
+      /* malformed Origin — fall through to reject */
+    }
+  }
+
+  return c.json({ error: "Invalid origin" }, 403);
 });
 
 // --- /api/auth (login/logout public; /me + /change-password auth-protected inside authRoutes) ---

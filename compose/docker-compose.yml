@@ -154,7 +154,7 @@ services:
       - agenthub
     labels:
       - traefik.enable=true
-      - traefik.http.routers.agenthub.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.agenthub.rule=${AGENTHUB_HOST_RULE}
       - traefik.http.routers.agenthub.entrypoints=websecure
       - traefik.http.routers.agenthub.tls.certresolver=le
       - traefik.http.services.agenthub.loadbalancer.server.port=3000
