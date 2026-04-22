@@ -267,13 +267,16 @@ ensure_node() {
   confirm "Node.js $MIN_NODE_MAJOR" || die "Node $MIN_NODE_MAJOR+ required"
   ensure_curl
 
+  # ${SUDO:+$SUDO -E} expands to "$SUDO -E" only when SUDO is non-empty —
+  # when we're already root it collapses to nothing, avoiding a bogus `-E`
+  # passed to bash that yields "-E: command not found".
   case "$DISTRO_FAMILY" in
     debian)
-      curl -fsSL "https://deb.nodesource.com/setup_${MIN_NODE_MAJOR}.x" | $SUDO -E bash -
+      curl -fsSL "https://deb.nodesource.com/setup_${MIN_NODE_MAJOR}.x" | ${SUDO:+$SUDO -E} bash -
       pkg_install nodejs
       ;;
     rhel)
-      curl -fsSL "https://rpm.nodesource.com/setup_${MIN_NODE_MAJOR}.x" | $SUDO -E bash -
+      curl -fsSL "https://rpm.nodesource.com/setup_${MIN_NODE_MAJOR}.x" | ${SUDO:+$SUDO -E} bash -
       pkg_install nodejs
       ;;
     arch)   pkg_install nodejs npm ;;
