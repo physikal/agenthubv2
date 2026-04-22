@@ -3,6 +3,12 @@ import type { IncomingMessage } from "node:http";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import {
+  installPackage,
+  removePackage,
+  type PackageOpParams,
+  type PackageOpResult,
+} from "./package-ops.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -25,7 +31,8 @@ type InboundMessage =
   | { type: "start" }
   | { type: "upload"; name: string; data: string }
   | { type: "stop" }
-  | { type: "backup"; op: "save" | "restore" | "size"; requestId: string; params: BackupParams };
+  | { type: "backup"; op: "save" | "restore" | "size"; requestId: string; params: BackupParams }
+  | { type: "package"; op: "install" | "remove"; requestId: string; params: PackageOpParams };
 
 type OutboundMessage =
   | { type: "status"; state: string; detail: string }
@@ -37,6 +44,13 @@ type OutboundMessage =
       ok: boolean;
       bytes?: number;
       fileCount?: number;
+      error?: string;
+    }
+  | {
+      type: "package-result";
+      requestId: string;
+      ok: boolean;
+      version?: string;
       error?: string;
     };
 
@@ -106,7 +120,35 @@ export class AgentServer {
       case "backup":
         void this.handleBackup(msg.op, msg.requestId, msg.params);
         break;
+      case "package":
+        void this.handlePackage(msg.op, msg.requestId, msg.params);
+        break;
     }
+  }
+
+  /**
+   * Install or remove a per-user agent CLI into /home/coder/.local. Structured
+   * params only — the server picks the install method from the catalog and
+   * passes a typed spec, so no raw shell crosses the WS boundary.
+   */
+  private async handlePackage(
+    op: "install" | "remove",
+    requestId: string,
+    params: PackageOpParams,
+  ): Promise<void> {
+    let result: PackageOpResult;
+    try {
+      result = op === "install"
+        ? await installPackage(params)
+        : await removePackage(params);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "unknown";
+      result = { ok: false, error: msg };
+    }
+    const msg: OutboundMessage = { type: "package-result", requestId, ok: result.ok };
+    if (result.version !== undefined) msg.version = result.version;
+    if (result.error !== undefined) msg.error = result.error;
+    this.send(msg);
   }
 
   private startSession(): void {

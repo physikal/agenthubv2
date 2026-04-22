@@ -54,6 +54,37 @@ interface PendingBackup {
   timer: ReturnType<typeof setTimeout>;
 }
 
+/** Mirror of the agent's InstallSpec. Redefined here so the server package
+ * doesn't depend on @agenthub/agent — same duplication pattern used for
+ * BackupParams. */
+export type PackageInstallSpec =
+  | { method: "npm"; npmPackage: string }
+  | {
+      method: "curl-sh";
+      scriptUrl: string;
+      scriptEnv?: Record<string, string>;
+    }
+  | { method: "binary"; url: string; stripComponents?: number };
+
+export interface PackageOpParams {
+  packageId: string;
+  binName: string;
+  versionCmd: readonly string[];
+  spec: PackageInstallSpec;
+}
+
+export interface PackageOpResult {
+  ok: boolean;
+  version?: string;
+  error?: string;
+}
+
+interface PendingPackageOp {
+  resolve: (r: PackageOpResult) => void;
+  reject: (e: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 export class SessionManager {
   private readonly provisioner: ProvisionerDriver;
   private readonly workspaceImage: string;
@@ -61,6 +92,8 @@ export class SessionManager {
   private readonly agents = new Map<string, AgentConnection>();
   /** requestId → pending backup */
   private readonly pendingBackups = new Map<string, PendingBackup>();
+  /** requestId → pending package install/remove */
+  private readonly pendingPackageOps = new Map<string, PendingPackageOp>();
 
   constructor(opts: {
     provisioner: ProvisionerDriver;
@@ -305,6 +338,25 @@ export class SessionManager {
             pending.resolve(result);
           }
         }
+
+        if (msg.type === "package-result") {
+          const r = msg as unknown as {
+            type: "package-result";
+            requestId: string;
+            ok: boolean;
+            version?: string;
+            error?: string;
+          };
+          const pending = this.pendingPackageOps.get(r.requestId);
+          if (pending) {
+            this.pendingPackageOps.delete(r.requestId);
+            clearTimeout(pending.timer);
+            const result: PackageOpResult = { ok: r.ok };
+            if (r.version !== undefined) result.version = r.version;
+            if (r.error !== undefined) result.error = r.error;
+            pending.resolve(result);
+          }
+        }
       } catch {
         // ignore parse errors
       }
@@ -492,6 +544,48 @@ export class SessionManager {
         agent.ws.send(JSON.stringify({ type: "backup", op, requestId, params }));
       } catch (err) {
         this.pendingBackups.delete(requestId);
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
+  }
+
+  /**
+   * Install or remove a per-user package via the agent running inside the
+   * user's active workspace. Same request/response correlation as
+   * backupViaAgent — an agent restart between send and reply leaves the
+   * request to time out rather than hang.
+   */
+  async packageViaAgent(
+    userId: string,
+    op: "install" | "remove",
+    params: PackageOpParams,
+    timeoutMs = 300_000,
+  ): Promise<PackageOpResult> {
+    const session = this.findActiveSessionForUser(userId);
+    if (!session) {
+      throw new Error(
+        "No active workspace session — start a session so the agent can install packages into /home/coder/.local.",
+      );
+    }
+    const agent = this.agents.get(session.id);
+    if (!agent) {
+      throw new Error("Workspace agent not currently connected");
+    }
+
+    const requestId = randomUUID();
+    return new Promise<PackageOpResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingPackageOps.delete(requestId);
+        reject(new Error(`agent package ${op} timed out after ${String(timeoutMs)}ms`));
+      }, timeoutMs);
+      this.pendingPackageOps.set(requestId, { resolve, reject, timer });
+      try {
+        agent.ws.send(
+          JSON.stringify({ type: "package", op, requestId, params }),
+        );
+      } catch (err) {
+        this.pendingPackageOps.delete(requestId);
         clearTimeout(timer);
         reject(err instanceof Error ? err : new Error(String(err)));
       }

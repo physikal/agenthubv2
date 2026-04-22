@@ -114,6 +114,20 @@ export function initDb(): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_backup_runs_user_started ON backup_runs(user_id, started_at);
+
+    CREATE TABLE IF NOT EXISTS user_packages (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      package_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      version TEXT,
+      installed_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      error TEXT
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_packages_user_package
+      ON user_packages(user_id, package_id);
   `);
 
   // Seed default admin account. Password priority:

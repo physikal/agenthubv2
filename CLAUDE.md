@@ -1,4 +1,6 @@
-# AgentHub — Development Guide
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What is this?
 Self-hostable web platform for running coding-agent sessions in containers. Runs on plain Docker or Dokploy.
@@ -21,15 +23,35 @@ Monorepo packages:
 - **Repo mount**: the server container has the install's git checkout at `/repo` (rw) so `/api/admin/version` can shell to git and `/api/admin/update` can spawn the updater container.
 
 ## Development
+
+Toolchain is pinned: Node ≥22, pnpm 10.12.1 (see `packageManager` in root `package.json`). Workspace is `packages/*`.
+
 ```bash
 pnpm install
-pnpm dev          # all packages in parallel
+pnpm dev          # all packages in parallel (web + server + agent)
 pnpm typecheck    # must pass before commit
+pnpm lint         # per-package lint (runs where defined)
 pnpm test         # vitest (19 unit tests, installer + server)
 pnpm build        # production build
 ```
 
+Run a single test file (must be scoped to the package that owns it):
+```bash
+pnpm --filter @agenthub/server exec vitest run path/to/file.test.ts
+pnpm --filter @agenthub/server exec vitest run -t "test name substring"
+```
+
 ## Architecture decisions
+
+### Two independent provisioner layers (most load-bearing concept)
+The codebase has **two** swappable driver abstractions that are easy to confuse:
+
+1. **Outer — how AgentHub provisions a workspace container per session.** Lives in `packages/server/src/services/provisioner/*`. Picked at install time via `PROVISIONER_MODE` (`docker` | `dokploy-local` | `dokploy-remote`). Interface: `ProvisionerDriver` (`create`/`start`/`stop`/`destroy`/`status`/`waitForIp`/`listAll`).
+2. **Inner — how an agent inside a workspace deploys its own apps.** Lives in `packages/server/src/services/providers/*` + the `agentdeploy` MCP (`packages/agent/src/mcp-deploy.ts`). Picked per-user via `infrastructure_configs` rows. Interface: `HostingProvider` (`validate`/`verify`/`provision`/`destroy`).
+
+Both layers support Docker and Dokploy, but they are **separate code paths with separate drivers**. One install can run outer=`docker` and inner=`digitalocean` simultaneously. When adding hosting support, figure out which layer you're in before touching either directory. Full walkthrough in `docs/architecture.md`.
+
+### Other decisions
 - **Provisioner driver abstraction** (`packages/server/src/services/provisioner/`) — swappable at install time. Adding a new driver means implementing one interface. See `docs/architecture.md`.
 - **Docker driver mounts `/var/run/docker.sock`** — gated by `AGENTHUB_ALLOW_SOCKET_MOUNT=true`. The installer wires this automatically for `docker` mode. Users who need zero-socket-mount pick a `dokploy-*` mode where Dokploy owns the daemon.
 - **Infisical for all provider secrets** — Cloudflare tokens, B2 keys, DO tokens live in Infisical at `/users/{userId}/...` paths, not SQLite JSON. SQLite stores only metadata/references. Bootstrap is automated via `npx @infisical/cli bootstrap` (see `packages/installer/src/lib/infisical-bootstrap.ts`).

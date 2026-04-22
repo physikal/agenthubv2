@@ -40,6 +40,12 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
   && curl -s https://rclone.org/install.sh | bash \
   && rm -rf /var/lib/apt/lists/*
 
+# /repo is a host-mounted bind mount of the install's git checkout, owned by
+# the host user (typically uid 1000). Since git 2.35 the server, running as
+# root inside the container, refuses to read it with "detected dubious
+# ownership" unless the path is on the safe.directory allowlist.
+RUN git config --global --add safe.directory /repo
+
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules

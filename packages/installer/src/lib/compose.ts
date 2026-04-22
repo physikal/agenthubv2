@@ -52,11 +52,24 @@ export function composeUp(opts: ComposeUpOptions): Promise<void> {
   return runCompose(["up", "-d", "--pull", "never"], opts);
 }
 
+// Matches the confusing-looking-but-benign line compose emits when it can't
+// find a locally-tagged image (`agenthubv2-server:local`, etc.) in a
+// registry during pull. `--ignore-pull-failures` already handles it; we
+// just drop the line so humans don't mistake it for a real error.
+const BENIGN_PULL_NOISE = /Error pull access denied for agenthubv2-[^ ]+, repository does not exist/;
+
 export function composePull(opts: ComposeUpOptions): Promise<void> {
   // --ignore-pull-failures so locally-built images (`agenthubv2-server:local`,
   // etc.) don't break the install. Registry pulls still happen for everything
   // else (Postgres, Redis, Traefik, Infisical).
-  return runCompose(["pull", "--ignore-pull-failures"], opts);
+  const filtered: ComposeUpOptions = {
+    ...opts,
+    onLine: (line: string) => {
+      if (BENIGN_PULL_NOISE.test(line)) return;
+      opts.onLine?.(line);
+    },
+  };
+  return runCompose(["pull", "--ignore-pull-failures"], filtered);
 }
 
 export interface RecreateServiceOptions extends ComposeUpOptions {

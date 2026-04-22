@@ -195,12 +195,19 @@ ensure_docker_daemon_running() {
     sleep 3
   fi
   if ! docker info >/dev/null 2>&1; then
-    # Might be a permissions issue — user not in docker group yet.
-    if ! groups "$USER" 2>/dev/null | grep -qw docker; then
+    # Daemon is up but this shell can't reach it — most commonly because
+    # the user isn't in the `docker` group. Add them and install the same
+    # sudo-wrapper `install_docker` uses so this run keeps moving; group
+    # membership will be in effect on the next login.
+    if [[ "$(id -u)" -ne 0 ]] && ! groups "$USER" 2>/dev/null | grep -qw docker; then
       warn "you're not in the 'docker' group yet"
       msg "adding $USER to docker group"
       $SUDO usermod -aG docker "$USER"
-      die "added $USER to docker group. LOG OUT and back in (or run: newgrp docker) then re-run this script."
+      warn "docker group membership requires re-login. Continuing with sudo for this run."
+      docker() { $SUDO /usr/bin/docker "$@"; }
+      export -f docker
+      docker info >/dev/null 2>&1 || die "docker still unreachable even with sudo wrapper"
+      return
     fi
     die "docker daemon still unreachable. Try:  sudo systemctl status docker"
   fi
