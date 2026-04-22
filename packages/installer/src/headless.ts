@@ -23,25 +23,35 @@ import { randomPassword } from "./lib/secrets.js";
  * routing / TLS / Docker-provider failures that an in-container app-logic
  * E2E would miss. `--resolve` sidesteps DNS so real-domain installs don't
  * fail the probe just because their A record hasn't propagated yet.
+ *
+ * Retries for up to ~30s because the server container is force-recreated
+ * seconds before this probe runs — its healthcheck (15s interval) and
+ * Traefik's Docker-provider pickup need a moment to settle.
  */
-function probeFrontDoor(domain: string): void {
-  try {
-    execFileSync(
-      "curl",
-      [
-        "-ksf",
-        "-m", "10",
-        "--resolve", `${domain}:443:127.0.0.1`,
-        `https://${domain}/api/health`,
-      ],
-      { stdio: "pipe" },
-    );
-  } catch {
-    throw new Error(
-      `Install completed but https://${domain}/api/health is unreachable through the front-door proxy. ` +
-        `Check 'docker logs agenthub-traefik-1' for routing or Docker-provider errors.`,
-    );
+async function probeFrontDoor(domain: string): Promise<void> {
+  const url = `https://${domain}/api/health`;
+  const args = [
+    "-ksf",
+    "-m", "5",
+    "--resolve", `${domain}:443:127.0.0.1`,
+    url,
+  ];
+  let lastErr = "timeout";
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    try {
+      execFileSync("curl", args, { stdio: "pipe" });
+      return;
+    } catch (err) {
+      lastErr = err instanceof Error ? err.message : "curl failed";
+      await new Promise((r) => setTimeout(r, 2_000));
+    }
   }
+  throw new Error(
+    `Install completed but ${url} is unreachable through the front-door proxy after 30s. ` +
+      `Check 'docker logs agenthub-traefik-1' and 'docker logs agenthub-agenthub-server-1'. ` +
+      `Last curl error: ${lastErr}`,
+  );
 }
 
 export async function runHeadless(): Promise<void> {
@@ -58,7 +68,7 @@ export async function runHeadless(): Promise<void> {
   try {
     const art = await runInstall(cfg, (line) => console.log(line));
     console.log("verifying front-door routing via Traefik…");
-    probeFrontDoor(cfg.domain);
+    await probeFrontDoor(cfg.domain);
     console.log("");
     console.log(`AgentHub is up at ${art.url}`);
     console.log(`  Admin user:     admin`);
