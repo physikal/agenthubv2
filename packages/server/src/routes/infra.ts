@@ -92,6 +92,31 @@ export function infraRoutes() {
     return c.json({ ...row, config: maskConfig(JSON.stringify(full)) });
   });
 
+  // Provisioning status — cheap DB read, no Infisical round-trip. UI polls
+  // this every few seconds while status === 'provisioning'.
+  app.get("/:id/status", async (c) => {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const row = db
+      .select({
+        status: schema.infrastructureConfigs.status,
+        statusDetail: schema.infrastructureConfigs.statusDetail,
+        hostingNodeIp: schema.infrastructureConfigs.hostingNodeIp,
+        hostingNodeId: schema.infrastructureConfigs.hostingNodeId,
+        hostingNodeNode: schema.infrastructureConfigs.hostingNodeNode,
+      })
+      .from(schema.infrastructureConfigs)
+      .where(
+        and(
+          eq(schema.infrastructureConfigs.id, id),
+          eq(schema.infrastructureConfigs.userId, user.id),
+        ),
+      )
+      .get();
+    if (!row) return c.json({ error: "Not found" }, 404);
+    return c.json(row);
+  });
+
   app.post("/", async (c) => {
     const user = c.get("user");
     const body = await c.req.json<{
@@ -337,6 +362,77 @@ export function infraRoutes() {
     })();
 
     return c.json({ provisioning: true });
+  });
+
+  // Destroy ONLY the provisioned compute (droplet/container/etc.) but keep the
+  // infra config + credentials. Useful for "pause" or before re-provisioning
+  // with updated settings. Active deployments block the destroy.
+  app.delete("/:id/hosting-node", async (c) => {
+    const user = c.get("user");
+    const id = c.req.param("id");
+    const row = db
+      .select()
+      .from(schema.infrastructureConfigs)
+      .where(
+        and(
+          eq(schema.infrastructureConfigs.id, id),
+          eq(schema.infrastructureConfigs.userId, user.id),
+        ),
+      )
+      .get();
+    if (!row) return c.json({ error: "Not found" }, 404);
+
+    if (!row.hostingNodeId) {
+      return c.json({ error: "Nothing to destroy: no hosting node provisioned" }, 400);
+    }
+
+    const activeDeploys = db
+      .select()
+      .from(schema.deployments)
+      .where(eq(schema.deployments.infraId, id))
+      .all()
+      .filter((d) => d.status !== "destroyed");
+    if (activeDeploys.length > 0) {
+      return c.json({ error: "Cannot destroy hosting node: active deployments exist" }, 409);
+    }
+
+    const provider = getHostingProvider(row.provider);
+    if (!provider) {
+      return c.json(
+        { error: `provider ${row.provider} does not manage a hosting node` },
+        400,
+      );
+    }
+
+    try {
+      const full = await resolveInfraConfig(
+        user.id,
+        id,
+        JSON.parse(row.config) as Record<string, unknown>,
+      );
+      await provider.destroy(full, row.hostingNodeId);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "unknown";
+      db.update(schema.infrastructureConfigs)
+        .set({ status: "error", statusDetail: `destroy failed: ${msg}`, updatedAt: new Date() })
+        .where(eq(schema.infrastructureConfigs.id, id))
+        .run();
+      return c.json({ error: `destroy failed: ${msg}` }, 500);
+    }
+
+    db.update(schema.infrastructureConfigs)
+      .set({
+        status: "pending",
+        statusDetail: null,
+        hostingNodeIp: null,
+        hostingNodeId: null,
+        hostingNodeNode: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.infrastructureConfigs.id, id))
+      .run();
+
+    return c.json({ destroyed: true });
   });
 
   app.delete("/:id", async (c) => {

@@ -272,7 +272,6 @@ function AddConfigForm({ onCreated }: { onCreated: () => void }) {
             onChange={(e) => setProvider(e.target.value)}
             className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none"
           >
-            <option value="proxmox">Proxmox</option>
             <option value="cloudflare">Cloudflare DNS</option>
           </select>
         </div>
