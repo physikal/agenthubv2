@@ -155,14 +155,12 @@ async function authFetch<T>(
   bearer: string,
   init: RequestInit = {},
 ): Promise<T> {
-  const r = await fetch(url, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${bearer}`,
-      ...(init.headers ?? {}),
-    },
-  });
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...((init.headers as Record<string, string> | undefined) ?? {}),
+  };
+  if (bearer) headers["Authorization"] = `Bearer ${bearer}`;
+  const r = await fetch(url, { ...init, headers });
   if (!r.ok) {
     const body = await r.text().catch(() => "");
     throw new Error(`${init.method ?? "GET"} ${url} → ${String(r.status)}: ${body.slice(0, 400)}`);
@@ -228,10 +226,52 @@ async function attachUniversalAuth(
   return { clientId, clientSecret };
 }
 
-/** Create a project + attach the identity with admin role. */
+/**
+ * Log in as the admin user and return an org-scoped access token.
+ *
+ * Infisical's auth is a two-step flow: /api/v3/auth/login exchanges email +
+ * password for a generic access token (no org context), then
+ * /api/v3/auth/select-organization binds that token to an org so subsequent
+ * workspace/project operations have the context they need.
+ *
+ * Using the admin user's token (rather than the machine identity's bearer)
+ * for project creation is important: Infisical auto-adds the project
+ * creator as a member. If the identity creates the project, only the
+ * identity is a member — the admin user logs into the UI and sees nothing.
+ */
+async function loginAdminUser(
+  baseUrl: string,
+  email: string,
+  password: string,
+  orgId: string,
+): Promise<string> {
+  const login = await authFetch<{ accessToken: string }>(
+    `${baseUrl}/api/v3/auth/login`,
+    "",
+    {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+      headers: {},
+    },
+  );
+  const selected = await authFetch<{ token: string }>(
+    `${baseUrl}/api/v3/auth/select-organization`,
+    login.accessToken,
+    {
+      method: "POST",
+      body: JSON.stringify({ organizationId: orgId }),
+    },
+  );
+  return selected.token;
+}
+
+/**
+ * Create the project as the admin user (so they become a member), then
+ * attach the machine identity so the AgentHub server can authenticate.
+ */
 async function createProjectAndAttach(
   baseUrl: string,
-  bearerToken: string,
+  userBearer: string,
   orgId: string,
   identityId: string,
   projectName: string,
@@ -239,7 +279,7 @@ async function createProjectAndAttach(
   const proj = await authFetch<{
     project?: { id: string };
     workspace?: { id: string };
-  }>(`${baseUrl}/api/v2/workspace`, bearerToken, {
+  }>(`${baseUrl}/api/v2/workspace`, userBearer, {
     method: "POST",
     body: JSON.stringify({
       projectName,
@@ -250,14 +290,12 @@ async function createProjectAndAttach(
   const projectId = proj.project?.id ?? proj.workspace?.id;
   if (!projectId) throw new Error("workspace create returned no id");
 
-  // The project creator's identity is auto-added as a member when the
-  // workspace is created, so this attach is typically a no-op. We still
-  // issue it to handle edge cases where project creation was handed off
-  // or the API stops auto-adding — 400 "already exists" is fine.
+  // Admin user is auto-added because they created the project. Now attach
+  // the machine identity so the AgentHub server can authenticate.
   try {
     await authFetch(
       `${baseUrl}/api/v2/workspace/${projectId}/identity-memberships/${identityId}`,
-      bearerToken,
+      userBearer,
       {
         method: "POST",
         body: JSON.stringify({ role: "admin" }),
@@ -319,10 +357,21 @@ export async function bootstrapInfisical(
     identityId,
   );
 
+  // Log in as the admin USER (not the identity) so the admin is auto-added
+  // as a project member. Otherwise they log into the Infisical UI and see
+  // an empty project list, while AgentHub-written secrets are invisible.
+  log("[infisical] logging in as admin user to scope project creation…");
+  const userBearer = await loginAdminUser(
+    input.baseUrl,
+    input.adminEmail,
+    adminPassword,
+    orgId,
+  );
+
   log(`[infisical] creating project "${input.projectName}" + attaching identity…`);
   const projectId = await createProjectAndAttach(
     input.baseUrl,
-    bearer,
+    userBearer,
     orgId,
     identityId,
     input.projectName,
