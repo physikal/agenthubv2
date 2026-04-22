@@ -192,7 +192,16 @@ cmd_update() {
   migrate_env
   rebuild_changed_images "$old_sha" "$remote_sha"
 
-  msg "recreating server"
+  # Two steps:
+  #   1. `compose up -d` with no filter picks up config drift on every
+  #      service (new ports on traefik, env changes on infisical, etc.)
+  #      without recreating services whose config didn't move.
+  #   2. `--force-recreate agenthub-server` guarantees the new image we
+  #      just rebuilt is actually used — compose otherwise keeps the
+  #      running container when only the underlying image changed.
+  msg "applying compose changes"
+  compose up -d >/dev/null
+  msg "recreating server with new image"
   compose up -d --force-recreate agenthub-server >/dev/null
 
   probe_front_door
