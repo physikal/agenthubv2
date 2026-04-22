@@ -22,7 +22,6 @@ function Layout() {
           <Route path="/backups" element={<Backups />} />
           <Route path="/infrastructure" element={<Infrastructure />} />
           <Route path="/admin/users" element={<Admin />} />
-          <Route path="/containers" element={<div className="p-6">Containers</div>} />
         </Routes>
       </main>
     </div>

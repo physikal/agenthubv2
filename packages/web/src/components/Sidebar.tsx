@@ -11,7 +11,6 @@ const links = [
 
 const adminLinks = [
   { to: "/admin/users", label: "Users", icon: "●" },
-  { to: "/containers", label: "Containers", icon: "●" },
 ] as const;
 
 export function Sidebar() {
