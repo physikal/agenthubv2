@@ -4,18 +4,21 @@
 Self-hostable web platform for running coding-agent sessions in containers. Runs on plain Docker or Dokploy.
 
 Monorepo packages:
-- `packages/web` — React 19 + Vite frontend
+- `packages/web` — React 19 + Vite frontend. Pages: Sessions / Deployments / Integrations / Backups / Secrets / Settings (+ admin: Users)
 - `packages/server` — Hono backend
 - `packages/agent` — daemon inside workspace container (backup ops + terminal control)
 - `packages/installer` — Ink TUI, `./scripts/install.sh`
 
 ## Quick reference
 - **Database**: SQLite at `/data/agenthub.db` (Drizzle ORM)
-- **Secrets**: Infisical (bundled service, bootstrapped by the installer; SDK = `@infisical/sdk`)
+- **Secrets**: Infisical (bundled service, bootstrapped by the installer; SDK = `@infisical/sdk`; console on :8443)
 - **Provisioner modes**: `docker` | `dokploy-local` | `dokploy-remote` (env var `PROVISIONER_MODE`)
 - **Agent image**: `docker/Dockerfile.agent-workspace`
-- **Server image**: `docker/Dockerfile.server`
+- **Server image**: `docker/Dockerfile.server` (includes `git` for the Version endpoint)
+- **Updater image**: `docker/Dockerfile.updater` (alpine + git + docker-cli, used by web UI "Update now")
 - **Compose bundle**: `compose/docker-compose.yml` (+ `docker-compose.dokploy.yml` overlay)
+- **Operator CLI**: `/usr/local/bin/agenthub` (installed by `scripts/install.sh`, source at `scripts/agenthub`). Subcommands: `update` / `status` / `logs` / `restart` / `version`.
+- **Repo mount**: the server container has the install's git checkout at `/repo` (rw) so `/api/admin/version` can shell to git and `/api/admin/update` can spawn the updater container.
 
 ## Development
 ```bash
@@ -57,6 +60,9 @@ See `compose/.env.example` for the full list with comments.
 - Per-session `AGENT_TOKEN` env var injected by SessionManager — the agent reads it as `AGENT_TOKEN`.
 - Session-creation → `active` requires about 5-15 seconds (container start + agent WS handshake). Tests should poll, not block-sleep.
 - SQLite `sessions` table uses provider-generic columns: `workspaceId`/`workspaceHost`/`workspaceIp`.
+- `infrastructure_configs` table holds all integrations — compute providers (`docker`/`digitalocean`/`dokploy`), DNS (`cloudflare`), and backups (`b2`). Routes: `/api/infra` for CRUD, `/api/user/backup` is a thin alias over the `provider='b2'` row for ops-page use.
+- Updates: `agenthub update` is the canonical code path. The web UI `POST /api/admin/update` spawns an `agenthubv2-updater:local` container that runs the same CLI — so both paths share all the migration / rebuild / recreate logic. Compose config drift is handled by `compose up -d` before the `--force-recreate agenthub-server` step.
+- The CLI self-updates from `scripts/agenthub` in the repo, then re-execs, with an `AGENTHUB_SELF_UPDATED=1` sentinel so the re-exec doesn't loop or short-circuit as "nothing to do".
 
 ## Testing
 

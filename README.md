@@ -37,6 +37,8 @@ cd agenthubv2
 
 When install finishes you'll see **two** admin credential sets — one for AgentHub, one for the bundled Infisical secret store. Both are also written to `compose/.env`.
 
+**Ports opened**: 80 (HTTP→HTTPS redirect), 443 (AgentHub), 8443 (Infisical console).
+
 Full install docs: [docs/install/humans.md](docs/install/humans.md) · [docs/install/agents.md](docs/install/agents.md) · [docs/install/installer-flow.md](docs/install/installer-flow.md) · [docs/troubleshooting.md](docs/troubleshooting.md)
 
 ## What's in the box
@@ -46,22 +48,29 @@ Browser (React + xterm.js)
   │  WebSocket + REST, cookie-auth
   ▼
 ┌───────────────────────── docker compose bundle ─────────────────────────┐
-│  traefik (:80/:443, Let's Encrypt)                                      │
-│    └─▶ agenthub-server (Hono)                                           │
-│          ├─ SQLite        (users, sessions, infra records)              │
-│          ├─ Infisical     (Cloudflare tokens, B2 keys, DO tokens…)      │
-│          └─ Docker / Dokploy driver                                     │
-│              └─▶ workspace container (per session)                      │
-│                    agent daemon + ttyd + Claude Code + agentdeploy MCP  │
+│  traefik (:80 → :443, :8443)                                            │
+│    ├─▶ :443  agenthub-server (Hono + SPA)                               │
+│    │          ├─ SQLite      (users, sessions, integrations)            │
+│    │          ├─ Infisical   (Cloudflare tokens, B2 keys, DO tokens…)   │
+│    │          └─ Docker / Dokploy driver                                │
+│    │              └─▶ workspace container (per session)                 │
+│    │                    agent daemon + ttyd + Claude Code + MCP         │
+│    └─▶ :8443 infisical (raw admin console, self-signed TLS)             │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-Inside each workspace, `agentdeploy` MCP lets the agent deploy *its* apps to:
-- Docker host over SSH
-- DigitalOcean (droplet + Docker + Traefik)
-- Dokploy (API, no SSH)
+**Web UI pages** (after login):
+- **Sessions** — active workspace containers + terminal
+- **Deployments** — apps the agent has deployed
+- **Integrations** — Cloudflare DNS, DigitalOcean, Docker host, Dokploy, Backblaze B2 (one page, typed forms, secrets in Infisical)
+- **Backups** — snapshot save/restore + history
+- **Secrets** — link to the bundled Infisical admin console for folders/environments/audit log
+- **Settings** — account, password, and (admin-only) **Version** panel with one-click update pulled from GitHub
 
-Plus Cloudflare DNS automation and optional Backblaze B2 backups (per-user, run from inside the workspace via the agent daemon — backups require an active session so the agent can reach `/home/coder`).
+**Operator CLI** (installed to `/usr/local/bin/agenthub`):
+`agenthub update` · `agenthub status` · `agenthub logs` · `agenthub restart` · `agenthub version`. Same flow the web UI's Update button triggers — one code path.
+
+Inside each workspace, `agentdeploy` MCP lets the agent deploy *its* apps to: Docker host over SSH · DigitalOcean (droplet + Docker + Traefik) · Dokploy (API, no SSH). Plus Cloudflare DNS automation and optional Backblaze B2 backups (per-user, run from inside the workspace via the agent daemon — backups require an active session so the agent can reach `/home/coder`).
 
 ## Install modes
 
