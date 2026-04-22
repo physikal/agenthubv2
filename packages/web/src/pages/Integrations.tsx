@@ -444,13 +444,6 @@ export function Integrations() {
     );
   }
 
-  // Host header of the page tells us where we are. For a DOMAIN=localhost
-  // install the user reaches us by LAN IP or tunnel, where "secrets.localhost"
-  // won't resolve for them — so we annotate the link with guidance.
-  const pageHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
-  const infisicalUrl = `https://secrets.${pageHost}/`;
-  const hostLooksLikeIP = /^\d+\.\d+\.\d+\.\d+$/.test(pageHost) || pageHost === "localhost";
-
   return (
     <div className="flex-1 overflow-auto p-6">
       <div className="flex items-center justify-between mb-2">
@@ -481,30 +474,6 @@ export function Integrations() {
             <ConfigCard key={c.id} infra={c} onRefresh={() => void fetchConfigs()} />
           ))
         )}
-
-        {/* Advanced escape hatch — raw Infisical admin UI for folder/env
-            management, secret versions, ACL. Most users never need this. */}
-        <div className="mt-8 pt-4 border-t border-zinc-800">
-          <p className="text-xs text-zinc-500 mb-2">Advanced</p>
-          <a
-            href={infisicalUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-sm text-purple-400 hover:text-purple-300 transition-colors"
-          >
-            Open Infisical console →
-          </a>
-          <p className="text-xs text-zinc-600 mt-1">
-            Direct access to the secret store: folders, environments, versions, audit log.
-            {hostLooksLikeIP && (
-              <>
-                {" "}For this <code className="text-zinc-500">DOMAIN=localhost</code> install, add{" "}
-                <code className="text-zinc-500">{pageHost} secrets.localhost</code>{" "}
-                to <code className="text-zinc-500">/etc/hosts</code> on your machine, then reload.
-              </>
-            )}
-          </p>
-        </div>
       </div>
     </div>
   );
