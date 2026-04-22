@@ -94,11 +94,13 @@ services:
       AUTH_SECRET: ${INFISICAL_AUTH_SECRET}
       DB_CONNECTION_URI: postgres://infisical:${INFISICAL_DB_PASSWORD}@infisical-postgres:5432/infisical
       REDIS_URL: redis://default:${INFISICAL_REDIS_PASSWORD}@infisical-redis:6379
-      # Infisical uses SITE_URL for absolute URLs in emails + OAuth callbacks.
-      # Empty for now — users reach the console at https://<host>:8443/ and
-      # Infisical works fine without a canonical site URL for our read-heavy
-      # admin-only use case.
-      SITE_URL: ""
+      # Infisical uses SITE_URL for absolute URLs in password-reset emails
+      # and OAuth callbacks. Must be non-empty (Infisical's zod schema
+      # rejects ""). For our admin-only usage these URLs are never clicked
+      # by anyone, so a hardcoded placeholder is fine — users still reach
+      # the console at https://<host>:8443/ via any host header Traefik
+      # sees. Override via compose/.env if you care about reset emails.
+      SITE_URL: https://localhost:8443
       TELEMETRY_ENABLED: "false"
     networks:
       - agenthub
