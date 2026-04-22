@@ -297,10 +297,17 @@ async function grantAdminUserProjectMembership(input: {
   projectId: string;
   log: (line: string) => void;
 }): Promise<void> {
-  // users.id, projects.id, project_memberships.id etc are all `uuid` columns.
-  // PL/pgSQL is strict about uuid vs text in comparisons, so declare the
-  // locals as uuid and cast the inbound project-id literal with ::uuid.
-  const pid = `'${input.projectId}'::uuid`;
+  // Infisical's schema mixes uuid and character-varying types:
+  //   users.id                               uuid
+  //   project_memberships.userId             uuid
+  //   project_memberships.id                 uuid
+  //   projects.id                            character varying
+  //   project_memberships.projectId          character varying
+  //   project_user_membership_roles.id       uuid
+  //   project_user_membership_roles.projectMembershipId  uuid
+  // PL/pgSQL is strict about type matches, so declare locals accordingly
+  // and pass the project-id as a plain string literal (no ::uuid cast).
+  const pid = `'${input.projectId}'`;
   const sql = `
 DO $$
 DECLARE
