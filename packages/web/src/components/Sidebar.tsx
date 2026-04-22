@@ -1,19 +1,35 @@
 import { NavLink } from "react-router-dom";
 import { useAuthStore } from "../stores/auth.ts";
 
-const links = [
+interface NavItem {
+  readonly to: string;
+  readonly label: string;
+  readonly icon: string;
+  readonly external?: boolean;
+}
+
+// "external" links fall outside React Router — they point at the Starlight
+// docs site served from the same origin under /docs/ and need a full-page
+// navigation so Starlight's own router can take over.
+const links: readonly NavItem[] = [
   { to: "/", label: "My Sessions", icon: "●" },
   { to: "/deployments", label: "Deployments", icon: "●" },
   { to: "/backups", label: "Backups", icon: "●" },
   { to: "/integrations", label: "Integrations", icon: "●" },
   { to: "/packages", label: "Packages", icon: "●" },
+  { to: "/docs/", label: "Docs", icon: "●", external: true },
   { to: "/secrets", label: "Secrets", icon: "●" },
   { to: "/settings", label: "Settings", icon: "●" },
-] as const;
+];
 
-const adminLinks = [
+const adminLinks: readonly NavItem[] = [
   { to: "/admin/users", label: "Users", icon: "●" },
-] as const;
+];
+
+const linkClass = "flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm " +
+  "transition-colors text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800";
+const activeClass = "flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm " +
+  "transition-colors bg-purple-500/10 text-purple-400 font-medium";
 
 export function Sidebar() {
   const { user, logout } = useAuthStore();
@@ -28,28 +44,33 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 p-3 space-y-1">
-        {links.map((link) => (
-          <NavLink
-            key={link.to}
-            to={link.to}
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-colors ${
-                isActive
-                  ? "bg-purple-500/10 text-purple-400 font-medium"
-                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
-              }`
-            }
-          >
-            <span
-              className={`text-[8px] ${
-                link.to === "/" ? "text-purple-400" : "text-zinc-600"
-              }`}
+        {links.map((link) =>
+          link.external ? (
+            <a
+              key={link.to}
+              href={link.to}
+              className={linkClass}
             >
-              {link.icon}
-            </span>
-            {link.label}
-          </NavLink>
-        ))}
+              <span className="text-[8px] text-zinc-600">{link.icon}</span>
+              {link.label}
+            </a>
+          ) : (
+            <NavLink
+              key={link.to}
+              to={link.to}
+              className={({ isActive }) => (isActive ? activeClass : linkClass)}
+            >
+              <span
+                className={`text-[8px] ${
+                  link.to === "/" ? "text-purple-400" : "text-zinc-600"
+                }`}
+              >
+                {link.icon}
+              </span>
+              {link.label}
+            </NavLink>
+          ),
+        )}
 
         {user?.role === "admin" && (
           <>
@@ -62,13 +83,7 @@ export function Sidebar() {
               <NavLink
                 key={link.to}
                 to={link.to}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-colors ${
-                    isActive
-                      ? "bg-purple-500/10 text-purple-400 font-medium"
-                      : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
-                  }`
-                }
+                className={({ isActive }) => (isActive ? activeClass : linkClass)}
               >
                 <span className="text-[8px] text-zinc-600">{link.icon}</span>
                 {link.label}

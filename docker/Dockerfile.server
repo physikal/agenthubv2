@@ -10,6 +10,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .pnpm-approve-builds.json .
 COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
 COPY packages/agent/package.json packages/agent/
+COPY packages/docs/package.json packages/docs/
 RUN pnpm install --frozen-lockfile
 RUN cd node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && npx --yes node-gyp rebuild 2>&1 | tail -3
 
@@ -34,6 +35,15 @@ COPY packages/agent/ packages/agent/
 COPY tsconfig.base.json ./
 RUN cd packages/agent && npx tsc
 
+# Build the Starlight docs site. Output lands at packages/docs/dist/ with
+# files keyed under /docs/ (see astro.config.mjs `base: "/docs"`). We copy
+# the entire tree into the production image below.
+FROM base AS build-docs
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages/docs/node_modules ./packages/docs/node_modules
+COPY packages/docs/ packages/docs/
+RUN cd packages/docs && npx astro build
+
 FROM base AS production
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
     tini openssh-client unzip curl ca-certificates git \
@@ -52,6 +62,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/server/node_modules ./packages/server/node_modules
 COPY --from=build-server /app/packages/server/dist ./packages/server/dist
 COPY --from=build-web /app/packages/web/dist ./packages/server/dist/public
+# The docs build is Starlight output; Astro emits files under /docs/ so they
+# land at dist/public/docs/ and are served by the same serveStatic in index.ts.
+COPY --from=build-docs /app/packages/docs/dist ./packages/server/dist/public/docs
 COPY packages/server/package.json ./packages/server/
 
 COPY --from=deps /app/packages/agent/node_modules ./packages/agent/node_modules

@@ -1,0 +1,49 @@
+---
+title: AgentHub User Manual
+description: Everything you need to use AgentHub — a self-hosted platform for running coding-agent sessions in isolated containers.
+template: splash
+hero:
+  tagline: Run Claude Code, OpenCode, MiniMax, or Droid inside disposable containers on your own hardware. Your agent, your box, your logs.
+  actions:
+    - text: Get started
+      link: /docs/getting-started/what-is-agenthub/
+      icon: right-arrow
+      variant: primary
+    - text: Browse agent CLIs
+      link: /docs/clis/overview/
+      variant: secondary
+    - text: Operator handbook
+      link: /docs/operators/cli/
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What this manual covers
+
+<CardGrid stagger>
+	<Card title="Getting started" icon="rocket">
+		Log into AgentHub for the first time, create a session, and talk to a coding agent inside its own container.
+	</Card>
+	<Card title="Agent CLIs" icon="seti:npm">
+		Claude Code, OpenCode, MiniMax, Droid — what's pre-installed, what's on the Packages page, and how to use each inside a workspace.
+	</Card>
+	<Card title="The web UI" icon="laptop">
+		Every page in the sidebar, what it does, and the data it stores. Written so you can find answers without hunting through source code.
+	</Card>
+	<Card title="Operating AgentHub" icon="setting">
+		The `agenthub` CLI, updates, volumes, backups, and the failure modes you'll hit when something stops working.
+	</Card>
+</CardGrid>
+
+## What AgentHub is, in one sentence
+
+AgentHub is a **self-hosted web app** that boots a containerized Linux workspace with a coding agent (Claude Code, OpenCode, MiniMax, or Droid) pre-installed, so you can drive that agent from a browser terminal and let it deploy its own apps through the bundled `agentdeploy` MCP.
+
+Unlike hosted products, every workspace runs on hardware you own. No API keys leave your network unless you put them there yourself.
+
+## Where to go next
+
+- **New install?** Head to [Your first session](/docs/getting-started/first-session/).
+- **Comparing CLIs?** See [Agent CLIs · overview](/docs/clis/overview/).
+- **Hit a wall?** Jump to [Troubleshooting](/docs/operators/troubleshooting/).

@@ -98,7 +98,17 @@ app.use("/api/admin/*", adminMiddleware);
 app.route("/api/admin", adminRoutes(sessionManager));
 
 if (process.env["NODE_ENV"] === "production") {
+  // Static assets for the React SPA + the Starlight docs site (the latter
+  // lives under dist/public/docs/ — see packages/docs). Both are served by
+  // the same serveStatic call because they share the same root.
   app.use("/*", serveStatic({ root: "./packages/server/dist/public" }));
+  // Fallback for /docs/* misses: hand back Starlight's 404 page so docs
+  // errors look like docs errors, not the SPA shell.
+  app.get(
+    "/docs/*",
+    serveStatic({ path: "./packages/server/dist/public/docs/404.html" }),
+  );
+  // SPA fallback for everything else — client-side routing takes over.
   app.get("*", serveStatic({ path: "./packages/server/dist/public/index.html" }));
 }
 

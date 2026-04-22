@@ -41,6 +41,8 @@ When install finishes you'll see **two** admin credential sets — one for Agent
 
 Full install docs: [docs/install/humans.md](docs/install/humans.md) · [docs/install/agents.md](docs/install/agents.md) · [docs/install/installer-flow.md](docs/install/installer-flow.md) · [docs/troubleshooting.md](docs/troubleshooting.md)
 
+The complete **user manual** is also bundled with every install at `/docs` — browse to `https://<your-host>/docs/` after install, or click **Docs** in the sidebar.
+
 ## What's in the box
 
 ```

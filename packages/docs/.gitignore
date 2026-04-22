@@ -1,0 +1,4 @@
+# Astro build output
+dist/
+# Astro type-generation cache
+.astro/
