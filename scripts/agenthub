@@ -160,6 +160,25 @@ cmd_update() {
   [[ "${1:-}" == "--check" ]] && check_only=1
 
   cd "$AGENTHUB_DIR"
+  # When we re-exec into ourselves after self-updating, the repo is already
+  # at origin/main from the previous invocation's reset. Skip the "behind"
+  # check and proceed straight to migrate/rebuild/recreate.
+  if [[ -n "${AGENTHUB_SELF_UPDATED:-}" ]]; then
+    msg "continuing update after CLI self-update"
+    local local_sha remote_sha
+    local_sha="$(git rev-parse HEAD)"
+    remote_sha="$local_sha"
+    migrate_env
+    rebuild_changed_images "$local_sha" "$remote_sha" || true
+    msg "applying compose changes"
+    compose up -d >/dev/null
+    msg "recreating server with new image"
+    compose up -d --force-recreate agenthub-server >/dev/null
+    probe_front_door
+    ok "updated to $(git rev-parse --short HEAD)"
+    return 0
+  fi
+
   git fetch --quiet origin main
   local local_sha remote_sha
   local_sha="$(git rev-parse HEAD)"
