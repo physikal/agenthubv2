@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+#
+# agenthub — manage an AgentHub install from the command line.
+#
+#   agenthub update            Pull latest, rebuild images, recreate stack.
+#   agenthub update --check    Show what would happen (no changes).
+#   agenthub status            Git SHA, latest origin SHA, compose services.
+#   agenthub logs [service]    Tail compose logs (defaults to agenthub-server).
+#   agenthub restart [service] Restart a service (defaults to all).
+#   agenthub version           Current git SHA + commit date.
+#
+# Installed to /usr/local/bin/agenthub by scripts/install.sh. Reads the
+# install directory from /etc/agenthub/config. Re-run scripts/install.sh
+# if that file is missing or stale.
+
+set -euo pipefail
+
+c_reset=$'\033[0m'; c_bold=$'\033[1m'
+c_cyan=$'\033[1;36m'; c_yel=$'\033[1;33m'; c_red=$'\033[1;31m'; c_grn=$'\033[1;32m'
+msg()  { printf '%s[agenthub]%s %s\n' "$c_cyan" "$c_reset" "$*"; }
+ok()   { printf '%s[ok]%s %s\n'        "$c_grn"  "$c_reset" "$*"; }
+warn() { printf '%s[warn]%s %s\n'      "$c_yel"  "$c_reset" "$*" >&2; }
+die()  { printf '%s[error]%s %s\n'     "$c_red"  "$c_reset" "$*" >&2; exit 1; }
+
+CONFIG_FILE="${AGENTHUB_CONFIG:-/etc/agenthub/config}"
+if [[ ! -r "$CONFIG_FILE" ]]; then
+  die "$CONFIG_FILE not found. Reinstall or set AGENTHUB_DIR manually and export AGENTHUB_CONFIG."
+fi
+# shellcheck disable=SC1090
+. "$CONFIG_FILE"
+
+: "${AGENTHUB_DIR:?AGENTHUB_DIR not set in $CONFIG_FILE}"
+[[ -d "$AGENTHUB_DIR/.git" ]] || die "$AGENTHUB_DIR is not a git repo — did the install change location?"
+[[ -f "$AGENTHUB_DIR/compose/docker-compose.yml" ]] || die "compose file missing at $AGENTHUB_DIR"
+
+COMPOSE_FILE="$AGENTHUB_DIR/compose/docker-compose.yml"
+ENV_FILE="$AGENTHUB_DIR/compose/.env"
+
+# sudo unless already root
+SUDO=""; [[ "$(id -u)" -ne 0 ]] && SUDO="sudo"
+
+compose() {
+  $SUDO docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
+}
+
+cmd_version() {
+  cd "$AGENTHUB_DIR"
+  local sha date
+  sha="$(git rev-parse --short HEAD)"
+  date="$(git log -1 --format=%cI HEAD)"
+  printf 'AgentHub at %s\n  commit : %s\n  date   : %s\n' "$AGENTHUB_DIR" "$sha" "$date"
+}
+
+cmd_status() {
+  cd "$AGENTHUB_DIR"
+  git fetch --quiet origin main
+  local local_sha remote_sha ahead behind
+  local_sha="$(git rev-parse HEAD)"
+  remote_sha="$(git rev-parse origin/main)"
+  ahead="$(git rev-list --count "$remote_sha..$local_sha")"
+  behind="$(git rev-list --count "$local_sha..$remote_sha")"
+
+  printf '%sGit%s\n' "$c_bold" "$c_reset"
+  printf '  installed: %s\n' "$(git rev-parse --short HEAD)"
+  printf '  origin   : %s\n' "$(git rev-parse --short origin/main)"
+  if [[ "$behind" -gt 0 ]]; then
+    printf '  %s%s commit(s) behind origin/main%s — run `agenthub update` to pull\n' "$c_yel" "$behind" "$c_reset"
+  elif [[ "$ahead" -gt 0 ]]; then
+    printf '  %s%s commit(s) ahead of origin/main%s (local-only work)\n' "$c_yel" "$ahead" "$c_reset"
+  else
+    printf '  %sup to date%s\n' "$c_grn" "$c_reset"
+  fi
+  printf '\n%sCompose services%s\n' "$c_bold" "$c_reset"
+  compose ps --format "table {{.Service}}\t{{.State}}\t{{.Status}}"
+}
+
+# Rebuild only the images whose Dockerfile has actually changed between $1..$2.
+# Avoids the ~3min server rebuild when all that moved was a doc comma.
+rebuild_changed_images() {
+  local from="$1" to="$2"
+  cd "$AGENTHUB_DIR"
+  local changed
+  changed="$(git diff --name-only "$from" "$to" -- docker/ packages/ || true)"
+  local rebuild_server=0 rebuild_workspace=0
+  if echo "$changed" | grep -qE '^(docker/Dockerfile\.server|packages/server/|packages/web/|packages/agent/|pnpm-lock\.yaml|package\.json)'; then
+    rebuild_server=1
+  fi
+  if echo "$changed" | grep -qE '^(docker/Dockerfile\.agent-workspace|docker/agent-workspace-entrypoint\.sh|packages/agent/)'; then
+    rebuild_workspace=1
+  fi
+  if [[ "$rebuild_server" -eq 0 && "$rebuild_workspace" -eq 0 ]]; then
+    msg "no image-relevant changes — skipping rebuild"
+    return
+  fi
+  if [[ "$rebuild_server" -eq 1 ]]; then
+    msg "rebuilding agenthubv2-server:local"
+    $SUDO docker build -q -f "$AGENTHUB_DIR/docker/Dockerfile.server" -t agenthubv2-server:local "$AGENTHUB_DIR"
+  fi
+  if [[ "$rebuild_workspace" -eq 1 ]]; then
+    msg "rebuilding agenthubv2-workspace:local"
+    $SUDO docker build -q -f "$AGENTHUB_DIR/docker/Dockerfile.agent-workspace" -t agenthubv2-workspace:local "$AGENTHUB_DIR"
+  fi
+}
+
+probe_front_door() {
+  local domain
+  domain="$(grep -E '^DOMAIN=' "$ENV_FILE" | cut -d= -f2)"
+  [[ -z "$domain" ]] && return 0
+  local deadline=$((SECONDS + 30))
+  while [[ "$SECONDS" -lt "$deadline" ]]; do
+    if curl -ksf -m 5 --resolve "${domain}:443:127.0.0.1" "https://${domain}/api/health" >/dev/null 2>&1; then
+      ok "front-door probe green: https://${domain}/api/health"
+      return 0
+    fi
+    sleep 2
+  done
+  warn "front-door probe did not turn green within 30s — inspect: docker logs agenthub-traefik-1"
+  return 1
+}
+
+cmd_update() {
+  local check_only=0
+  [[ "${1:-}" == "--check" ]] && check_only=1
+
+  cd "$AGENTHUB_DIR"
+  git fetch --quiet origin main
+  local local_sha remote_sha
+  local_sha="$(git rev-parse HEAD)"
+  remote_sha="$(git rev-parse origin/main)"
+
+  if [[ "$local_sha" == "$remote_sha" ]]; then
+    ok "already at origin/main (${local_sha:0:7}) — nothing to do"
+    return 0
+  fi
+
+  msg "update available: $(git rev-parse --short HEAD) → $(git rev-parse --short origin/main)"
+  git --no-pager log --oneline "$local_sha..$remote_sha" | head -10 | sed 's/^/  /'
+
+  if [[ "$check_only" -eq 1 ]]; then
+    msg "--check: not applying"
+    return 0
+  fi
+
+  msg "pulling + rebuilding"
+  local old_sha="$local_sha"
+  git reset --hard origin/main --quiet
+
+  rebuild_changed_images "$old_sha" "$remote_sha"
+
+  msg "recreating server"
+  compose up -d --force-recreate agenthub-server >/dev/null
+
+  probe_front_door
+  ok "updated to $(git rev-parse --short HEAD)"
+}
+
+cmd_logs() {
+  local svc="${1:-agenthub-server}"
+  compose logs -f --tail=100 "$svc"
+}
+
+cmd_restart() {
+  if [[ $# -eq 0 ]]; then
+    msg "restarting all services"
+    compose restart
+  else
+    msg "restarting $*"
+    compose restart "$@"
+  fi
+}
+
+usage() {
+  cat <<'EOF'
+Usage: agenthub <command> [args]
+
+Commands:
+  update [--check]       Pull latest, rebuild, recreate. --check is a dry-run.
+  status                 Git + compose service status.
+  logs [service]         Tail compose logs (default: agenthub-server).
+  restart [service...]   Restart services (default: all).
+  version                Current git SHA + date.
+
+Config: /etc/agenthub/config (set AGENTHUB_DIR=/path/to/agenthubv2)
+Override via AGENTHUB_CONFIG=/other/path/config
+EOF
+}
+
+case "${1:-}" in
+  update)  shift; cmd_update "$@" ;;
+  status)  shift; cmd_status ;;
+  logs)    shift; cmd_logs "$@" ;;
+  restart) shift; cmd_restart "$@" ;;
+  version) shift; cmd_version ;;
+  -h|--help|help|"") usage ;;
+  *)       die "unknown command: $1 (try: agenthub --help)" ;;
+esac
