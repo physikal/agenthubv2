@@ -150,6 +150,11 @@ services:
       # or dokploy-remote, you can remove this mount — the server doesn't
       # touch Docker directly in those modes.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Read-write mount of the install's git checkout so the server can
+      # read version info (GET /api/admin/version) and trigger updates
+      # (POST /api/admin/update spawns a one-shot agenthubv2-updater
+      # container that git-pulls + rebuilds against this path).
+      - ${AGENTHUB_REPO_DIR}:/repo:rw
     networks:
       - agenthub
     labels:

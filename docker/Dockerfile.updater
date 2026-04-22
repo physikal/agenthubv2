@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1.7
+#
+# AgentHub updater image.
+#
+# Ephemeral one-shot container invoked by the server when a user clicks
+# "Update" in the Settings UI. Runs the same `agenthub update` CLI the
+# operator can invoke from the host shell — identical code path, zero
+# drift.
+#
+# Mounted at run time:
+#   /repo                         — the install's git clone (rw)
+#   /var/run/docker.sock          — host docker socket (for build + recreate)
+#
+# Env:
+#   AGENTHUB_DIR=/repo            — tells the CLI where to operate
+#
+# Build (from repo root):
+#   docker build -f docker/Dockerfile.updater -t agenthubv2-updater:local .
+FROM alpine:3.20
+
+RUN apk add --no-cache \
+      bash \
+      git \
+      docker-cli \
+      docker-cli-compose \
+      curl \
+      jq \
+    && rm -rf /var/cache/apk/*
+
+COPY scripts/agenthub /usr/local/bin/agenthub
+RUN chmod 0755 /usr/local/bin/agenthub
+
+# Default command runs the CLI's `update` subcommand. The server overrides
+# with --check or other subcommands as needed.
+ENTRYPOINT ["/usr/local/bin/agenthub"]
+CMD ["update"]

@@ -54,6 +54,12 @@ if [[ "$WORKSPACE_IMAGE" == "agenthubv2-workspace:local" ]]; then
   docker build -f docker/Dockerfile.agent-workspace -t "$WORKSPACE_IMAGE" . | tail -3
 fi
 
+# Updater image is tiny (alpine + git + docker-cli) — always build locally,
+# no registry push. The web-UI "Update" button runs this image as a one-shot
+# to invoke the same agenthub CLI the operator uses from the host.
+echo "=== docker build updater (agenthubv2-updater:local) ==="
+docker build -q -f docker/Dockerfile.updater -t agenthubv2-updater:local . | tail -3
+
 # --- Install the `agenthub` CLI onto PATH + state file ---------------------
 # Gives the operator a single command for update/status/logs/restart after
 # the install is done. Idempotent: safe to re-run across upgrades.

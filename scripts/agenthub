@@ -22,14 +22,19 @@ ok()   { printf '%s[ok]%s %s\n'        "$c_grn"  "$c_reset" "$*"; }
 warn() { printf '%s[warn]%s %s\n'      "$c_yel"  "$c_reset" "$*" >&2; }
 die()  { printf '%s[error]%s %s\n'     "$c_red"  "$c_reset" "$*" >&2; exit 1; }
 
+# Load AGENTHUB_DIR from (in order) env → /etc/agenthub/config → error.
+# Env-first so the web-UI update container can pass AGENTHUB_DIR=/repo
+# without shipping /etc/agenthub/config into the image.
 CONFIG_FILE="${AGENTHUB_CONFIG:-/etc/agenthub/config}"
-if [[ ! -r "$CONFIG_FILE" ]]; then
-  die "$CONFIG_FILE not found. Reinstall or set AGENTHUB_DIR manually and export AGENTHUB_CONFIG."
+if [[ -z "${AGENTHUB_DIR:-}" ]]; then
+  if [[ -r "$CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    . "$CONFIG_FILE"
+  else
+    die "AGENTHUB_DIR not set and $CONFIG_FILE not found. Reinstall, or export AGENTHUB_DIR=/path/to/agenthubv2."
+  fi
 fi
-# shellcheck disable=SC1090
-. "$CONFIG_FILE"
-
-: "${AGENTHUB_DIR:?AGENTHUB_DIR not set in $CONFIG_FILE}"
+: "${AGENTHUB_DIR:?AGENTHUB_DIR not set}"
 [[ -d "$AGENTHUB_DIR/.git" ]] || die "$AGENTHUB_DIR is not a git repo — did the install change location?"
 [[ -f "$AGENTHUB_DIR/compose/docker-compose.yml" ]] || die "compose file missing at $AGENTHUB_DIR"
 

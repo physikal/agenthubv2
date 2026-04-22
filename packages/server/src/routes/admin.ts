@@ -1,10 +1,23 @@
 import { randomUUID } from "node:crypto";
+import { execFileSync, spawn } from "node:child_process";
 import { Hono } from "hono";
 import { hashSync } from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import type { SessionManager } from "../services/session-manager.js";
 import type { AuthUser } from "../middleware/auth.js";
+
+// Repo is mounted at /repo by compose. See docker-compose.yml volumes +
+// installer's renderEnv (which writes AGENTHUB_REPO_DIR).
+const REPO_DIR = "/repo";
+
+function runGit(args: string[]): string {
+  return execFileSync("git", args, {
+    cwd: REPO_DIR,
+    encoding: "utf8",
+    timeout: 30_000,
+  }).trim();
+}
 
 export function adminRoutes(sessionManager: SessionManager) {
   const app = new Hono<{ Variables: { user: AuthUser } }>();
@@ -140,6 +153,116 @@ export function adminRoutes(sessionManager: SessionManager) {
     const id = c.req.param("id");
     await sessionManager.endSession(id);
     return c.json({ ok: true });
+  });
+
+  // --- Version + Update ---
+  //
+  // Drives the Settings page "Version" panel. Same logic the `agenthub`
+  // CLI runs from the host shell — just plumbed through HTTP so the web
+  // UI can pull updates without the user dropping to a terminal.
+
+  app.get("/version", (c) => {
+    try {
+      // fetch is fire-and-forget; it populates origin/main but doesn't
+      // block the response if the network is slow.
+      try { runGit(["fetch", "--quiet", "origin", "main"]); }
+      catch { /* non-fatal — stale origin is fine for a status view */ }
+
+      const currentSha = runGit(["rev-parse", "HEAD"]);
+      const currentShort = runGit(["rev-parse", "--short", "HEAD"]);
+      const currentDate = runGit(["log", "-1", "--format=%cI", "HEAD"]);
+      const currentSubject = runGit(["log", "-1", "--format=%s", "HEAD"]);
+
+      let latestSha = currentSha;
+      let latestShort = currentShort;
+      let behind = 0;
+      let ahead = 0;
+      let pending: { sha: string; subject: string }[] = [];
+      try {
+        latestSha = runGit(["rev-parse", "origin/main"]);
+        latestShort = runGit(["rev-parse", "--short", "origin/main"]);
+        behind = parseInt(runGit(["rev-list", "--count", `${currentSha}..${latestSha}`]), 10) || 0;
+        ahead = parseInt(runGit(["rev-list", "--count", `${latestSha}..${currentSha}`]), 10) || 0;
+        if (behind > 0) {
+          const log = runGit([
+            "log",
+            "--format=%H\t%s",
+            `${currentSha}..${latestSha}`,
+          ]);
+          pending = log
+            .split("\n")
+            .filter(Boolean)
+            .slice(0, 10)
+            .map((line) => {
+              const [sha, ...rest] = line.split("\t");
+              return { sha: (sha ?? "").slice(0, 7), subject: rest.join("\t") };
+            });
+        }
+      } catch { /* no origin set up — treat as up-to-date */ }
+
+      return c.json({
+        current: { sha: currentShort, fullSha: currentSha, date: currentDate, subject: currentSubject },
+        latest: { sha: latestShort, fullSha: latestSha },
+        behind,
+        ahead,
+        pending,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "git failed";
+      return c.json({ error: `version check failed: ${msg}` }, 500);
+    }
+  });
+
+  app.post("/update", (c) => {
+    // Spawn a detached one-shot updater container. It runs the same
+    // `agenthub update` CLI that lives on the host at /usr/local/bin/agenthub
+    // — one code path, zero drift — mounting the repo + docker socket.
+    //
+    // The updater will eventually `docker compose up -d --force-recreate
+    // agenthub-server`, which kills THIS process. We return 202 immediately
+    // so the client can poll /api/admin/version and auto-reload once the
+    // SHA shifts.
+    const repoDir = process.env["AGENTHUB_REPO_DIR"];
+    if (!repoDir) {
+      return c.json(
+        { error: "AGENTHUB_REPO_DIR not set — server compose needs updating" },
+        500,
+      );
+    }
+
+    const jobId = randomUUID();
+    const containerName = `agenthub-updater-${jobId.slice(0, 8)}`;
+
+    try {
+      spawn(
+        "docker",
+        [
+          "run",
+          "--rm",
+          "--detach",
+          "--name", containerName,
+          "-v", `${repoDir}:/repo:rw`,
+          "-v", "/var/run/docker.sock:/var/run/docker.sock",
+          "-e", "AGENTHUB_DIR=/repo",
+          "agenthubv2-updater:local",
+          "update",
+        ],
+        { stdio: "ignore", detached: true },
+      ).unref();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "docker spawn failed";
+      return c.json({ error: msg }, 500);
+    }
+
+    return c.json(
+      {
+        accepted: true,
+        jobId,
+        containerName,
+        hint: "Poll /api/admin/version every ~2s; the server will be unreachable briefly during recreate, then return with a new SHA.",
+      },
+      202,
+    );
   });
 
   return app;
