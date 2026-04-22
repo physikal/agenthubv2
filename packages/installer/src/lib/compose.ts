@@ -45,7 +45,11 @@ export interface ComposeUpOptions {
  * line-by-line to onLine so the Ink UI can show progress without stalling.
  */
 export function composeUp(opts: ComposeUpOptions): Promise<void> {
-  return runCompose(["up", "-d"], opts);
+  // --pull never — composePull() already pulled every registry-backed
+  // image with --ignore-pull-failures. At this point everything we need
+  // is local; re-pulling agenthubv2-server:local would hit docker.io
+  // (where that tag doesn't exist) and fail the install.
+  return runCompose(["up", "-d", "--pull", "never"], opts);
 }
 
 export function composePull(opts: ComposeUpOptions): Promise<void> {
@@ -62,7 +66,7 @@ export interface RecreateServiceOptions extends ComposeUpOptions {
 /** `docker compose up -d --force-recreate <service>` to pick up new env. */
 export function recreateService(opts: RecreateServiceOptions): Promise<void> {
   return runCompose(
-    ["up", "-d", "--force-recreate", opts.service],
+    ["up", "-d", "--pull", "never", "--force-recreate", opts.service],
     opts,
   );
 }

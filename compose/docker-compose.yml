@@ -139,8 +139,17 @@ services:
       # Admin bootstrap — if set, initDb() seeds this password on first boot
       # instead of generating a random one. Blank = random (logged once).
       AGENTHUB_ADMIN_PASSWORD: ${AGENTHUB_ADMIN_PASSWORD:-}
+
+      # Docker driver needs to reach the Docker daemon. In the default local
+      # Docker install mode we mount the host socket below; this flag tells
+      # the DockerDriver's safety assertion to allow it.
+      AGENTHUB_ALLOW_SOCKET_MOUNT: "true"
     volumes:
       - agenthub-data:/data
+      # Required for PROVISIONER_MODE=docker. If you're running dokploy-local
+      # or dokploy-remote, you can remove this mount — the server doesn't
+      # touch Docker directly in those modes.
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - agenthub
     labels:

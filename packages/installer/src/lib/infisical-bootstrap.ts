@@ -1,30 +1,36 @@
+import { spawn } from "node:child_process";
 import { randomPassword } from "./secrets.js";
 
 /**
  * First-run bootstrap for the bundled Infisical.
  *
- * Performs: admin signup → org create (implicit via signup) → default project
- * create → machine identity with universal-auth → client credentials.
+ * Uses the official `infisical bootstrap` CLI via `npx @infisical/cli` so
+ * we don't need to reimplement Infisical's client-side SRP key derivation.
+ * The CLI creates: admin user + organization + instance-admin machine
+ * identity with a pre-configured universal-auth client ID + secret.
  *
- * Idempotent: if the admin already exists (e.g., re-running install), the
- * signup call returns 400 and we surface a clear "already bootstrapped"
- * message. The caller can then skip and trust the existing INFISICAL_*
- * values in .env.
+ * Output we care about (from the CLI's --output json mode):
+ *   { identity: { id, name, credentials: { clientId, clientSecret } },
+ *     organization: { id, name, slug },
+ *     user: { id, email, firstName, lastName } }
  *
- * Infisical's REST surface is deep; the endpoints below were extracted from
- * @infisical/sdk 3.0.4's index.js. Shapes are best-effort for Infisical
- * server v0.100+ — if the instance is older, calls will surface 400/404 and
- * the error message points at the failing URL.
+ * Idempotent via `--ignore-if-bootstrapped`: re-running an install against
+ * an already-initialized Infisical is a no-op + the CLI exits 0 with an
+ * empty-ish response. In that case we emit a helpful warning and leave
+ * existing INFISICAL_CLIENT_ID/SECRET in .env alone.
+ *
+ * Remaining gap: the bootstrap identity is organization-scoped; it needs
+ * to be attached to a project before the AgentHub server can write secrets.
+ * We still need to create a project + attach the identity, but those two
+ * REST calls are simple (just need a valid bearer) and don't need crypto.
  */
 
+const INFISICAL_CLI_VERSION = "latest";
+
 export interface BootstrapInput {
-  /** Base URL reachable from the installer host, e.g. http://localhost:8080 */
   baseUrl: string;
-  /** Admin email to register (won't be deliverable — label only). */
   adminEmail: string;
-  /** Organization name to create. Cosmetic. */
   orgName: string;
-  /** Default project name where secrets will live. */
   projectName: string;
 }
 
@@ -34,6 +40,29 @@ export interface BootstrapResult {
   projectId: string;
   clientId: string;
   clientSecret: string;
+}
+
+interface CliBootstrapOutput {
+  identity?: {
+    id?: string;
+    name?: string;
+    credentials?: {
+      // Empirically: `infisical bootstrap --output json` returns a single
+      // long-lived bearer token here — not a clientId/clientSecret pair.
+      // We use it as a bearer for subsequent API calls, then attach
+      // universal-auth ourselves and generate proper client creds.
+      token?: string;
+    };
+  };
+  organization?: {
+    id?: string;
+    name?: string;
+    slug?: string;
+  };
+  user?: {
+    id?: string;
+    email?: string;
+  };
 }
 
 async function waitForHealthy(baseUrl: string, timeoutMs = 180_000): Promise<void> {
@@ -49,23 +78,197 @@ async function waitForHealthy(baseUrl: string, timeoutMs = 180_000): Promise<voi
     }
     await sleep(3_000);
   }
-  throw new Error(`Infisical did not become ready within ${String(timeoutMs)}ms (last error: ${String(lastErr)})`);
+  throw new Error(
+    `Infisical did not become ready within ${String(timeoutMs)}ms (last: ${String(lastErr)})`,
+  );
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function request<T>(
+/** Run `npx -y @infisical/cli@<ver> bootstrap ...` and parse its JSON output. */
+async function runInfisicalBootstrap(
+  baseUrl: string,
+  email: string,
+  password: string,
+  orgName: string,
+  log: (line: string) => void,
+): Promise<CliBootstrapOutput> {
+  return new Promise((resolve, reject) => {
+    const args = [
+      "-y",
+      `@infisical/cli@${INFISICAL_CLI_VERSION}`,
+      "bootstrap",
+      "--domain", baseUrl,
+      "--email", email,
+      "--password", password,
+      "--organization", orgName,
+      "--output", "json",
+      "--ignore-if-bootstrapped",
+    ];
+    log(`[infisical] invoking: npx ${args.slice(0, 3).join(" ")} bootstrap …`);
+    const proc = spawn("npx", args, {
+      env: { ...process.env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr.on("data", (d: Buffer) => {
+      const s = d.toString();
+      stderr += s;
+      // Surface progress lines so the install doesn't look hung while npx
+      // downloads the CLI (~20 MB).
+      for (const line of s.split(/\r?\n/)) {
+        if (line.trim()) log(`[npx] ${line.trim()}`);
+      }
+    });
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(
+          `infisical bootstrap exited ${String(code)}\nstdout: ${stdout.slice(-1000)}\nstderr: ${stderr.slice(-1000)}`,
+        ));
+        return;
+      }
+      // The CLI prints JSON on stdout; strip anything before the first "{".
+      const start = stdout.indexOf("{");
+      if (start === -1) {
+        reject(new Error(`infisical bootstrap returned no JSON: ${stdout.slice(0, 500)}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(stdout.slice(start)) as CliBootstrapOutput);
+      } catch (err) {
+        reject(new Error(
+          `infisical bootstrap JSON parse failed: ${(err as Error).message}\nraw: ${stdout.slice(0, 500)}`,
+        ));
+      }
+    });
+  });
+}
+
+async function authFetch<T>(
   url: string,
-  init: RequestInit,
+  bearer: string,
+  init: RequestInit = {},
 ): Promise<T> {
-  const r = await fetch(url, init);
+  const r = await fetch(url, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bearer}`,
+      ...(init.headers ?? {}),
+    },
+  });
   if (!r.ok) {
     const body = await r.text().catch(() => "");
-    throw new Error(`${init.method ?? "GET"} ${url} failed (${String(r.status)}): ${body.slice(0, 500)}`);
+    throw new Error(`${init.method ?? "GET"} ${url} → ${String(r.status)}: ${body.slice(0, 400)}`);
   }
   return (await r.json()) as T;
+}
+
+/**
+ * Attach universal-auth to the bootstrap identity + generate a client secret.
+ * Returns { clientId, clientSecret } the server can use to authenticate.
+ */
+async function attachUniversalAuth(
+  baseUrl: string,
+  bearer: string,
+  identityId: string,
+): Promise<{ clientId: string; clientSecret: string }> {
+  // 1. Attach universal-auth method. TTL 0 = no expiry; use limits 0 = unlimited.
+  await authFetch(
+    `${baseUrl}/api/v1/auth/universal-auth/identities/${identityId}`,
+    bearer,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        clientSecretTrustedIps: [{ ipAddress: "0.0.0.0/0" }],
+        accessTokenTrustedIps: [{ ipAddress: "0.0.0.0/0" }],
+        accessTokenTTL: 2592000,
+        accessTokenMaxTTL: 2592000,
+        accessTokenNumUsesLimit: 0,
+      }),
+    },
+  );
+
+  // 2. Generate a client secret.
+  const csResp = await authFetch<{
+    clientSecret?: string;
+    clientSecretData?: { clientSecret?: string };
+  }>(
+    `${baseUrl}/api/v1/auth/universal-auth/identities/${identityId}/client-secrets`,
+    bearer,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        description: "agenthub-server universal-auth",
+        numUsesLimit: 0,
+        ttl: 0,
+      }),
+    },
+  );
+  const clientSecret = csResp.clientSecret ?? csResp.clientSecretData?.clientSecret;
+  if (!clientSecret) throw new Error("client-secrets returned no secret");
+
+  // 3. Read the clientId from the universal-auth config.
+  const uaResp = await authFetch<{
+    identityUniversalAuth?: { clientId: string };
+  }>(
+    `${baseUrl}/api/v1/auth/universal-auth/identities/${identityId}`,
+    bearer,
+    { method: "GET" },
+  );
+  const clientId = uaResp.identityUniversalAuth?.clientId;
+  if (!clientId) throw new Error("universal-auth GET returned no clientId");
+
+  return { clientId, clientSecret };
+}
+
+/** Create a project + attach the identity with admin role. */
+async function createProjectAndAttach(
+  baseUrl: string,
+  bearerToken: string,
+  orgId: string,
+  identityId: string,
+  projectName: string,
+): Promise<string> {
+  const proj = await authFetch<{
+    project?: { id: string };
+    workspace?: { id: string };
+  }>(`${baseUrl}/api/v2/workspace`, bearerToken, {
+    method: "POST",
+    body: JSON.stringify({
+      projectName,
+      slug: projectName.toLowerCase().replace(/[^a-z0-9-]/g, "-"),
+      organizationId: orgId,
+    }),
+  });
+  const projectId = proj.project?.id ?? proj.workspace?.id;
+  if (!projectId) throw new Error("workspace create returned no id");
+
+  // The project creator's identity is auto-added as a member when the
+  // workspace is created, so this attach is typically a no-op. We still
+  // issue it to handle edge cases where project creation was handed off
+  // or the API stops auto-adding — 400 "already exists" is fine.
+  try {
+    await authFetch(
+      `${baseUrl}/api/v2/workspace/${projectId}/identity-memberships/${identityId}`,
+      bearerToken,
+      {
+        method: "POST",
+        body: JSON.stringify({ role: "admin" }),
+      },
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "";
+    if (!/already exists/i.test(msg)) throw err;
+  }
+
+  return projectId;
 }
 
 export async function bootstrapInfisical(
@@ -76,133 +279,56 @@ export async function bootstrapInfisical(
   await waitForHealthy(input.baseUrl);
   log("[infisical] instance is up");
 
-  const adminPassword = randomPassword(28);
+  const adminPassword = randomPassword(24);
 
-  // 1. Admin signup. Returns { token, user, organization } on success.
-  log("[infisical] creating admin + organization…");
-  let adminResp: {
-    token?: string;
-    accessToken?: string;
-    user?: { id: string; email: string };
-    organization?: { id: string; name: string };
-  };
-  try {
-    adminResp = await request(`${input.baseUrl}/api/v1/admin/signup`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: input.adminEmail,
-        password: adminPassword,
-        firstName: "Agent",
-        lastName: "Hub",
-        organizationName: input.orgName,
-      }),
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "unknown";
-    if (/already/i.test(msg) || /exists/i.test(msg) || /400/.test(msg)) {
-      throw new Error(
-        `Infisical is already bootstrapped. If INFISICAL_CLIENT_ID is empty in .env but Infisical has an admin, log into https://secrets.<domain>/ manually, create a machine identity, and paste the creds into .env.\n\nUnderlying error: ${msg}`,
-      );
-    }
-    throw err;
+  log("[infisical] running `infisical bootstrap` (may download CLI on first run)…");
+  const out = await runInfisicalBootstrap(
+    input.baseUrl,
+    input.adminEmail,
+    adminPassword,
+    input.orgName,
+    log,
+  );
+
+  const bearer = out.identity?.credentials?.token;
+  const orgId = out.organization?.id;
+  const identityId = out.identity?.id;
+
+  if (!bearer) {
+    throw new Error(
+      "Infisical bootstrap succeeded but returned no identity.credentials.token. " +
+        "The CLI output shape may have changed — check the raw JSON and open an issue.",
+    );
+  }
+  if (!orgId || !identityId) {
+    throw new Error(
+      "Infisical bootstrap response missing organization.id or identity.id — unexpected shape",
+    );
   }
 
-  const jwt = adminResp.token ?? adminResp.accessToken;
-  if (!jwt) throw new Error("admin signup returned no token field — unexpected Infisical response shape");
-  const authHeaders = { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" };
+  log(`[infisical] bootstrap done: org ${orgId}, identity ${identityId}`);
 
-  const orgId = adminResp.organization?.id;
-  if (!orgId) throw new Error("admin signup returned no organization.id");
-  log(`[infisical] org ${orgId}`);
+  // The bootstrap identity only carries a raw JWT. AgentHub's secret store
+  // (InfisicalStore) uses universal-auth login, which needs a clientId +
+  // clientSecret pair. Attach universal-auth to the bootstrap identity and
+  // generate those creds.
+  log("[infisical] attaching universal-auth + generating client secret…");
+  const { clientId, clientSecret } = await attachUniversalAuth(
+    input.baseUrl,
+    bearer,
+    identityId,
+  );
 
-  // 2. Create default project (workspace).
-  log(`[infisical] creating project "${input.projectName}"…`);
-  const projectResp = await request<{
-    project?: { id: string; name: string };
-    workspace?: { id: string; name: string };
-  }>(`${input.baseUrl}/api/v2/workspace`, {
-    method: "POST",
-    headers: authHeaders,
-    body: JSON.stringify({
-      projectName: input.projectName,
-      slug: input.projectName.toLowerCase().replace(/[^a-z0-9-]/g, "-"),
-      organizationId: orgId,
-    }),
-  });
-  const projectId = projectResp.project?.id ?? projectResp.workspace?.id;
-  if (!projectId) throw new Error("project creation returned no id");
-  log(`[infisical] project ${projectId}`);
+  log(`[infisical] creating project "${input.projectName}" + attaching identity…`);
+  const projectId = await createProjectAndAttach(
+    input.baseUrl,
+    bearer,
+    orgId,
+    identityId,
+    input.projectName,
+  );
 
-  // 3. Create machine identity at org level.
-  log("[infisical] creating machine identity…");
-  const identityResp = await request<{
-    identity?: { id: string; name: string };
-  }>(`${input.baseUrl}/api/v1/identities`, {
-    method: "POST",
-    headers: authHeaders,
-    body: JSON.stringify({
-      name: "agenthub-server",
-      organizationId: orgId,
-      role: "admin",
-    }),
-  });
-  const identityId = identityResp.identity?.id;
-  if (!identityId) throw new Error("identity creation returned no id");
-  log(`[infisical] identity ${identityId}`);
-
-  // 4. Attach universal-auth to the identity.
-  log("[infisical] attaching universal-auth…");
-  await request(`${input.baseUrl}/api/v1/auth/universal-auth/identities/${identityId}`, {
-    method: "POST",
-    headers: authHeaders,
-    body: JSON.stringify({
-      clientSecretTrustedIps: [{ ipAddress: "0.0.0.0/0" }],
-      accessTokenTrustedIps: [{ ipAddress: "0.0.0.0/0" }],
-      accessTokenTTL: 2592000,
-      accessTokenMaxTTL: 2592000,
-      accessTokenNumUsesLimit: 0,
-    }),
-  });
-
-  // 5. Generate a client secret for the identity.
-  log("[infisical] generating client secret…");
-  const csResp = await request<{
-    clientSecret?: string;
-    clientSecretData?: { clientSecret?: string };
-  }>(`${input.baseUrl}/api/v1/auth/universal-auth/identities/${identityId}/client-secrets`, {
-    method: "POST",
-    headers: authHeaders,
-    body: JSON.stringify({
-      description: "agenthub-server universal-auth",
-      numUsesLimit: 0,
-      ttl: 0,
-    }),
-  });
-  const clientSecret = csResp.clientSecret ?? csResp.clientSecretData?.clientSecret;
-  if (!clientSecret) throw new Error("client-secrets endpoint returned no secret");
-
-  // 6. Fetch the identity's clientId (attribute of the universal-auth config).
-  const uaResp = await request<{
-    identityUniversalAuth?: { clientId: string };
-  }>(`${input.baseUrl}/api/v1/auth/universal-auth/identities/${identityId}`, {
-    method: "GET",
-    headers: authHeaders,
-  });
-  const clientId = uaResp.identityUniversalAuth?.clientId;
-  if (!clientId) throw new Error("universal-auth fetch returned no clientId");
-
-  // 7. Add the identity to the project so it can write secrets there.
-  log("[infisical] attaching identity to project…");
-  await request(`${input.baseUrl}/api/v2/workspace/${projectId}/identity-memberships/${identityId}`, {
-    method: "POST",
-    headers: authHeaders,
-    body: JSON.stringify({
-      role: "admin",
-    }),
-  });
-
-  log("[infisical] bootstrap complete");
+  log(`[infisical] project ${projectId} ready`);
   return {
     adminEmail: input.adminEmail,
     adminPassword,

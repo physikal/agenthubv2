@@ -3,7 +3,10 @@ import { AgentServer } from "./ws-server.js";
 import { startFileServer } from "./file-server.js";
 
 const PORT = parseInt(process.env["AGENT_PORT"] ?? "9876", 10);
-const AUTH_TOKEN = process.env["AGENT_AUTH_TOKEN"] ?? "";
+// AGENT_TOKEN is the per-session token injected by SessionManager when it
+// creates the workspace container. AGENT_AUTH_TOKEN was v1's shared-token
+// name; accepted here as a fallback for anyone still using the old var.
+const AUTH_TOKEN = process.env["AGENT_TOKEN"] ?? process.env["AGENT_AUTH_TOKEN"] ?? "";
 const PORTAL_URL = process.env["PORTAL_URL"] ?? "";
 
 function getLocalIp(): string | null {

@@ -104,10 +104,14 @@ RUN useradd -m -s /bin/bash -u 1000 coder \
     && chown coder:coder /home/coder/.bash_profile
 
 # Agent daemon. Copied from the build stage — no deploy-time tar-over-ssh.
+# We install prod deps with plain `npm install` (not pnpm) so the resulting
+# node_modules is a real flat tree, not symlinks into a pnpm virtual store
+# that the Docker build couldn't preserve.
 RUN mkdir -p /opt/agenthub-agent
 COPY --from=agent-build /build/packages/agent/dist /opt/agenthub-agent/
 COPY --from=agent-build /build/packages/agent/package.json /opt/agenthub-agent/
-COPY --from=agent-build /build/packages/agent/node_modules /opt/agenthub-agent/node_modules
+RUN cd /opt/agenthub-agent && npm install --omit=dev --no-audit --no-fund 2>&1 | tail -5 \
+    && npm cache clean --force
 
 COPY docker/agent-workspace-entrypoint.sh /usr/local/bin/agenthub-entrypoint
 RUN chmod +x /usr/local/bin/agenthub-entrypoint
