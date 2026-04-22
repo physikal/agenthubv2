@@ -15,6 +15,8 @@ import { adminRoutes } from "./routes/admin.js";
 import { userRoutes } from "./routes/user.js";
 import { infraRoutes } from "./routes/infra.js";
 import { deployRoutes } from "./routes/deploy.js";
+import { packagesRoutes } from "./routes/packages.js";
+import { PackageManager } from "./services/packages/manager.js";
 import { authMiddleware, adminMiddleware, agentAuthMiddleware } from "./middleware/auth.js";
 import { ALLOWED_ORIGINS, isOriginAllowed } from "./middleware/origin.js";
 import { setupTerminalProxy } from "./ws/terminal-proxy.js";
@@ -37,6 +39,8 @@ const sessionManager = new SessionManager({
   workspaceImage,
   portalUrl,
 });
+
+const packageManager = new PackageManager(sessionManager);
 
 // Reconnect active sessions on startup.
 void (async () => {
@@ -86,6 +90,7 @@ app.route("/api/sessions", previewRoutes(sessionManager));
 app.route("/api/user", userRoutes(sessionManager));
 app.route("/api/settings", settingsRoutes());
 app.route("/api/infra", infraRoutes());
+app.route("/api/packages", packagesRoutes(packageManager));
 app.route("/api", deployRoutes());
 
 // --- Admin-only routes ---

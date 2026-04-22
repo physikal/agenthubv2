@@ -94,12 +94,19 @@ fi
 PREVIEW
 RUN chmod +x /usr/local/bin/preview
 
-# coder user (uid 1000) + passwordless sudo.
+# coder user (uid 1000) + passwordless sudo. `~/.local/bin` on PATH so
+# packages installed at runtime by the agent (Packages page) surface in
+# new login shells without another rebuild.
 RUN useradd -m -s /bin/bash -u 1000 coder \
     && echo "coder ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/coder \
     && chmod 440 /etc/sudoers.d/coder \
-    && echo '[ -f ~/.bashrc ] && . ~/.bashrc' > /home/coder/.bash_profile \
-    && chown coder:coder /home/coder/.bash_profile
+    && printf '%s\n%s\n' \
+         'export PATH="$HOME/.local/bin:$PATH"' \
+         '[ -f ~/.bashrc ] && . ~/.bashrc' \
+         > /home/coder/.bash_profile \
+    && chown coder:coder /home/coder/.bash_profile \
+    && mkdir -p /home/coder/.local/bin /home/coder/.local/lib \
+    && chown -R coder:coder /home/coder/.local
 
 # Agent daemon. Copied from the build stage — no deploy-time tar-over-ssh.
 # We install prod deps with plain `npm install` (not pnpm) so the resulting

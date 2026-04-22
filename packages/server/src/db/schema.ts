@@ -151,6 +151,26 @@ export const backupRuns = sqliteTable("backup_runs", {
   error: text("error"),
 });
 
+/**
+ * Per-user record of add-on agent CLIs installed into the workspace's
+ * persistent /home/coder/.local tree. Built-ins (Claude Code, OpenCode,
+ * MiniMax) live in the image layer and are not tracked here.
+ */
+export const userPackages = sqliteTable("user_packages", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  packageId: text("package_id").notNull(),
+  status: text("status", {
+    enum: ["installing", "ready", "error", "removing"],
+  }).notNull(),
+  version: text("version"),
+  installedAt: integer("installed_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  error: text("error"),
+});
+
 export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
@@ -159,3 +179,5 @@ export type InfrastructureConfig = typeof infrastructureConfigs.$inferSelect;
 export type Deployment = typeof deployments.$inferSelect;
 export type BackupRun = typeof backupRuns.$inferSelect;
 export type NewBackupRun = typeof backupRuns.$inferInsert;
+export type UserPackage = typeof userPackages.$inferSelect;
+export type UserPackageStatus = NonNullable<UserPackage["status"]>;
