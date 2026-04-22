@@ -305,31 +305,25 @@ ensure_pnpm() {
   if have pnpm; then ok "pnpm $(pnpm --version)"; return; fi
   confirm "pnpm $PNPM_VERSION (via corepack)" || die "pnpm required"
 
-  if ! have corepack; then
-    # Older node ships without corepack — use npm as a fallback.
-    if have npm; then
-      $SUDO npm install -g "pnpm@$PNPM_VERSION" >/dev/null 2>&1 || \
-        die "npm install -g pnpm failed. Try:  $SUDO npm install -g pnpm@$PNPM_VERSION"
-    else
-      die "corepack missing and npm missing. Reinstall Node 22+ or install pnpm manually."
-    fi
+  # Prefer `sudo npm install -g` — drops a shim at /usr/bin/pnpm that's on
+  # PATH for every process without the caller needing to export anything.
+  # Corepack's path-placement quirks bit us on several fresh Debian 12 VMs
+  # where `corepack enable` silently skipped writing to /usr/bin, the
+  # user-home fallback symlink was created, but the exec'd install.sh
+  # then couldn't find it — producing a confusing "pnpm not found" exit.
+  if have npm; then
+    $SUDO npm install -g "pnpm@$PNPM_VERSION" >/dev/null 2>&1 || \
+      die "sudo npm install -g pnpm failed. Try:  $SUDO npm install -g pnpm@$PNPM_VERSION"
+  elif have corepack; then
+    $SUDO corepack enable >/dev/null 2>&1 || \
+      die "sudo corepack enable failed. Install pnpm manually and re-run."
+    $SUDO corepack prepare "pnpm@$PNPM_VERSION" --activate >/dev/null 2>&1 || \
+      die "sudo corepack prepare pnpm failed."
   else
-    corepack enable >/dev/null 2>&1 || true
-    corepack prepare "pnpm@$PNPM_VERSION" --activate >/dev/null 2>&1 || \
-      die "corepack prepare pnpm failed. Try:  $SUDO npm install -g pnpm@$PNPM_VERSION"
-    # corepack may only put pnpm on PATH in new shells — make sure THIS shell
-    # can find it.
-    if ! have pnpm; then
-      local pnpm_bin
-      pnpm_bin="$(ls -1 "$HOME/.cache/node/corepack/v1/pnpm/"*/bin/pnpm.cjs 2>/dev/null | tail -1 || true)"
-      if [[ -n "$pnpm_bin" ]]; then
-        mkdir -p "$HOME/.local/bin"
-        ln -sf "$pnpm_bin" "$HOME/.local/bin/pnpm"
-        export PATH="$HOME/.local/bin:$PATH"
-      fi
-    fi
+    die "neither npm nor corepack found. Reinstall Node 22+ and re-run."
   fi
-  have pnpm || die "pnpm still not on PATH. Add ~/.local/bin to PATH and re-run."
+  hash -r
+  have pnpm || die "pnpm installed but not on PATH. Check /usr/bin/pnpm + \$PATH."
   ok "pnpm $(pnpm --version) installed"
 }
 
