@@ -32,16 +32,36 @@ corepack prepare pnpm@10.12.1 --activate
 
 ## Install
 
+### Recommended: one-liner
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh | bash
+```
+
+Prefer to read the script first? Good. Download it, review, then run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh -o quick-install.sh
+less quick-install.sh        # ~80 lines of readable bash
+bash quick-install.sh
+```
+
+The script is idempotent — it's safe to re-run whenever you want to pull updates.
+
+### Manual (clone-first)
+
 ```bash
 git clone https://github.com/physikal/agenthubv2.git
 cd agenthubv2
 ./scripts/install.sh
 ```
 
-`./scripts/install.sh` does three things:
+Either path runs the same three steps:
 1. `pnpm install` — fetches installer deps
 2. Builds the two Docker images (server + workspace) locally
 3. Runs the Ink TUI installer
+
+See [installer-flow.md](installer-flow.md) for the full step-by-step map of the TUI.
 
 The TUI walks you through:
 

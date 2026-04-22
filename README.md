@@ -8,27 +8,35 @@ Self-hostable web platform for running coding-agent sessions in isolated contain
 
 Prerequisites: **Docker 24+** and Docker Compose plugin, on one Linux host, ports 80 and 443 free, 4 GB RAM, 20 GB disk.
 
-```bash
-# 1. Clone
-git clone https://github.com/physikal/agenthubv2.git
-cd agenthubv2
+### One-liner
 
-# 2. Build dependencies (installer + images)
-./scripts/install.sh
+```bash
+curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh | bash
 ```
 
-Prefer env-driven / non-interactive? (Ideal for Claude Code, OpenClaw, Hermes, etc.)
+That script checks prereqs, clones the repo to `./agenthubv2`, and launches the TUI. Re-running it later is a safe self-updater.
+
+Headless / agent-driven? Pass env vars and `--non-interactive`:
 
 ```bash
-AGENTHUB_MODE=docker \
-AGENTHUB_DOMAIN=localhost \
-AGENTHUB_ADMIN_PASSWORD=change-me-please \
-./scripts/install.sh --non-interactive
+curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh \
+  | AGENTHUB_MODE=docker \
+    AGENTHUB_DOMAIN=localhost \
+    AGENTHUB_ADMIN_PASSWORD=change-me-please \
+    bash -s -- --non-interactive
+```
+
+### Manual (clone-first)
+
+```bash
+git clone https://github.com/physikal/agenthubv2.git
+cd agenthubv2
+./scripts/install.sh
 ```
 
 When install finishes you'll see **two** admin credential sets — one for AgentHub, one for the bundled Infisical secret store. Both are also written to `compose/.env`.
 
-Full install docs: [docs/install/humans.md](docs/install/humans.md) · [docs/install/agents.md](docs/install/agents.md) · [docs/troubleshooting.md](docs/troubleshooting.md)
+Full install docs: [docs/install/humans.md](docs/install/humans.md) · [docs/install/agents.md](docs/install/agents.md) · [docs/install/installer-flow.md](docs/install/installer-flow.md) · [docs/troubleshooting.md](docs/troubleshooting.md)
 
 ## What's in the box
 

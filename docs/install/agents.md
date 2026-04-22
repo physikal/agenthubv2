@@ -4,17 +4,28 @@ Target audience: Claude Code, OpenClaw, Hermes, or any other coding agent drivin
 
 ## One-shot install
 
+**One-liner** (pipes through bash, cleans up after itself):
+
 ```bash
-# 1. Clone
+curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh \
+  | AGENTHUB_MODE=docker \
+    AGENTHUB_DOMAIN=localhost \
+    AGENTHUB_ADMIN_PASSWORD=change-me-please \
+    bash -s -- --non-interactive
+```
+
+**Clone-first** (when the one-liner is blocked or you want to pin a ref):
+
+```bash
 git clone https://github.com/physikal/agenthubv2.git
 cd agenthubv2
-
-# 2. Install (headless)
 AGENTHUB_MODE=docker \
 AGENTHUB_DOMAIN=localhost \
 AGENTHUB_ADMIN_PASSWORD=change-me-please \
 ./scripts/install.sh --non-interactive
 ```
+
+See [installer-flow.md](installer-flow.md) for the full step → env-var mapping and what happens under the hood during the "Installing..." phase.
 
 `./scripts/install.sh` does:
 1. `pnpm install --filter @agenthub/installer`
