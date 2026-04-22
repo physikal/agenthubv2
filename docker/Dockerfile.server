@@ -36,7 +36,7 @@ RUN cd packages/agent && npx tsc
 
 FROM base AS production
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-    tini openssh-client unzip curl ca-certificates \
+    tini openssh-client unzip curl ca-certificates git \
   && curl -s https://rclone.org/install.sh | bash \
   && rm -rf /var/lib/apt/lists/*
 

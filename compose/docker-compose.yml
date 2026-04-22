@@ -30,6 +30,11 @@ services:
       - --providers.docker.exposedbydefault=false
       - --entrypoints.web.address=:80
       - --entrypoints.websecure.address=:443
+      # Dedicated entrypoint for the Infisical admin console. Putting it on
+      # a second port (instead of secrets.${DOMAIN}) means DOMAIN=localhost
+      # users reach it at https://<host>:8443/ without a /etc/hosts entry
+      # for the subdomain. Same cert, same TLS termination, no extra DNS.
+      - --entrypoints.infisical.address=:8443
       - --entrypoints.web.http.redirections.entrypoint.to=websecure
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
       - --certificatesresolvers.le.acme.tlschallenge=true
@@ -38,6 +43,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      - "8443:8443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik-letsencrypt:/letsencrypt
@@ -88,7 +94,11 @@ services:
       AUTH_SECRET: ${INFISICAL_AUTH_SECRET}
       DB_CONNECTION_URI: postgres://infisical:${INFISICAL_DB_PASSWORD}@infisical-postgres:5432/infisical
       REDIS_URL: redis://default:${INFISICAL_REDIS_PASSWORD}@infisical-redis:6379
-      SITE_URL: https://secrets.${DOMAIN}
+      # Infisical uses SITE_URL for absolute URLs in emails + OAuth callbacks.
+      # Empty for now — users reach the console at https://<host>:8443/ and
+      # Infisical works fine without a canonical site URL for our read-heavy
+      # admin-only use case.
+      SITE_URL: ""
       TELEMETRY_ENABLED: "false"
     networks:
       - agenthub
@@ -98,9 +108,12 @@ services:
       - "127.0.0.1:8080:8080"
     labels:
       - traefik.enable=true
-      - traefik.http.routers.infisical.rule=Host(`secrets.${DOMAIN}`)
-      - traefik.http.routers.infisical.entrypoints=websecure
-      - traefik.http.routers.infisical.tls.certresolver=le
+      # Dedicated :8443 entrypoint — no host-rule dance. TLS uses Traefik's
+      # default self-signed cert (localhost installs can't get Let's Encrypt
+      # anyway). Users reach the console at https://<host>:8443/.
+      - traefik.http.routers.infisical.rule=PathPrefix(`/`)
+      - traefik.http.routers.infisical.entrypoints=infisical
+      - traefik.http.routers.infisical.tls=true
       - traefik.http.services.infisical.loadbalancer.server.port=8080
 
   agenthub-server:

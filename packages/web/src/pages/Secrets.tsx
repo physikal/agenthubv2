@@ -27,12 +27,11 @@ export function Secrets() {
     })();
   }, []);
 
-  // For DOMAIN=localhost installs reached from another box, secrets.localhost
-  // won't resolve — show the hosts-file hint inline rather than making users
-  // hunt through docs.
+  // Infisical runs behind its own Traefik entrypoint on port 8443 — no
+  // subdomain, no /etc/hosts, works from any browser that can reach the
+  // host. Same origin host the user is already on + port 8443.
   const pageHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
-  const infisicalUrl = `https://secrets.${pageHost}/`;
-  const needsHostsEntry = /^\d+\.\d+\.\d+\.\d+$/.test(pageHost) || pageHost === "localhost";
+  const infisicalUrl = `https://${pageHost}:8443/`;
 
   const storeReady = status?.storeReady !== false;
 
@@ -71,25 +70,9 @@ export function Secrets() {
           </a>
         </div>
 
-        {needsHostsEntry && (
-          <div className="bg-amber-950/40 border border-amber-800/60 rounded-xl p-4">
-            <p className="text-sm text-amber-200 font-medium mb-1">
-              localhost install: one-time setup
-            </p>
-            <p className="text-xs text-amber-200/80 mb-2">
-              The Infisical console lives at <code className="text-amber-100">secrets.localhost</code>,
-              which doesn't resolve from a browser unless you map it. Add this line to your
-              machine's <code className="text-amber-100">/etc/hosts</code> (once):
-            </p>
-            <pre className="text-xs text-amber-100 bg-amber-950/60 rounded px-3 py-2 font-mono">
-              {pageHost} secrets.localhost
-            </pre>
-            <p className="text-xs text-amber-200/70 mt-2">
-              Then reload this page and click the button above. On real-domain installs
-              (<code>AGENTHUB_DOMAIN=example.com</code>) this isn't needed — DNS handles it.
-            </p>
-          </div>
-        )}
+        <p className="text-xs text-zinc-600">
+          Self-signed TLS cert on :8443 — your browser will prompt once, accept to continue.
+        </p>
       </div>
     </div>
   );
