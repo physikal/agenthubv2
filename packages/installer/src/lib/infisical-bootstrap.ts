@@ -297,30 +297,34 @@ async function grantAdminUserProjectMembership(input: {
   projectId: string;
   log: (line: string) => void;
 }): Promise<void> {
+  // users.id, projects.id, project_memberships.id etc are all `uuid` columns.
+  // PL/pgSQL is strict about uuid vs text in comparisons, so declare the
+  // locals as uuid and cast the inbound project-id literal with ::uuid.
+  const pid = `'${input.projectId}'::uuid`;
   const sql = `
 DO $$
 DECLARE
-  v_user_id   text;
+  v_user_id        uuid;
   v_project_exists int;
-  v_membership_id text;
+  v_membership_id  uuid;
 BEGIN
   SELECT id INTO v_user_id FROM users WHERE email = '${input.adminEmail.replace(/'/g, "''")}';
-  SELECT COUNT(*) INTO v_project_exists FROM projects WHERE id = '${input.projectId}';
+  SELECT COUNT(*) INTO v_project_exists FROM projects WHERE id = ${pid};
   IF v_user_id IS NULL THEN
     RAISE EXCEPTION 'admin user not found';
   END IF;
   IF v_project_exists = 0 THEN
     RAISE EXCEPTION 'project not found';
   END IF;
-  IF EXISTS (SELECT 1 FROM project_memberships WHERE "userId" = v_user_id AND "projectId" = '${input.projectId}') THEN
+  IF EXISTS (SELECT 1 FROM project_memberships WHERE "userId" = v_user_id AND "projectId" = ${pid}) THEN
     RETURN;
   END IF;
-  v_membership_id := gen_random_uuid()::text;
+  v_membership_id := gen_random_uuid();
   INSERT INTO project_memberships (id, "userId", "projectId", "createdAt", "updatedAt")
-    VALUES (v_membership_id, v_user_id, '${input.projectId}', now(), now());
+    VALUES (v_membership_id, v_user_id, ${pid}, now(), now());
   INSERT INTO project_user_membership_roles
     (id, role, "projectMembershipId", "createdAt", "updatedAt", "isTemporary")
-    VALUES (gen_random_uuid()::text, 'admin', v_membership_id, now(), now(), false);
+    VALUES (gen_random_uuid(), 'admin', v_membership_id, now(), now(), false);
 END $$;
 `.trim();
 
