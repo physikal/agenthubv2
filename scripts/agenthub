@@ -123,6 +123,38 @@ probe_front_door() {
   return 1
 }
 
+# Bring compose/.env forward across schema changes. Any ${VAR} the compose
+# file references that isn't in .env would break `docker compose` at the
+# parse step — so we audit + backfill with sensible defaults before invoking
+# compose. Idempotent.
+migrate_env() {
+  # AGENTHUB_REPO_DIR was added in the web-UI-update commit — installs from
+  # earlier CLI versions won't have it. Default to AGENTHUB_DIR (the host
+  # path we already know).
+  if grep -q 'AGENTHUB_REPO_DIR' "$COMPOSE_FILE" && ! grep -q '^AGENTHUB_REPO_DIR=' "$ENV_FILE"; then
+    msg "migrating: adding AGENTHUB_REPO_DIR=$AGENTHUB_DIR to compose/.env"
+    echo "AGENTHUB_REPO_DIR=$AGENTHUB_DIR" >> "$ENV_FILE"
+  fi
+}
+
+# Replace the currently-running CLI script on PATH with the one from the
+# freshly-pulled repo, then re-exec so the rest of the update runs with
+# the new logic (new migrations, new subcommands, new bug fixes). No-op
+# when the scripts are already identical.
+self_update_cli() {
+  local my_path
+  my_path="$(realpath "$(command -v agenthub)" 2>/dev/null || echo "")"
+  local repo_script="$AGENTHUB_DIR/scripts/agenthub"
+  [[ -z "$my_path" || ! -f "$repo_script" ]] && return 0
+  if cmp -s "$repo_script" "$my_path"; then return 0; fi
+  msg "CLI updated — installing new version and re-executing"
+  $SUDO install -m 0755 "$repo_script" "$my_path"
+  # Pass a sentinel so we don't re-enter self-update in a loop on the new
+  # binary (which reads the same file we just wrote).
+  export AGENTHUB_SELF_UPDATED=1
+  exec "$my_path" update "$@"
+}
+
 cmd_update() {
   local check_only=0
   [[ "${1:-}" == "--check" ]] && check_only=1
@@ -150,6 +182,14 @@ cmd_update() {
   local old_sha="$local_sha"
   git reset --hard origin/main --quiet
 
+  # After the pull the repo has the latest CLI + compose schema. Swap in
+  # the new CLI first (so any migration logic it carries takes effect),
+  # then migrate the env, then rebuild + recreate.
+  if [[ -z "${AGENTHUB_SELF_UPDATED:-}" ]]; then
+    self_update_cli
+  fi
+
+  migrate_env
   rebuild_changed_images "$old_sha" "$remote_sha"
 
   msg "recreating server"
