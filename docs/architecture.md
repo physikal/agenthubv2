@@ -113,9 +113,9 @@ Adding a new inner provider: implement the interface, register it in `services/p
    c. `POST /api/v1/auth/universal-auth/identities/{id}` attaches universal-auth to that identity
    d. `POST .../client-secrets` generates a client secret; `GET .../identities/{id}` reads the clientId
    e. `POST /api/v2/workspace` creates a default project; identity is auto-added as a member
-   f. Installer writes `INFISICAL_PROJECT_ID / CLIENT_ID / CLIENT_SECRET` back to `compose/.env`
-7. `docker compose up -d --force-recreate agenthub-server` restarts the server with the real secret-store config
-8. Installer prints BOTH admin credential sets (AgentHub + Infisical)
+   f. Installer writes `INFISICAL_PROJECT_ID / CLIENT_ID / CLIENT_SECRET` back to `compose/.env`. Admin email and password are persisted as `INFISICAL_ADMIN_EMAIL` and `INFISICAL_ADMIN_PASSWORD` for later recovery via the web UI (since Infisical has self-registration disabled and no working SMTP reset).
+7. `docker compose up -d --force-recreate agenthub-server` restarts the server with the real secret-store config and pipes the Infisical admin credentials into the container
+8. Installer prints BOTH admin credential sets (AgentHub + Infisical). The Infisical credentials are also recoverable via the Secrets page "Reveal Infisical admin login" flow (admin-only, gated by AgentHub password re-entry).
 
 ## Request flow: creating a session
 

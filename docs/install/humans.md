@@ -86,9 +86,9 @@ Save these credentials — they are also written to .env.
 ```
 
 - **AgentHub admin** — log into the web console at the AgentHub URL
-- **Infisical admin** — log into the secret-store UI at `https://<your-host>:8443/` (accept the self-signed cert once). Also linked from the Secrets page inside AgentHub.
+- **Infisical admin** — log into the secret-store UI at `https://<your-host>:8443/` (accept the self-signed cert once). Also linked from the Secrets page inside AgentHub. If you lose the password, go to the Secrets page and click "Reveal Infisical admin login" (admin-only, requires your AgentHub password).
 
-Both are also in `compose/.env` (look for `AGENTHUB_ADMIN_PASSWORD` and the install stdout — Infisical's is currently only captured in the stdout, so copy it now).
+Both are also in `compose/.env` (look for `AGENTHUB_ADMIN_PASSWORD`, `INFISICAL_ADMIN_EMAIL`, and `INFISICAL_ADMIN_PASSWORD`).
 
 ## Verify the install works
 

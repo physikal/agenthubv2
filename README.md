@@ -35,7 +35,7 @@ cd agenthubv2
 ./scripts/install.sh
 ```
 
-When install finishes you'll see **two** admin credential sets — one for AgentHub, one for the bundled Infisical secret store. Both are also written to `compose/.env`.
+When install finishes you'll see **two** admin credential sets — one for AgentHub, one for the bundled Infisical secret store. Both are also written to `compose/.env`. If you lose the Infisical password, log in to the AgentHub Secrets page and click "Reveal Infisical admin login" to recover it.
 
 **Ports opened**: 80 (HTTP→HTTPS redirect), 443 (AgentHub), 8443 (Infisical console).
 

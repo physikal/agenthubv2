@@ -47,6 +47,7 @@ DOKPLOY_URL, DOKPLOY_API_TOKEN, DOKPLOY_PROJECT_ID, DOKPLOY_ENVIRONMENT_ID
 AGENTHUB_SERVER_IMAGE, WORKSPACE_IMAGE
 INFISICAL_URL, INFISICAL_PROJECT_ID, INFISICAL_CLIENT_ID, INFISICAL_CLIENT_SECRET
 INFISICAL_ENCRYPTION_KEY, INFISICAL_AUTH_SECRET, INFISICAL_DB_PASSWORD, INFISICAL_REDIS_PASSWORD
+INFISICAL_ADMIN_EMAIL, INFISICAL_ADMIN_PASSWORD
 ```
 
 See `compose/.env.example` for the full list with comments.
@@ -55,6 +56,7 @@ See `compose/.env.example` for the full list with comments.
 - ttyd requires `{"AuthToken":""}` after WS connect — blank terminal without it.
 - ttyd type bytes are ASCII (`'0'` = 0x30), not binary (0x00) — input silently ignored if wrong.
 - Infisical needs Postgres migration on first boot — installer waits up to 180s for `/api/status` before running `infisical bootstrap`.
+- Infisical admin credentials (email + password) are persisted in `compose/.env` and recoverable via the Secrets page "Reveal Infisical admin login" card (admin-only, gated by AgentHub password re-entry). Required because Infisical has self-registration disabled and no working SMTP reset; the password printed once during install could not be recovered otherwise.
 - `docker compose up` re-probes the registry for locally-tagged images even after `pull --ignore-pull-failures` — that's why we pin `--pull never` on `up` (registry images are cached by the preceding pull step).
 - pnpm's symlinked node_modules don't survive `docker COPY` — the workspace Dockerfile uses `npm install --omit=dev` for agent deps to get a real flat tree.
 - Per-session `AGENT_TOKEN` env var injected by SessionManager — the agent reads it as `AGENT_TOKEN`.
