@@ -8,9 +8,11 @@ const SECRET_FIELDS: Record<string, readonly string[]> = {
   cloudflare: ["apiToken"],
   docker: ["sshPrivateKey"],
   digitalocean: ["apiToken"],
+  "digitalocean-apps": ["apiToken"],
   dokploy: ["apiToken"],
   b2: ["b2AppKey"],
   github: ["pat"],
+  "github-pages": [],
 };
 
 /**
