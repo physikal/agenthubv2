@@ -14,21 +14,38 @@
 
 set -euo pipefail
 
+# Surface ANY premature exit with a line number — historically this
+# script's prereq checks could exit silently when stderr got eaten by a
+# pty race in the curl|bash|exec chain, producing a "just stops at
+# launching installer" bug. Trap fires on any error via set -e OR any
+# explicit non-zero exit, and writes to both stdout and stderr so we
+# still see something even if one fd is misbehaving.
+trap '_rc=$?; if [[ $_rc -ne 0 ]]; then
+  printf "\n[install.sh] aborted (exit %d) at line %d: %s\n" "$_rc" "$LINENO" "${BASH_COMMAND:-unknown}"
+  printf "[install.sh] aborted (exit %d) at line %d: %s\n" "$_rc" "$LINENO" "${BASH_COMMAND:-unknown}" >&2
+fi' EXIT
+
 cd "$(dirname "$0")/.."
 
+# Print each prereq check to stdout BEFORE the check runs. If anything
+# exits unexpectedly, the last "checking X" line tells us where it died
+# even if the conditional's error message never makes it to the log.
+echo "[install.sh] checking pnpm..."
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "pnpm not found. Install it:" >&2
   echo "  sudo corepack enable && corepack prepare pnpm@10.12.1 --activate" >&2
   exit 1
 fi
 
+echo "[install.sh] checking docker binary..."
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker not found. See docs/install/humans.md for prereqs." >&2
   exit 1
 fi
 
+echo "[install.sh] checking docker daemon reachable..."
 if ! docker info >/dev/null 2>&1; then
-  echo "docker daemon unreachable. Is the service running? Are you in the docker group?" >&2
+  echo "docker daemon unreachable. Is the service running? Are you in the 'docker' group for THIS shell? (usermod -aG docker requires re-login or 'sg docker -c ...' to take effect)" >&2
   exit 1
 fi
 

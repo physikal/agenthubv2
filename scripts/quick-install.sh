@@ -183,6 +183,14 @@ ensure_curl() {
 
 # ---------------------------------------------------------------- docker
 
+# True when quick-install.sh had to add the current user to the `docker`
+# group mid-run. The running shell's effective gids don't pick that up —
+# so before we hand off to install.sh we `sg docker -c` into a subshell
+# that does have the group. Without this, install.sh's `docker info`
+# check fails silently and the install "just stops" at "launching
+# installer" with no error (see PR #42 and the stderr-eating pty race).
+NEEDS_SG_DOCKER=0
+
 ensure_docker_daemon_running() {
   if docker info >/dev/null 2>&1; then return; fi
   if have systemctl; then
@@ -194,23 +202,30 @@ ensure_docker_daemon_running() {
     $SUDO service docker start 2>/dev/null || true
     sleep 3
   fi
-  if ! docker info >/dev/null 2>&1; then
-    # Daemon is up but this shell can't reach it — most commonly because
-    # the user isn't in the `docker` group. Add them and install the same
-    # sudo-wrapper `install_docker` uses so this run keeps moving; group
-    # membership will be in effect on the next login.
-    if [[ "$(id -u)" -ne 0 ]] && ! groups "$USER" 2>/dev/null | grep -qw docker; then
+  if docker info >/dev/null 2>&1; then return; fi
+
+  # Daemon is up but this shell can't reach it — most commonly because
+  # the user was just added to the `docker` group and their current
+  # session doesn't have the new gid yet.
+  if [[ "$(id -u)" -ne 0 ]]; then
+    if ! id -nG "$USER" | grep -qw docker; then
       warn "you're not in the 'docker' group yet"
       msg "adding $USER to docker group"
       $SUDO usermod -aG docker "$USER"
-      warn "docker group membership requires re-login. Continuing with sudo for this run."
-      docker() { $SUDO /usr/bin/docker "$@"; }
-      export -f docker
-      docker info >/dev/null 2>&1 || die "docker still unreachable even with sudo wrapper"
+    fi
+    # Either the user was just added, or they were already in the group
+    # on disk but the running shell's effective gids don't include it
+    # (happens when SSH login predated the group add). Either way: `sg`
+    # can drop us into a subshell that actually has the docker gid, so
+    # we can verify the daemon is reachable here AND use the same trick
+    # at the install.sh hand-off.
+    if sg docker -c 'docker info >/dev/null 2>&1'; then
+      msg "docker daemon reachable via sg (group change pending login)"
+      NEEDS_SG_DOCKER=1
       return
     fi
-    die "docker daemon still unreachable. Try:  sudo systemctl status docker"
   fi
+  die "docker daemon still unreachable. Try:  sudo systemctl status docker"
 }
 
 ensure_docker() {
@@ -225,16 +240,11 @@ ensure_docker() {
     # for a self-host install.
     ensure_curl
     curl -fsSL https://get.docker.com | $SUDO sh
+    # ensure_docker_daemon_running handles group-add + sets NEEDS_SG_DOCKER
+    # if this shell's effective gids don't include `docker`. Don't duplicate
+    # the logic — the previous per-path usermod branch got out of sync with
+    # the daemon-reachability branch and produced the silent-exit.
     ensure_docker_daemon_running
-    # Add current user to docker group so they don't need sudo for docker commands.
-    if [[ "$(id -u)" -ne 0 ]] && ! groups "$USER" 2>/dev/null | grep -qw docker; then
-      msg "adding $USER to docker group"
-      $SUDO usermod -aG docker "$USER"
-      warn "docker group membership requires re-login. Continuing with sudo for now."
-      # Use a wrapper so the rest of this script works without re-login.
-      docker() { $SUDO /usr/bin/docker "$@"; }
-      export -f docker
-    fi
     ok "docker installed"
   fi
 
@@ -360,6 +370,23 @@ main() {
 
   cd "$TARGET_DIR"
   step "launching installer"
+  if [[ "$NEEDS_SG_DOCKER" -eq 1 ]]; then
+    # Pending-login trick: sg runs the command in a subshell that has the
+    # docker gid active even though the outer shell doesn't. install.sh's
+    # `docker info` check then succeeds, and the whole install completes
+    # without the user needing to log out + back in. We don't use the
+    # older `docker() { sudo docker ...; }` exported-function wrapper
+    # because (a) its $SUDO isn't in install.sh's scope so it becomes a
+    # no-op and (b) `sudo docker` pollutes ~/.docker with root-owned
+    # files (sudo preserves HOME on Debian/Ubuntu by default), which
+    # breaks every subsequent non-sudo docker call.
+    #
+    # Build a properly-quoted command so args with spaces/quotes survive
+    # the sg -c shell parse.
+    local cmd
+    cmd="$(printf '%q ' "./scripts/install.sh" "$@")"
+    exec sg docker -c "$cmd"
+  fi
   exec ./scripts/install.sh "$@"
 }
 
