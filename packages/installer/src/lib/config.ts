@@ -5,6 +5,13 @@ export type ProvisionerMode = "docker" | "dokploy-local" | "dokploy-remote";
 export interface InstallConfig {
   mode: ProvisionerMode;
   domain: string;
+  /**
+   * Hostname stamped into local-docker deploy URLs (http://<host>:<port>).
+   * Empty = inherit DOMAIN at compose time (good for real-TLD installs).
+   * Localhost-domain installs should set this to the box's LAN IP so
+   * deploy URLs are reachable from the operator's browser.
+   */
+  publicHost: string;
   tlsEmail: string;
   adminPassword: string;
 
@@ -43,6 +50,7 @@ export function emptyConfig(): InstallConfig {
   return {
     mode: "docker",
     domain: "localhost",
+    publicHost: "",
     tlsEmail: "",
     adminPassword: "",
     infisicalDbPassword: randomPassword(32),
@@ -88,6 +96,7 @@ export function renderEnv(cfg: InstallConfig): string {
     `DOMAIN=${cfg.domain}`,
     `TLS_EMAIL=${cfg.tlsEmail}`,
     `AGENTHUB_HOST_RULE=${hostRule}`,
+    `AGENTHUB_PUBLIC_HOST=${cfg.publicHost}`,
     `AGENTHUB_REPO_DIR=${repoDir}`,
     "",
     `PROVISIONER_MODE=${cfg.mode}`,
@@ -128,6 +137,7 @@ export function applyEnvOverrides(
   const next = { ...cfg };
   if (env["AGENTHUB_MODE"]) next.mode = env["AGENTHUB_MODE"] as ProvisionerMode;
   if (env["AGENTHUB_DOMAIN"]) next.domain = env["AGENTHUB_DOMAIN"];
+  if (env["AGENTHUB_PUBLIC_HOST"]) next.publicHost = env["AGENTHUB_PUBLIC_HOST"];
   if (env["AGENTHUB_TLS_EMAIL"]) next.tlsEmail = env["AGENTHUB_TLS_EMAIL"];
   if (env["AGENTHUB_ADMIN_PASSWORD"]) next.adminPassword = env["AGENTHUB_ADMIN_PASSWORD"];
   if (env["AGENTHUB_DOKPLOY_URL"]) next.dokployUrl = env["AGENTHUB_DOKPLOY_URL"];
