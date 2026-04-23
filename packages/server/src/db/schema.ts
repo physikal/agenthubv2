@@ -82,8 +82,10 @@ export const infrastructureConfigs = sqliteTable("infrastructure_configs", {
     enum: [
       "docker",
       "digitalocean",
+      "digitalocean-apps",
       "dokploy",
       "local-docker",
+      "github-pages",
       "cloudflare",
       "b2",
       "github",

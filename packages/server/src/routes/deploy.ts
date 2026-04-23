@@ -8,7 +8,10 @@ import {
   restartDeployment,
   destroyDeployment,
 } from "../services/deployer.js";
-import { ensureLocalDockerInfra } from "../services/local-docker-seed.js";
+import {
+  ensureGitHubPagesInfra,
+  ensureLocalDockerInfra,
+} from "../services/local-docker-seed.js";
 
 interface DeployBody {
   name: string;
@@ -239,9 +242,10 @@ export function deployRoutes() {
       };
     }>();
 
-    // Lazy-create the local-docker row so fresh installs see it without
-    // clicking through the Integrations page.
+    // Lazy-seed always-on virtual integrations so fresh installs see
+    // them without clicking through the Integrations page.
     ensureLocalDockerInfra(user.id);
+    ensureGitHubPagesInfra(user.id);
 
     const infras = db
       .select()
@@ -281,26 +285,77 @@ export function deployRoutes() {
       }
     }
 
+    // git-pull targets (Dokploy, DO Apps, GH Pages) all require the
+    // caller's source to be a clean pushed repo. Compute once.
+    const gitClean =
+      src.gitState?.clean === true && src.gitState?.aheadOfOrigin !== true;
+    const gitRemote = src.gitState?.remote ?? null;
+    const gitBranch = src.gitState?.branch ?? "main";
+    const gitBlocker = !gitRemote
+      ? "source has no origin remote — push to GitHub first (try the push_to_github tool)"
+      : src.gitState?.aheadOfOrigin
+        ? "local commits not pushed to origin"
+        : !gitClean
+          ? "working tree has uncommitted changes"
+          : null;
+    const pushedOnGithub = Boolean(
+      gitClean && gitRemote && /(^|\/)github\.com[:/]/i.test(gitRemote),
+    );
+
     const dokployInfras = infras.filter((i) => i.provider === "dokploy");
     for (const d of dokployInfras) {
-      const clean = src.gitState?.clean === true && src.gitState?.aheadOfOrigin !== true;
-      if (clean && src.gitState?.remote) {
+      if (gitClean && gitRemote) {
         viable.push({
           id: `dokploy:${d.name}`,
           label: `Dokploy via GitHub (${d.name})`,
-          description: `Dokploy pulls ${src.gitState.remote}@${src.gitState.branch ?? "main"} and builds + runs.`,
+          description: `Dokploy pulls ${gitRemote}@${gitBranch} and builds + runs.`,
         });
       } else {
-        const reason = !src.gitState?.remote
-          ? "source has no origin remote — push to GitHub first"
-          : src.gitState.aheadOfOrigin
-            ? "local commits not pushed to origin"
-            : "working tree has uncommitted changes";
         viable.push({
           id: `dokploy:${d.name}`,
           label: `Dokploy via GitHub (${d.name}) — not ready`,
-          description: `Dokploy pulls from GitHub. Current blocker: ${reason}.`,
+          description: `Dokploy pulls from GitHub. Current blocker: ${gitBlocker ?? "source state"}.`,
           requires: ["clean pushed git repo"],
+        });
+      }
+    }
+
+    const doAppsInfras = infras.filter((i) => i.provider === "digitalocean-apps");
+    for (const d of doAppsInfras) {
+      if (pushedOnGithub) {
+        viable.push({
+          id: `do-apps:${d.name}`,
+          label: `DigitalOcean App Platform (${d.name})`,
+          description: `DO pulls ${gitRemote}@${gitBranch}, auto-detects the buildpack, and runs. Default URL: *.ondigitalocean.app.`,
+        });
+      } else {
+        viable.push({
+          id: `do-apps:${d.name}`,
+          label: `DigitalOcean App Platform (${d.name}) — not ready`,
+          description: `DO Apps needs a github.com repo. Current blocker: ${gitBlocker ?? "source is not on github.com"}.`,
+          requires: ["pushed github.com repo"],
+        });
+      }
+    }
+
+    const ghPagesInfras = infras.filter((i) => i.provider === "github-pages");
+    for (const p of ghPagesInfras) {
+      const staticOk = src.isStaticSite === true;
+      if (pushedOnGithub && staticOk) {
+        viable.push({
+          id: `gh-pages:${p.name}`,
+          label: `GitHub Pages (${p.name})`,
+          description: `Serve ${gitRemote}@${gitBranch} as a static site. URL: https://<owner>.github.io/<repo>.`,
+        });
+      } else {
+        const reason = !staticOk
+          ? "source is not a static site (no index.html at root, or has a Dockerfile)"
+          : gitBlocker ?? "source state";
+        viable.push({
+          id: `gh-pages:${p.name}`,
+          label: `GitHub Pages (${p.name}) — not ready`,
+          description: `Pages is static-only. Current blocker: ${reason}.`,
+          requires: staticOk ? ["pushed github.com repo"] : ["static site (no Dockerfile, index.html at root)"],
         });
       }
     }

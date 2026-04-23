@@ -17,25 +17,33 @@ const AUTH_TOKEN = process.env["AGENT_TOKEN"] ?? "";
 
 // --- HTTP client ---
 
+/**
+ * @param path Relative to `/api/agent/deploy`. Must start with `/` (or be
+ *   empty to hit the root deploy endpoint).
+ */
 async function apiCall(
   method: string,
   path: string,
   body?: Record<string, unknown>,
 ): Promise<{ ok: boolean; status: number; data: unknown }> {
+  return apiCallAt(method, `/api/agent/deploy${path}`, body);
+}
+
+async function apiCallAt(
+  method: string,
+  fullPath: string,
+  body?: Record<string, unknown>,
+): Promise<{ ok: boolean; status: number; data: unknown }> {
   if (!PORTAL_URL) {
     return { ok: false, status: 0, data: { error: "PORTAL_URL not configured" } };
   }
-
   const headers: Record<string, string> = {
     Authorization: `AgentToken ${AUTH_TOKEN}`,
     "Content-Type": "application/json",
   };
-
-  const url = `${PORTAL_URL}/api/agent/deploy${path}`;
   const init: RequestInit = { method, headers };
   if (body) init.body = JSON.stringify(body);
-
-  const resp = await fetch(url, init);
+  const resp = await fetch(`${PORTAL_URL}${fullPath}`, init);
   const data = (await resp.json()) as unknown;
   return { ok: resp.ok, status: resp.status, data };
 }
@@ -173,6 +181,37 @@ const TOOLS = [
         },
       },
       required: ["deployment_id"],
+    },
+  },
+  {
+    name: "push_to_github",
+    description:
+      "Push a workspace directory to a GitHub repo. Creates the repo under the user's configured GitHub owner if it doesn't exist. Requires a GitHub integration with a PAT (scopes: contents:write, administration:write). Use this before `deploy` when targeting Dokploy, DO App Platform, or GitHub Pages — those targets pull from GitHub.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string" as const,
+          description: "Absolute path to the source directory inside the workspace (e.g. '/home/coder/my-app').",
+        },
+        repo: {
+          type: "string" as const,
+          description: "Repo name (without owner). Created under the user's GitHub owner.",
+        },
+        private: {
+          type: "boolean" as const,
+          description: "Create as private. Default: false.",
+        },
+        commit_message: {
+          type: "string" as const,
+          description: "Commit message. Default: 'Initial commit'.",
+        },
+        description: {
+          type: "string" as const,
+          description: "Repo description.",
+        },
+      },
+      required: ["path", "repo"],
     },
   },
 ];
@@ -358,6 +397,35 @@ async function handleToolCall(
         return { content: [{ type: "text", text: `Destroy failed: ${err.error ?? "Unknown error"}` }] };
       }
       return { content: [{ type: "text", text: "Deployment destroyed." }] };
+    }
+
+    case "push_to_github": {
+      const body: Record<string, unknown> = {
+        path: args["path"],
+        repo: args["repo"],
+      };
+      if (typeof args["private"] === "boolean") body["private"] = args["private"];
+      if (args["commit_message"]) body["commitMessage"] = args["commit_message"];
+      if (args["description"]) body["description"] = args["description"];
+
+      const result = await apiCallAt("POST", "/api/agent/github/push", body);
+      if (!result.ok) {
+        const err = result.data as { error?: string };
+        return {
+          content: [
+            { type: "text", text: `GitHub push failed: ${err.error ?? "Unknown error"}` },
+          ],
+        };
+      }
+      const data = result.data as { repo: string; cloneUrl: string; branch: string };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Pushed to ${data.repo} on branch ${data.branch}.\nClone URL: ${data.cloneUrl}`,
+          },
+        ],
+      };
     }
 
     default:

@@ -15,6 +15,7 @@ import { adminRoutes } from "./routes/admin.js";
 import { userRoutes } from "./routes/user.js";
 import { infraRoutes } from "./routes/infra.js";
 import { deployRoutes } from "./routes/deploy.js";
+import { agentGithubRoutes } from "./routes/agent-github.js";
 import { packagesRoutes } from "./routes/packages.js";
 import { PackageManager } from "./services/packages/manager.js";
 import { authMiddleware, adminMiddleware, agentAuthMiddleware } from "./middleware/auth.js";
@@ -79,6 +80,11 @@ const agentDeployApp = new Hono();
 agentDeployApp.use("*", agentAuthMiddleware);
 agentDeployApp.route("/", deployRoutes());
 app.route("/api/agent/deploy", agentDeployApp);
+
+const agentGithubApp = new Hono();
+agentGithubApp.use("*", agentAuthMiddleware);
+agentGithubApp.route("/", agentGithubRoutes());
+app.route("/api/agent/github", agentGithubApp);
 
 // --- Authenticated routes (skip agent-auth paths) ---
 app.use("/api/*", async (c, next) => {

@@ -25,6 +25,16 @@ import {
   localDockerDestroy,
   localDockerLogs,
 } from "./deployers/local-deploy.js";
+import {
+  doAppsDeploy,
+  doAppsDestroy,
+  doAppsLogs,
+  doAppsRestart,
+} from "./deployers/do-apps-deploy.js";
+import {
+  ghPagesDeploy,
+  ghPagesDestroy,
+} from "./deployers/gh-pages-deploy.js";
 import type { AgentSessionContext } from "../middleware/auth.js";
 
 const execFileAsync = promisify(execFile);
@@ -410,6 +420,61 @@ export async function deploy(
     return { id: result.id, url: result.url };
   }
 
+  // DigitalOcean App Platform — PaaS, GitHub-repo-backed. Caller must
+  // supply gitUrl (explicitly or via source_path auto-convert at the
+  // route layer downstream).
+  if (infra.provider === "digitalocean-apps") {
+    if (!input.gitUrl && input.sourcePath) {
+      const info = introspectGitRepo(input.sourcePath);
+      if (info.kind !== "ok") {
+        throw new Error(`Cannot deploy to DO Apps: ${info.message}`);
+      }
+      input = { ...input, gitUrl: info.remote, gitBranch: input.gitBranch ?? info.branch };
+    }
+    if (!input.gitUrl) {
+      throw new Error("DO Apps requires gitUrl or a pushed source_path");
+    }
+    const resolved = await resolveInfraConfig(
+      infra.userId,
+      infra.id,
+      JSON.parse(infra.config) as Record<string, unknown>,
+    );
+    const out = await doAppsDeploy(infra, resolved, {
+      userId: input.userId,
+      infraId: input.infraId,
+      name: input.name,
+      gitUrl: input.gitUrl,
+      gitBranch: input.gitBranch,
+      envVars: input.envVars,
+      existingDeployId: input.existingDeployId,
+    });
+    return { id: out.id, url: out.url };
+  }
+
+  // GitHub Pages — static sites served from a pushed branch. Uses the
+  // user's `github` integration for credentials; no per-site PAT.
+  if (infra.provider === "github-pages") {
+    if (!input.gitUrl && input.sourcePath) {
+      const info = introspectGitRepo(input.sourcePath);
+      if (info.kind !== "ok") {
+        throw new Error(`Cannot deploy to GitHub Pages: ${info.message}`);
+      }
+      input = { ...input, gitUrl: info.remote, gitBranch: input.gitBranch ?? info.branch };
+    }
+    if (!input.gitUrl) {
+      throw new Error("GitHub Pages requires gitUrl or a pushed source_path");
+    }
+    const out = await ghPagesDeploy(infra, {
+      userId: input.userId,
+      infraId: input.infraId,
+      name: input.name,
+      gitUrl: input.gitUrl,
+      gitBranch: input.gitBranch,
+      existingDeployId: input.existingDeployId,
+    });
+    return { id: out.id, url: out.url };
+  }
+
   // Dokploy provider — API-driven, no SSH + no hostingNodeIp needed.
   if (infra.provider === "dokploy") {
     const resolved = await resolveInfraConfig(
@@ -770,6 +835,23 @@ export async function getDeploymentLogs(
     return localDockerLogs(deployment.containerId, lines);
   }
 
+  if (infra.provider === "digitalocean-apps") {
+    if (!deployment.containerId) throw new Error("No DO Apps ID stored");
+    const resolved = await resolveInfraConfig(
+      infra.userId,
+      infra.id,
+      JSON.parse(infra.config) as Record<string, unknown>,
+    );
+    return doAppsLogs(resolved, deployment.containerId, lines);
+  }
+
+  if (infra.provider === "github-pages") {
+    // Pages doesn't expose runtime logs — surface build status instead.
+    return deployment.status === "failed"
+      ? `[Pages Build Error]\n${deployment.statusDetail ?? "Unknown failure"}`
+      : `Pages is static hosting — no runtime logs. Status: ${deployment.status}${deployment.statusDetail ? ` (${deployment.statusDetail})` : ""}`;
+  }
+
   if (!infra.hostingNodeIp) throw new Error("Hosting node not available");
 
   assertSafeName(deployment.name);
@@ -852,6 +934,25 @@ export async function restartDeployment(
     return;
   }
 
+  if (infra.provider === "digitalocean-apps") {
+    if (!deployment.containerId) throw new Error("No DO Apps ID stored");
+    const resolved = await resolveInfraConfig(
+      infra.userId,
+      infra.id,
+      JSON.parse(infra.config) as Record<string, unknown>,
+    );
+    await doAppsRestart(resolved, deployment.containerId);
+    db.update(schema.deployments)
+      .set({ status: "deploying", statusDetail: "Redeploying via DO...", updatedAt: new Date() })
+      .where(eq(schema.deployments.id, deployId))
+      .run();
+    return;
+  }
+
+  if (infra.provider === "github-pages") {
+    throw new Error("GitHub Pages deploys are triggered by pushing to the source branch — restart not supported");
+  }
+
   if (!infra.hostingNodeIp) throw new Error("Hosting node not available");
 
   assertSafeName(deployment.name);
@@ -913,6 +1014,41 @@ export async function destroyDeployment(
   if (infra?.provider === "local-docker") {
     if (deployment.containerId) {
       await localDockerDestroy(deployment.containerId);
+    }
+    db.update(schema.deployments)
+      .set({ status: "destroyed", statusDetail: null, updatedAt: new Date() })
+      .where(eq(schema.deployments.id, deployId))
+      .run();
+    return;
+  }
+
+  if (infra?.provider === "digitalocean-apps") {
+    if (deployment.containerId) {
+      try {
+        const resolved = await resolveInfraConfig(
+          infra.userId,
+          infra.id,
+          JSON.parse(infra.config) as Record<string, unknown>,
+        );
+        await doAppsDestroy(resolved, deployment.containerId);
+      } catch {
+        // Best-effort — mark destroyed regardless.
+      }
+    }
+    db.update(schema.deployments)
+      .set({ status: "destroyed", statusDetail: null, updatedAt: new Date() })
+      .where(eq(schema.deployments.id, deployId))
+      .run();
+    return;
+  }
+
+  if (infra?.provider === "github-pages") {
+    if (deployment.containerId) {
+      try {
+        await ghPagesDestroy(deployment.userId, deployment.containerId);
+      } catch {
+        // Best-effort.
+      }
     }
     db.update(schema.deployments)
       .set({ status: "destroyed", statusDetail: null, updatedAt: new Date() })
