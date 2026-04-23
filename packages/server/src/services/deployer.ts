@@ -13,6 +13,7 @@ import {
 } from "./shell-safety.js";
 import { resolveInfraConfig } from "./secrets/helpers.js";
 import { introspectGitRepo } from "./git-introspect.js";
+import { DeployError } from "./deploy-error.js";
 import {
   dokployDeploy,
   dokployLogs,
@@ -398,8 +399,8 @@ export async function deploy(
     .all();
 
   const infra = infraRows[0];
-  if (!infra) throw new Error("Infrastructure config not found");
-  if (infra.status !== "ready") throw new Error("Hosting node not ready");
+  if (!infra) throw new DeployError("Infrastructure config not found", 404);
+  if (infra.status !== "ready") throw new DeployError("Hosting node not ready", 409);
 
   // Local Docker provider — builds + runs on AgentHub's own daemon via
   // the server container's docker socket. No SSH, no NFS.
@@ -427,12 +428,12 @@ export async function deploy(
     if (!input.gitUrl && input.sourcePath) {
       const info = introspectGitRepo(input.sourcePath);
       if (info.kind !== "ok") {
-        throw new Error(`Cannot deploy to DO Apps: ${info.message}`);
+        throw new DeployError(`Cannot deploy to DO Apps: ${info.message}`);
       }
       input = { ...input, gitUrl: info.remote, gitBranch: input.gitBranch ?? info.branch };
     }
     if (!input.gitUrl) {
-      throw new Error("DO Apps requires gitUrl or a pushed source_path");
+      throw new DeployError("DO Apps requires gitUrl or a pushed source_path");
     }
     const resolved = await resolveInfraConfig(
       infra.userId,
@@ -457,12 +458,12 @@ export async function deploy(
     if (!input.gitUrl && input.sourcePath) {
       const info = introspectGitRepo(input.sourcePath);
       if (info.kind !== "ok") {
-        throw new Error(`Cannot deploy to GitHub Pages: ${info.message}`);
+        throw new DeployError(`Cannot deploy to GitHub Pages: ${info.message}`);
       }
       input = { ...input, gitUrl: info.remote, gitBranch: input.gitBranch ?? info.branch };
     }
     if (!input.gitUrl) {
-      throw new Error("GitHub Pages requires gitUrl or a pushed source_path");
+      throw new DeployError("GitHub Pages requires gitUrl or a pushed source_path");
     }
     const out = await ghPagesDeploy(infra, {
       userId: input.userId,
@@ -502,7 +503,7 @@ export async function deploy(
     } else if (input.sourcePath !== undefined) {
       const info = introspectGitRepo(input.sourcePath);
       if (info.kind !== "ok") {
-        throw new Error(`Cannot deploy to Dokploy: ${info.message}`);
+        throw new DeployError(`Cannot deploy to Dokploy: ${info.message}`);
       }
       out.gitUrl = info.remote;
       out.gitBranch = input.gitBranch ?? info.branch;
@@ -514,13 +515,13 @@ export async function deploy(
   // Non-Dokploy providers don't support gitUrl yet — fail fast with a
   // clear message instead of silently ignoring the field.
   if (input.gitUrl) {
-    throw new Error(
+    throw new DeployError(
       "gitUrl is only supported for Dokploy infra (Dokploy clones + builds from Git). " +
         "For Docker/DigitalOcean, use sourcePath or composeConfig instead.",
     );
   }
 
-  if (!infra.hostingNodeIp) throw new Error("Hosting node has no IP");
+  if (!infra.hostingNodeIp) throw new DeployError("Hosting node has no IP", 409);
 
   const hostIp = infra.hostingNodeIp;
   const database = input.database ?? "none";
@@ -610,14 +611,14 @@ export async function deploy(
         if (input.composePath) {
           // Allow subfolder paths like "docker/docker-compose.yml".
           if (!/^[a-zA-Z0-9._\-\/]+$/.test(input.composePath) || input.composePath.includes("..")) {
-            throw new Error(`Invalid composePath: ${input.composePath}`);
+            throw new DeployError(`Invalid composePath: ${input.composePath}`);
           }
           const check = await sshExec(
             hostIp,
             `test -f ${shQuote(`${appDir}/${input.composePath}`)} && echo yes || echo no`,
           );
           if (check !== "yes") {
-            throw new Error(`composePath "${input.composePath}" not found in project`);
+            throw new DeployError(`composePath "${input.composePath}" not found in project`, 404);
           }
           userCompose = input.composePath;
         } else {
@@ -703,7 +704,7 @@ export async function deploy(
           await sshExec(hostIp, `cd ${quotedAppDir} && docker compose up -d`);
         }
       } else {
-        throw new Error("Either sourcePath or composeConfig required");
+        throw new DeployError("Either sourcePath or composeConfig required");
       }
 
       let containerId: string | null = null;

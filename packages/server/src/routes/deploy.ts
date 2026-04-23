@@ -8,6 +8,7 @@ import {
   restartDeployment,
   destroyDeployment,
 } from "../services/deployer.js";
+import { DeployError } from "../services/deploy-error.js";
 import {
   ensureGitHubPagesInfra,
   ensureLocalDockerInfra,
@@ -211,6 +212,13 @@ export function deployRoutes() {
       return c.json(result, existing ? 200 : 201);
     } catch (err) {
       console.error("[deploy] Error:", err instanceof Error ? err.message : err);
+      if (err instanceof DeployError) {
+        // Pass structured message through so the caller (typically the
+        // agentdeploy MCP) can surface it to the user without needing to
+        // SSH to the server for logs. Unknown errors stay opaque to avoid
+        // leaking implementation detail from unexpected bugs.
+        return c.json({ error: err.message }, err.status as 400 | 404 | 409 | 502);
+      }
       return c.json({ error: "Deploy failed" }, 500);
     }
   });

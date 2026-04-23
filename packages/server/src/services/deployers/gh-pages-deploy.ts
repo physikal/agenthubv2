@@ -7,6 +7,7 @@ import {
   latestPagesBuild,
 } from "../providers/github.js";
 import { requireGitHubCreds } from "../providers/github-pages.js";
+import { DeployError } from "../deploy-error.js";
 
 /**
  * Enable (or re-point) GitHub Pages on a repo under the user's
@@ -41,7 +42,7 @@ interface ParsedRepo {
 function parseGithubUrl(url: string): ParsedRepo {
   const m = /github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/.exec(url);
   if (!m || !m[1] || !m[2]) {
-    throw new Error(`GH Pages requires a github.com URL, got: ${url}`);
+    throw new DeployError(`GH Pages requires a github.com URL, got: ${url}`);
   }
   return { owner: m[1], repo: m[2] };
 }
@@ -63,7 +64,7 @@ export async function ghPagesDeploy(
   const creds = await requireGitHubCreds(input.userId);
   const parsed = parseGithubUrl(input.gitUrl);
   if (parsed.owner !== creds.owner) {
-    throw new Error(
+    throw new DeployError(
       `GH Pages can only deploy repos owned by the configured github integration (${creds.owner}); got ${parsed.owner}`,
     );
   }
