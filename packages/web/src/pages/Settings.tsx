@@ -177,7 +177,12 @@ const PHASE_RANK: Record<UpdatePhase, number> = {
   failed: 99,
 };
 
-const UPDATE_TIMEOUT_MS = 300_000; // 5 min — image rebuilds can run long
+// 20 min safety timeout. Cold double-rebuild (server + workspace images
+// from scratch on a VM with no Docker layer cache) can run 8-15 min on
+// its own; bumping to 20 gives operators room without falsely reporting
+// a stall. If an update genuinely hangs past 20 min, `agenthub logs` on
+// the host is the right next step.
+const UPDATE_TIMEOUT_MS = 20 * 60 * 1000;
 
 function VersionPanel() {
   const [info, setInfo] = useState<VersionInfo | null>(null);
@@ -273,7 +278,7 @@ function VersionPanel() {
               ...cur,
               phase: "failed",
               errorMessage:
-                "Update didn't finish within 5 minutes. Check `agenthub logs` on the host to see where it stalled.",
+                "Update didn't finish within 20 minutes. Check `agenthub logs` or `docker logs $(docker ps -a --filter name=agenthub-updater --format '{{.Names}}' | head -1)` on the host to see where it stalled.",
             }
           : cur,
       );
@@ -484,6 +489,7 @@ function VersionPanel() {
           phase={progress.phase}
           fromSha={progress.baseline.sha}
           toSha={progress.targetSha}
+          startedAt={progress.startedAt}
           {...(progress.errorMessage !== undefined && { errorMessage: progress.errorMessage })}
           onHide={handleHide}
           onReload={handleReload}
