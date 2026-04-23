@@ -459,10 +459,169 @@ function AddConfigForm({ onCreated }: { onCreated: () => void }) {
 
 // --- Main Page ---
 
+interface GithubInstallation {
+  id: string;
+  installationId: number;
+  accountLogin: string;
+  accountType: "User" | "Organization";
+  repositorySelection: "all" | "selected";
+  suspendedAt: string | null;
+  deletedAt: string | null;
+  createdAt: string;
+}
+
+interface GithubIntegrationStatus {
+  registered: boolean;
+  installations: GithubInstallation[];
+}
+
+function GithubAppCard({
+  status,
+  onRefresh,
+  banner,
+  onDismissBanner,
+}: {
+  status: GithubIntegrationStatus;
+  onRefresh: () => void;
+  banner: { kind: "success" | "error"; text: string } | null;
+  onDismissBanner: () => void;
+}) {
+  const handleInstall = () => {
+    // Full-page navigation — the server issues a 302 to github.com. Using
+    // window.location keeps the session cookie in the request so the
+    // callback authenticates back to this user.
+    window.location.href = "/api/integrations/github/install";
+  };
+
+  const handleRemove = async (install: GithubInstallation) => {
+    if (
+      !confirm(
+        `Remove local record of "${install.accountLogin}"? The App stays installed on GitHub — uninstall it there (GitHub Settings → Applications → Installed GitHub Apps) to fully revoke.`,
+      )
+    )
+      return;
+    try {
+      const res = await api(`/api/integrations/github/${install.id}`, {
+        method: "DELETE",
+      });
+      if (res.ok) onRefresh();
+    } catch {
+      // ignore — surfaces as no-op
+    }
+  };
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-medium text-zinc-100">GitHub App</h3>
+          <p className="text-xs text-zinc-500">
+            Per-repo access, 1-hour auto-rotating tokens. Preferred over the
+            legacy Personal Access Token integration.
+          </p>
+        </div>
+      </div>
+
+      {banner && (
+        <div
+          className={`px-3 py-2 rounded text-sm flex items-start justify-between gap-2 ${
+            banner.kind === "success"
+              ? "bg-green-500/10 text-green-400 border border-green-500/30"
+              : "bg-red-500/10 text-red-400 border border-red-500/30"
+          }`}
+        >
+          <span>{banner.text}</span>
+          <button
+            onClick={onDismissBanner}
+            className="text-xs opacity-70 hover:opacity-100"
+          >
+            dismiss
+          </button>
+        </div>
+      )}
+
+      {!status.registered ? (
+        <p className="text-sm text-zinc-400">
+          An admin needs to register the GitHub App from the Admin page before
+          you can install it on your account.
+        </p>
+      ) : status.installations.length === 0 ? (
+        <>
+          <p className="text-sm text-zinc-400">
+            Install the App on your GitHub account or organization. You'll be
+            asked to pick exactly which repos AgentHub can see.
+          </p>
+          <button
+            onClick={handleInstall}
+            className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-500 transition-colors"
+          >
+            Install on GitHub
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="space-y-2">
+            {status.installations.map((install) => (
+              <div
+                key={install.id}
+                className="flex items-center justify-between px-3 py-2 bg-zinc-800/60 border border-zinc-700/50 rounded-lg"
+              >
+                <div>
+                  <p className="text-sm text-zinc-100">
+                    <span className="font-mono">{install.accountLogin}</span>
+                    <span className="text-xs text-zinc-500 ml-2">
+                      {install.accountType === "Organization" ? "org" : "user"}
+                    </span>
+                    {install.suspendedAt && (
+                      <span className="text-xs text-yellow-400 ml-2">
+                        (suspended)
+                      </span>
+                    )}
+                    {install.deletedAt && (
+                      <span className="text-xs text-red-400 ml-2">
+                        (deleted on GitHub)
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    {install.repositorySelection === "all"
+                      ? "All repos"
+                      : "Selected repos"}
+                    {" · Installation "}
+                    {install.installationId}
+                  </p>
+                </div>
+                <button
+                  onClick={() => void handleRemove(install)}
+                  className="text-xs text-red-400 hover:text-red-300"
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={handleInstall}
+            className="px-3 py-1.5 text-xs text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-800 transition-colors"
+          >
+            Add another account
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function Integrations() {
   const [configs, setConfigs] = useState<InfraConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
+  const [ghStatus, setGhStatus] = useState<GithubIntegrationStatus | null>(null);
+  const [ghBanner, setGhBanner] = useState<
+    | { kind: "success"; text: string }
+    | { kind: "error"; text: string }
+    | null
+  >(null);
 
   const fetchConfigs = useCallback(async () => {
     try {
@@ -472,7 +631,36 @@ export function Integrations() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { void fetchConfigs(); }, [fetchConfigs]);
+  const fetchGhStatus = useCallback(async () => {
+    try {
+      const res = await api("/api/integrations/github");
+      if (res.ok) setGhStatus((await res.json()) as GithubIntegrationStatus);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => { void fetchConfigs(); void fetchGhStatus(); }, [fetchConfigs, fetchGhStatus]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const added = url.searchParams.get("githubInstallAdded");
+    const updated = url.searchParams.get("githubInstallUpdated");
+    const err = url.searchParams.get("githubInstallError");
+    if (added === "1") {
+      setGhBanner({ kind: "success", text: "GitHub App installed." });
+      url.searchParams.delete("githubInstallAdded");
+      window.history.replaceState({}, "", url.toString());
+    } else if (updated === "1") {
+      setGhBanner({ kind: "success", text: "GitHub App repos updated." });
+      url.searchParams.delete("githubInstallUpdated");
+      window.history.replaceState({}, "", url.toString());
+    } else if (err) {
+      setGhBanner({ kind: "error", text: `GitHub App install failed: ${err}` });
+      url.searchParams.delete("githubInstallError");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
 
   if (loading) {
     return (
@@ -499,6 +687,15 @@ export function Integrations() {
       </p>
 
       <div className="max-w-2xl space-y-4">
+        {ghStatus && (
+          <GithubAppCard
+            status={ghStatus}
+            onRefresh={() => void fetchGhStatus()}
+            banner={ghBanner}
+            onDismissBanner={() => setGhBanner(null)}
+          />
+        )}
+
         {showAdd && (
           <AddConfigForm onCreated={() => { setShowAdd(false); void fetchConfigs(); }} />
         )}

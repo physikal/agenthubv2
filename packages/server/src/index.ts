@@ -20,6 +20,10 @@ import { packagesRoutes } from "./routes/packages.js";
 import { PackageManager } from "./services/packages/manager.js";
 import { authMiddleware, adminMiddleware, agentAuthMiddleware } from "./middleware/auth.js";
 import { githubAppManifestRoutes } from "./routes/github-app-manifest.js";
+import {
+  githubIntegrationRoutes,
+  githubWebhookRoutes,
+} from "./routes/github-integration.js";
 import { ALLOWED_ORIGINS, isOriginAllowed } from "./middleware/origin.js";
 import { setupTerminalProxy } from "./ws/terminal-proxy.js";
 import { setupPreviewProxy } from "./ws/preview-proxy.js";
@@ -87,9 +91,14 @@ agentGithubApp.use("*", agentAuthMiddleware);
 agentGithubApp.route("/", agentGithubRoutes());
 app.route("/api/agent/github", agentGithubApp);
 
-// --- Authenticated routes (skip agent-auth paths) ---
+// --- GitHub App webhook (mounted BEFORE the /api/* auth middleware;
+// verifies HMAC on the raw body instead of relying on our cookie auth). ---
+app.route("/api/integrations/github/webhook", githubWebhookRoutes());
+
+// --- Authenticated routes (skip agent-auth + webhook paths) ---
 app.use("/api/*", async (c, next) => {
   if (c.req.path.startsWith("/api/agent/")) return next();
+  if (c.req.path === "/api/integrations/github/webhook") return next();
   return (authMiddleware as unknown as (c: unknown, next: () => Promise<void>) => Promise<Response | void>)(c, next);
 });
 app.route("/api/sessions", sessionsRoutes(sessionManager));
@@ -97,6 +106,7 @@ app.route("/api/sessions", previewRoutes(sessionManager));
 app.route("/api/user", userRoutes(sessionManager));
 app.route("/api/settings", settingsRoutes());
 app.route("/api/infra", infraRoutes());
+app.route("/api/integrations/github", githubIntegrationRoutes());
 app.route("/api/packages", packagesRoutes(packageManager));
 app.route("/api", deployRoutes());
 
