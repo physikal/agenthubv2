@@ -25,6 +25,7 @@ RUN apk add --no-cache \
       docker-cli-compose \
       curl \
       jq \
+      coreutils \
     && rm -rf /var/cache/apk/*
 
 # The CLI script is read at run time from the /repo bind mount, not baked
