@@ -85,15 +85,22 @@ rebuild_changed_images() {
   local from="$1" to="$2"
   cd "$AGENTHUB_DIR"
   local changed
-  changed="$(git diff --name-only "$from" "$to" -- docker/ packages/ || true)"
-  local rebuild_server=0 rebuild_workspace=0
+  changed="$(git diff --name-only "$from" "$to" -- docker/ packages/ scripts/ || true)"
+  local rebuild_server=0 rebuild_workspace=0 rebuild_updater=0
   if echo "$changed" | grep -qE '^(docker/Dockerfile\.server|packages/server/|packages/web/|packages/agent/|pnpm-lock\.yaml|package\.json)'; then
     rebuild_server=1
   fi
   if echo "$changed" | grep -qE '^(docker/Dockerfile\.agent-workspace|docker/agent-workspace-entrypoint\.sh|packages/agent/)'; then
     rebuild_workspace=1
   fi
-  if [[ "$rebuild_server" -eq 0 && "$rebuild_workspace" -eq 0 ]]; then
+  # The updater image no longer bakes scripts/agenthub (it bind-mounts
+  # /repo at run time), so CLI-only changes don't require an updater
+  # rebuild. Only rebuild when the Dockerfile itself moves (new packages,
+  # base-image bump, etc.).
+  if echo "$changed" | grep -qE '^docker/Dockerfile\.updater$'; then
+    rebuild_updater=1
+  fi
+  if [[ "$rebuild_server" -eq 0 && "$rebuild_workspace" -eq 0 && "$rebuild_updater" -eq 0 ]]; then
     msg "no image-relevant changes — skipping rebuild"
     return
   fi
@@ -104,6 +111,10 @@ rebuild_changed_images() {
   if [[ "$rebuild_workspace" -eq 1 ]]; then
     msg "rebuilding agenthubv2-workspace:local"
     $SUDO docker build -q -f "$AGENTHUB_DIR/docker/Dockerfile.agent-workspace" -t agenthubv2-workspace:local "$AGENTHUB_DIR"
+  fi
+  if [[ "$rebuild_updater" -eq 1 ]]; then
+    msg "rebuilding agenthubv2-updater:local"
+    $SUDO docker build -q -f "$AGENTHUB_DIR/docker/Dockerfile.updater" -t agenthubv2-updater:local "$AGENTHUB_DIR"
   fi
 }
 
