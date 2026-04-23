@@ -23,7 +23,7 @@ Only someone with admin role on this AgentHub install does this, and only once p
 
 **Prerequisite:** The install must be reachable on a public HTTPS domain. GitHub's servers need to reach `https://<your-domain>/api/admin/github-app/manifest-callback` to complete registration, and `https://<your-domain>/api/integrations/github/webhook` to deliver install/uninstall events. Localhost-only installs **cannot** register.
 
-1. Log in as admin. Go to `/admin` → "GitHub App" card → **Register GitHub App**.
+1. Log in as admin. Go to **Integrations** → "GitHub App" card → **Register GitHub App**.
 2. Your browser is redirected to github.com with a pre-filled manifest. The App's name is `AgentHub (<your-domain>)` by default.
 3. Choose the account you want to **own** the App (your personal GitHub account or an org you admin) and click **Create GitHub App**.
 4. GitHub redirects back to AgentHub. You'll see `GitHub App registered` in a green banner and the card will show the App name + ID.
@@ -32,15 +32,15 @@ The App's private key and webhook secret are stored in Infisical at `/system/git
 
 ### Re-registering or rotating keys
 
-Click **Re-register** on the same card. GitHub will show the same manifest flow and issue a fresh private key. AgentHub overwrites the old credentials atomically. Any existing user installations keep working (they reference installation IDs, not the App's own keys).
+Admins see a **Re-register** link in the GitHub App card footer once the App is registered. GitHub will show the same manifest flow and issue a fresh private key. AgentHub overwrites the old credentials atomically. Any existing user installations keep working (they reference installation IDs, not the App's own keys).
 
 ### Unregistering
 
-Click **Unregister**. This removes AgentHub's knowledge of the App. It does **not** delete the App on GitHub's side — you must do that at `github.com/settings/apps/<slug>` if you want to fully tear down. Re-registering with the same domain will create a new App under a new slug.
+Same footer, **Unregister** link. This removes AgentHub's knowledge of the App. It does **not** delete the App on GitHub's side — you must do that at `github.com/settings/apps/<slug>` if you want to fully tear down. Re-registering with the same domain will create a new App under a new slug.
 
 ## User setup (per GitHub account)
 
-1. Go to `/integrations` → "GitHub App" card → **Install on GitHub**.
+1. Go to **Integrations** → "GitHub App" card → **Install on GitHub**.
 2. GitHub asks which account to install on (your personal account or an org you admin). Pick one.
 3. Pick repo scope: **All repositories** or **Only select repositories**. For narrower blast radius, use "Only select" and list the repos AgentHub should see.
 4. Click **Install**.

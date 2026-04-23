@@ -120,7 +120,7 @@ export function githubAppManifestRoutes() {
     const code = c.req.query("code");
     const state = c.req.query("state");
     if (!code || !state) {
-      return c.redirect("/admin?githubAppError=missing_params");
+      return c.redirect("/integrations?githubAppError=missing_params");
     }
 
     const stateRow = db
@@ -129,18 +129,18 @@ export function githubAppManifestRoutes() {
       .where(eq(schema.githubInstallState.state, state))
       .get();
     if (!stateRow) {
-      return c.redirect("/admin?githubAppError=unknown_state");
+      return c.redirect("/integrations?githubAppError=unknown_state");
     }
     if (stateRow.userId !== user.id) {
-      return c.redirect("/admin?githubAppError=state_user_mismatch");
+      return c.redirect("/integrations?githubAppError=state_user_mismatch");
     }
     if (stateRow.usedAt) {
-      return c.redirect("/admin?githubAppError=state_reused");
+      return c.redirect("/integrations?githubAppError=state_reused");
     }
     if (
       stateRow.createdAt.getTime() < Date.now() - STATE_TTL_MS
     ) {
-      return c.redirect("/admin?githubAppError=state_expired");
+      return c.redirect("/integrations?githubAppError=state_expired");
     }
 
     // Mark state used BEFORE making network calls — if anything downstream
@@ -157,7 +157,7 @@ export function githubAppManifestRoutes() {
       const detail = err instanceof Error ? err.message : "unknown";
       console.error("[github-app] manifest exchange failed:", detail);
       return c.redirect(
-        `/admin?githubAppError=${encodeURIComponent("exchange_failed:" + detail)}`,
+        `/integrations?githubAppError=${encodeURIComponent("exchange_failed:" + detail)}`,
       );
     }
 
@@ -177,11 +177,11 @@ export function githubAppManifestRoutes() {
       const detail = err instanceof Error ? err.message : "unknown";
       console.error("[github-app] upsert failed:", detail);
       return c.redirect(
-        `/admin?githubAppError=${encodeURIComponent("store_failed:" + detail)}`,
+        `/integrations?githubAppError=${encodeURIComponent("store_failed:" + detail)}`,
       );
     }
 
-    return c.redirect("/admin?githubAppRegistered=1");
+    return c.redirect("/integrations?githubAppRegistered=1");
   });
 
   // DELETE /api/admin/github-app — un-register. Does NOT touch GitHub's
