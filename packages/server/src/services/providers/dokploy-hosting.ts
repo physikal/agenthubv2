@@ -5,6 +5,20 @@ import type {
 } from "./types.js";
 
 /**
+ * Dokploy's trpc-openapi handler returns procedures either bare or wrapped
+ * in the tRPC envelope {result:{data:<value>}}. Callers want the value.
+ */
+function unwrapTrpc(body: unknown): unknown {
+  if (body && typeof body === "object" && "result" in body) {
+    const result = (body as { result?: { data?: unknown } }).result;
+    if (result && typeof result === "object" && "data" in result) {
+      return result.data;
+    }
+  }
+  return body;
+}
+
+/**
  * Dokploy deploy target (distinct from the outer-workspace Dokploy driver
  * in services/provisioner/dokploy.ts — this one is "agent deploys its app
  * to a Dokploy instance").
@@ -41,19 +55,75 @@ export class DokployHostingProvider implements HostingProvider {
     const base = this.validate(config);
     if (!base.ok) return base;
 
+    const baseUrl = (config["baseUrl"] as string).replace(/\/$/, "");
+    const apiToken = config["apiToken"] as string;
+    const projectId = config["projectId"] as string;
+    const environmentId = config["environmentId"] as string;
+    const headers = { "x-api-key": apiToken } as const;
+
+    // Two-call probe. Dokploy has no dedicated "whoami" for x-api-key callers
+    // (auth.me is a better-auth session endpoint — 404 for api-key users), so
+    // we validate the token against a known tRPC query and then dereference
+    // the env ID to confirm it exists and belongs to this key's org.
+    //
+    // 1. project.all → token authenticates
+    // 2. environment.one?environmentId=... → env exists + in caller's org,
+    //    and its returned project.projectId matches the configured one.
     try {
-      const resp = await fetch(
-        `${(config["baseUrl"] as string).replace(/\/$/, "")}/api/auth.me`,
-        {
-          headers: { "x-api-key": config["apiToken"] as string },
-        },
-      );
-      if (!resp.ok) {
+      const tokenProbe = await fetch(`${baseUrl}/api/project.all`, { headers });
+      if (tokenProbe.status === 401) {
+        return { ok: false, issues: ["Dokploy API token rejected — check apiToken"] };
+      }
+      if (!tokenProbe.ok) {
         return {
           ok: false,
-          issues: [`Dokploy API returned ${String(resp.status)} — check URL and token`],
+          issues: [
+            `Dokploy /api/project.all returned ${String(tokenProbe.status)} — check baseUrl`,
+          ],
         };
       }
+
+      const envResp = await fetch(
+        `${baseUrl}/api/environment.one?environmentId=${encodeURIComponent(environmentId)}`,
+        { headers },
+      );
+      if (envResp.status === 403) {
+        return {
+          ok: false,
+          issues: [
+            `environmentId "${environmentId}" belongs to a different Dokploy organization than this token`,
+          ],
+        };
+      }
+      if (envResp.status === 500 || envResp.status === 404) {
+        return {
+          ok: false,
+          issues: [`environmentId "${environmentId}" not found in Dokploy`],
+        };
+      }
+      if (!envResp.ok) {
+        return {
+          ok: false,
+          issues: [
+            `Dokploy /api/environment.one returned ${String(envResp.status)}`,
+          ],
+        };
+      }
+
+      // tRPC openapi shape: { result: { data: <env> } } — also occasionally
+      // envelope-less. Accept either.
+      const envBody = (await envResp.json().catch(() => null)) as unknown;
+      const env = unwrapTrpc(envBody) as { project?: { projectId?: string } } | null;
+      const observedProjectId = env?.project?.projectId;
+      if (observedProjectId && observedProjectId !== projectId) {
+        return {
+          ok: false,
+          issues: [
+            `environmentId "${environmentId}" belongs to project "${observedProjectId}", not configured projectId "${projectId}"`,
+          ],
+        };
+      }
+
       return { ok: true, issues: [] };
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown";
