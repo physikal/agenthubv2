@@ -12,6 +12,12 @@ export interface InstallConfig {
    * deploy URLs are reachable from the operator's browser.
    */
   publicHost: string;
+  /**
+   * uid:gid to chown the install repo back to after any root-run update.
+   * install.sh captures this pre-sudo; installer renders it into .env so
+   * the server container receives it and can pass it to the updater.
+   */
+  ownerUidGid: string;
   tlsEmail: string;
   adminPassword: string;
 
@@ -51,6 +57,7 @@ export function emptyConfig(): InstallConfig {
     mode: "docker",
     domain: "localhost",
     publicHost: "",
+    ownerUidGid: "",
     tlsEmail: "",
     adminPassword: "",
     infisicalDbPassword: randomPassword(32),
@@ -98,6 +105,7 @@ export function renderEnv(cfg: InstallConfig): string {
     `AGENTHUB_HOST_RULE=${hostRule}`,
     `AGENTHUB_PUBLIC_HOST=${cfg.publicHost}`,
     `AGENTHUB_REPO_DIR=${repoDir}`,
+    `AGENTHUB_OWNER=${cfg.ownerUidGid}`,
     "",
     `PROVISIONER_MODE=${cfg.mode}`,
     `DOCKER_HOST=`,
@@ -138,6 +146,7 @@ export function applyEnvOverrides(
   if (env["AGENTHUB_MODE"]) next.mode = env["AGENTHUB_MODE"] as ProvisionerMode;
   if (env["AGENTHUB_DOMAIN"]) next.domain = env["AGENTHUB_DOMAIN"];
   if (env["AGENTHUB_PUBLIC_HOST"]) next.publicHost = env["AGENTHUB_PUBLIC_HOST"];
+  if (env["AGENTHUB_OWNER"]) next.ownerUidGid = env["AGENTHUB_OWNER"];
   if (env["AGENTHUB_TLS_EMAIL"]) next.tlsEmail = env["AGENTHUB_TLS_EMAIL"];
   if (env["AGENTHUB_ADMIN_PASSWORD"]) next.adminPassword = env["AGENTHUB_ADMIN_PASSWORD"];
   if (env["AGENTHUB_DOKPLOY_URL"]) next.dokployUrl = env["AGENTHUB_DOKPLOY_URL"];

@@ -179,6 +179,11 @@ services:
       # container. Without this passthrough the update button 500s with
       # "AGENTHUB_REPO_DIR not set".
       AGENTHUB_REPO_DIR: ${AGENTHUB_REPO_DIR}
+
+      # uid:gid to chown the repo back to after any root-run update. The
+      # server passes this through to the updater container so its EXIT
+      # trap restores ownership consistently across web-UI and CLI paths.
+      AGENTHUB_OWNER: ${AGENTHUB_OWNER:-}
     volumes:
       - agenthub-data:/data
       # Required for PROVISIONER_MODE=docker. If you're running dokploy-local
