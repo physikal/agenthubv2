@@ -50,6 +50,11 @@ FROM base AS production
 # it, the Update button 500s with `spawn docker ENOENT`. Pulled from the
 # official Docker apt repo since Debian's `docker.io` package carries a
 # much older client.
+#
+# docker-compose-plugin ships the `docker compose` subcommand the
+# local-docker deployer shells out to (`docker compose -p <proj> up …`).
+# Without it the CLI parses `compose` as an unknown arg and the deploy
+# fails at runtime with "unknown shorthand flag: 'p' in -p".
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
     tini openssh-client unzip curl ca-certificates git gnupg \
   && install -m 0755 -d /etc/apt/keyrings \
@@ -57,7 +62,7 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
   && chmod a+r /etc/apt/keyrings/docker.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
   && apt-get update -qq \
-  && apt-get install -y -qq --no-install-recommends docker-ce-cli \
+  && apt-get install -y -qq --no-install-recommends docker-ce-cli docker-compose-plugin \
   && curl -s https://rclone.org/install.sh | bash \
   && rm -rf /var/lib/apt/lists/*
 
