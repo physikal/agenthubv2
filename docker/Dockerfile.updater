@@ -30,6 +30,12 @@ RUN apk add --no-cache \
 COPY scripts/agenthub /usr/local/bin/agenthub
 RUN chmod 0755 /usr/local/bin/agenthub
 
+# /repo is a host bind mount owned by the install user (uid 1000). The
+# updater runs as root. Since git 2.35 that combination triggers
+# "detected dubious ownership" and every git call fails. Same fix we
+# applied to Dockerfile.server in the initial round.
+RUN git config --global --add safe.directory /repo
+
 # Default command runs the CLI's `update` subcommand. The server overrides
 # with --check or other subcommands as needed.
 ENTRYPOINT ["/usr/local/bin/agenthub"]
