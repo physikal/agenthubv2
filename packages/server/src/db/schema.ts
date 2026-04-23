@@ -189,6 +189,79 @@ export const userPackages = sqliteTable("user_packages", {
   error: text("error"),
 });
 
+/**
+ * Single-row config for the GitHub App this AgentHub install represents.
+ * The admin registers the App (via manifest flow or manually) once; every
+ * user's installations then reference it. Secrets (privateKey,
+ * webhookSecret, clientSecret) live in Infisical at /system/github-app/*
+ * — only non-secret metadata stays here. The id column is hardcoded to
+ * "default" so the UNIQUE + PRIMARY KEY guard against accidental multi-row
+ * drift.
+ */
+export const githubAppConfig = sqliteTable("github_app_config", {
+  id: text("id").primaryKey().default("default"),
+  appId: integer("app_id").notNull(),
+  slug: text("slug").notNull(),
+  clientId: text("client_id").notNull(),
+  name: text("name").notNull(),
+  htmlUrl: text("html_url").notNull(),
+  registeredByUserId: text("registered_by_user_id")
+    .notNull()
+    .references(() => users.id),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+/**
+ * One row per GitHub App installation on a user's account or organization.
+ * installationId is GitHub's numeric identifier (unique across the whole
+ * App); userId is the AgentHub user who initiated the install. We persist
+ * metadata for UI display (account login/type, repo selection); tokens
+ * are always minted fresh via @octokit/auth-app and never stored.
+ */
+export const githubInstallations = sqliteTable("github_installations", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  installationId: integer("installation_id").notNull().unique(),
+  accountLogin: text("account_login").notNull(),
+  accountType: text("account_type", { enum: ["User", "Organization"] }).notNull(),
+  targetType: text("target_type", { enum: ["User", "Organization"] }).notNull(),
+  repositorySelection: text("repository_selection", { enum: ["all", "selected"] })
+    .notNull(),
+  /** JSON snapshot of the permissions GitHub granted at install time. */
+  permissions: text("permissions").notNull().default("{}"),
+  /** Set via the installation.suspend webhook (or lazy 401 detection). */
+  suspendedAt: integer("suspended_at", { mode: "timestamp" }),
+  /** Set via installation.deleted webhook or explicit server-side uninstall. */
+  deletedAt: integer("deleted_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+/**
+ * Short-lived CSRF tokens for the /apps/:slug/installations/new redirect.
+ * 32 random bytes as hex; TTL 15 minutes. Each row is single-use — `usedAt`
+ * is stamped on exchange to prevent replay. Cleaned up lazily; stale rows
+ * are safe to leave.
+ */
+export const githubInstallState = sqliteTable("github_install_state", {
+  state: text("state").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  usedAt: integer("used_at", { mode: "timestamp" }),
+});
+
 export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
@@ -197,5 +270,9 @@ export type InfrastructureConfig = typeof infrastructureConfigs.$inferSelect;
 export type Deployment = typeof deployments.$inferSelect;
 export type BackupRun = typeof backupRuns.$inferSelect;
 export type NewBackupRun = typeof backupRuns.$inferInsert;
+export type GithubAppConfig = typeof githubAppConfig.$inferSelect;
+export type GithubInstallation = typeof githubInstallations.$inferSelect;
+export type NewGithubInstallation = typeof githubInstallations.$inferInsert;
+export type GithubInstallState = typeof githubInstallState.$inferSelect;
 export type UserPackage = typeof userPackages.$inferSelect;
 export type UserPackageStatus = NonNullable<UserPackage["status"]>;
