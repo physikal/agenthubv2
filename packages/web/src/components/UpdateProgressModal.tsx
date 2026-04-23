@@ -160,7 +160,11 @@ export function UpdateProgressModal({
       // real error if we never received any data. Once we've been live
       // and then the connection drops (e.g., during server recreate),
       // we treat it as an "ended" state and rely on phase detection.
+      // Close explicitly so EventSource doesn't auto-reconnect — without
+      // this it'd hot-loop trying to re-subscribe to a logs endpoint
+      // that'll immediately error because the updater container is gone.
       setStreamState((prev) => (prev === "live" ? "ended" : "error"));
+      es.close();
     };
     return () => { es.close(); };
   }, [containerName, isTerminal]);

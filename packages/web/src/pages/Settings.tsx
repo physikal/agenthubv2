@@ -253,7 +253,23 @@ function VersionPanel() {
           const restarted =
             !!next.serverStartedAt &&
             next.serverStartedAt !== cur.baseline.serverStartedAt;
+          // Strict done: both SHA and serverStartedAt have moved. This is
+          // the normal success path.
           if (shaMoved && restarted) {
+            setInfo(next);
+            advance({ phase: "done" });
+            return;
+          }
+          // Forgiving done: once we've reached "restarting" (meaning we
+          // previously saw fetches fail, indicating the server really did
+          // go down) and the server is now responding with a different
+          // serverStartedAt than our baseline, we're done. The SHA check
+          // becomes optional here to survive edge cases where the browser
+          // captured a stale `info.current.sha` (cached response, the
+          // refspec-widener mid-update, etc) — ending up with a baseline
+          // that matches the target. Left alone, the strict check stalls
+          // the modal forever even though the actual server is happy.
+          if (cur.phase === "restarting" && restarted) {
             setInfo(next);
             advance({ phase: "done" });
             return;
