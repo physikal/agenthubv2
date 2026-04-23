@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { dump as yamlDump } from "js-yaml";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
 import type { InfrastructureConfig } from "../../db/schema.js";
@@ -58,7 +57,7 @@ async function dokployRequest<T>(
     method,
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${cfg.apiToken}`,
+      "x-api-key": cfg.apiToken,
     },
   };
   if (body !== undefined) init.body = JSON.stringify(body);
@@ -87,28 +86,6 @@ function resolveDokployConfig(
 }
 
 /**
- * Best-effort compose rendering. If the caller supplied `composeConfig` we
- * use it verbatim; otherwise we synthesize a tiny one-service compose that
- * Dokploy can clone from a git repo or build. For the initial scaffold,
- * we require `composeConfig` — synth-from-git is a v2.1 follow-up.
- */
-function renderComposeForDokploy(input: DokployDeployInput): string {
-  if (input.composeConfig) return input.composeConfig;
-
-  // Minimal placeholder — satisfies the API contract but won't start
-  // anything useful without an image. Agents targeting Dokploy must
-  // provide composeConfig for now.
-  return yamlDump({
-    services: {
-      app: {
-        image: "alpine:latest",
-        command: ['sh', '-c', 'echo "placeholder — supply composeConfig"; sleep 3600'],
-      },
-    },
-  });
-}
-
-/**
  * Create a Dokploy compose app for this deployment. Returns the deployment
  * row shape the caller persists in `deployments`.
  */
@@ -121,11 +98,20 @@ export async function dokployDeploy(
 
   const appName = `agenthub-${input.name}-${randomUUID().slice(0, 8)}`.toLowerCase();
   const deployId = input.existingDeployId ?? randomUUID();
-  // git_url branch: tell Dokploy to clone + build from Git. No inline
-  // compose — Dokploy reads docker-compose.yml from the repo. Mutually
-  // exclusive with composeConfig (enforced at the route layer).
+  // Two modes:
+  //   git_url: Dokploy clones + builds from the caller's git remote. Dokploy
+  //     reads docker-compose.yml (or `composePath`) from the repo. Used for
+  //     both source_path (auto-converted upstream in deployer.ts) and
+  //     explicit gitUrl input.
+  //   composeConfig: caller supplied a verbatim docker-compose.yml — typically
+  //     for pre-built images like n8n. Dokploy runs it as-is.
   const useGit = Boolean(input.gitUrl);
-  const composeYaml = useGit ? "" : renderComposeForDokploy(input);
+  if (!useGit && !input.composeConfig) {
+    throw new Error(
+      "Dokploy deploy requires either a git URL (derived from source_path or passed explicitly) or composeConfig",
+    );
+  }
+  const composeYaml = useGit ? "" : (input.composeConfig as string);
   const gitBranch = input.gitBranch ?? "main";
 
   let composeId: string;
@@ -235,7 +221,7 @@ export async function dokployLogs(
   const cfg = resolveDokployConfig(resolvedConfig);
   const resp = await fetch(
     `${cfg.baseUrl.replace(/\/$/, "")}/api/compose.logs?composeId=${encodeURIComponent(composeId)}&tail=${String(lines)}`,
-    { headers: { Authorization: `Bearer ${cfg.apiToken}` } },
+    { headers: { "x-api-key": cfg.apiToken } },
   );
   if (!resp.ok) {
     throw new Error(`Dokploy logs fetch failed (${String(resp.status)})`);

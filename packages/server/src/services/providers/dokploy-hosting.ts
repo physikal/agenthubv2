@@ -45,7 +45,7 @@ export class DokployHostingProvider implements HostingProvider {
       const resp = await fetch(
         `${(config["baseUrl"] as string).replace(/\/$/, "")}/api/auth.me`,
         {
-          headers: { Authorization: `Bearer ${config["apiToken"] as string}` },
+          headers: { "x-api-key": config["apiToken"] as string },
         },
       );
       if (!resp.ok) {
