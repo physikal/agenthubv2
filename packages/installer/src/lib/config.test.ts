@@ -64,6 +64,19 @@ describe("renderEnv", () => {
     const env = renderEnv(cfg);
     expect(env).toContain("AGENTHUB_HOST_RULE=Host(`agents.acme.io`)");
   });
+
+  it("emits AGENTHUB_PUBLIC_HOST (blank by default — compose falls back to DOMAIN)", () => {
+    const cfg = emptyConfig();
+    const env = renderEnv(cfg);
+    expect(env).toContain("AGENTHUB_PUBLIC_HOST=");
+  });
+
+  it("carries an explicit publicHost through to the env file", () => {
+    const cfg = emptyConfig();
+    cfg.publicHost = "192.168.1.42";
+    const env = renderEnv(cfg);
+    expect(env).toContain("AGENTHUB_PUBLIC_HOST=192.168.1.42");
+  });
 });
 
 describe("applyEnvOverrides", () => {
@@ -78,6 +91,7 @@ describe("applyEnvOverrides", () => {
       AGENTHUB_DOKPLOY_API_TOKEN: "tok",
       AGENTHUB_DOKPLOY_PROJECT_ID: "proj",
       AGENTHUB_DOKPLOY_ENVIRONMENT_ID: "env",
+      AGENTHUB_PUBLIC_HOST: "10.0.0.5",
     });
     expect(out.mode).toBe("dokploy-remote");
     expect(out.domain).toBe("agents.acme.io");
@@ -85,6 +99,7 @@ describe("applyEnvOverrides", () => {
     expect(out.adminPassword).toBe("shhh");
     expect(out.dokployUrl).toBe("https://dokploy.acme.io");
     expect(out.dokployEnvironmentId).toBe("env");
+    expect(out.publicHost).toBe("10.0.0.5");
   });
 
   it("leaves unrelated fields alone", () => {

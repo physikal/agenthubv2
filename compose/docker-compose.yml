@@ -132,6 +132,12 @@ services:
       AGENTHUB_PUBLIC_URL: https://${DOMAIN}
       AGENTHUB_PORTAL_URL: http://agenthub-server:3000
 
+      # Hostname stamped into local-docker deploy URLs. Falls back to DOMAIN
+      # so a `DOMAIN=real.tld` install "just works"; LAN-only installs
+      # (DOMAIN=localhost) should set this to the box's LAN IP so the URL
+      # reaches the browser.
+      AGENTHUB_PUBLIC_HOST: ${AGENTHUB_PUBLIC_HOST:-${DOMAIN}}
+
       # Provisioner selection (docker | dokploy-local | dokploy-remote)
       PROVISIONER_MODE: ${PROVISIONER_MODE:-docker}
       DOCKER_HOST: ${DOCKER_HOST:-}

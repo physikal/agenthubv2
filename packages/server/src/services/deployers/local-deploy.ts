@@ -209,7 +209,10 @@ export async function localDockerDeploy(
         { cwd: tmpDir, timeout: 600_000 },
       );
 
-      const host = process.env["AGENTHUB_PUBLIC_HOST"] ?? "127.0.0.1";
+      // Compose emits empty strings for unset vars, so fall through on both
+      // null/undefined and "". 127.0.0.1 only works when the caller is on
+      // the same box — document that operators should set AGENTHUB_PUBLIC_HOST.
+      const host = process.env["AGENTHUB_PUBLIC_HOST"] || "127.0.0.1";
       const url = `http://${host}:${String(hostPort)}`;
 
       updateStatus(deployId, {

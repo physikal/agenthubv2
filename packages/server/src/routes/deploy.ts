@@ -277,7 +277,7 @@ export function deployRoutes() {
     const localInfra = infras.find((i) => i.provider === "local-docker");
     if (localInfra) {
       if (src.hasDockerfile || src.hasCompose) {
-        const host = process.env["AGENTHUB_PUBLIC_HOST"] ?? "<agenthub-host>";
+        const host = process.env["AGENTHUB_PUBLIC_HOST"] || "<agenthub-host>";
         viable.push({
           id: "local",
           label: "Local Docker (zero setup)",
