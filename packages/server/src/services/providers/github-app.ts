@@ -30,7 +30,7 @@
  */
 import { createAppAuth } from "@octokit/auth-app";
 import { Octokit } from "@octokit/rest";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 import { db, schema } from "../../db/index.js";
 import { DeployError } from "../deploy-error.js";
@@ -195,6 +195,54 @@ export async function fetchInstallationMetadata(
 export function installUrlFor(slug: string, state: string): string {
   const params = new URLSearchParams({ state });
   return `https://github.com/apps/${encodeURIComponent(slug)}/installations/new?${params.toString()}`;
+}
+
+/**
+ * Find the user's first installation that isn't suspended or deleted, if any.
+ * Returns null when the user never installed (or deleted/suspended every
+ * one) — callers should treat that as "no GitHub App identity" and fall
+ * back to whatever PAT-based integration exists.
+ */
+export function firstActiveInstallationForUser(
+  userId: string,
+): { id: string; installationId: number; accountLogin: string } | null {
+  const row = db
+    .select({
+      id: schema.githubInstallations.id,
+      installationId: schema.githubInstallations.installationId,
+      accountLogin: schema.githubInstallations.accountLogin,
+    })
+    .from(schema.githubInstallations)
+    .where(
+      and(
+        eq(schema.githubInstallations.userId, userId),
+        isNull(schema.githubInstallations.suspendedAt),
+        isNull(schema.githubInstallations.deletedAt),
+      ),
+    )
+    .get();
+  return row ?? null;
+}
+
+/**
+ * Convenience: mint a fresh 1-hour installation token for the given
+ * AgentHub user. Returns null when the user has no active installation,
+ * so callers can skip GitHub auth entirely without catching exceptions.
+ * Hard failures (App not registered, secret store down, GitHub 4xx) still
+ * throw via mintInstallationToken.
+ */
+export async function mintTokenForUser(userId: string): Promise<
+  | { token: string; installationId: number; accountLogin: string }
+  | null
+> {
+  const install = firstActiveInstallationForUser(userId);
+  if (!install) return null;
+  const token = await mintInstallationToken(install.installationId);
+  return {
+    token,
+    installationId: install.installationId,
+    accountLogin: install.accountLogin,
+  };
 }
 
 /** Store / replace the single App-config row. Private key + webhook secret
