@@ -160,6 +160,22 @@ cmd_update() {
   [[ "${1:-}" == "--check" ]] && check_only=1
 
   cd "$AGENTHUB_DIR"
+
+  # When the updater runs inside the agenthubv2-updater container, every
+  # git + filesystem write in this script happens as container-root (uid 0),
+  # which on the host bind mount means root-owned files the operator's
+  # shell user can't touch without sudo. Capture the repo's pre-run owner
+  # (package.json is always present and was written by the install user)
+  # and restore ownership on exit so the host user keeps clean git access.
+  local repo_owner=""
+  if [[ "$(id -u)" -eq 0 ]] && [[ -f "$AGENTHUB_DIR/package.json" ]]; then
+    repo_owner="$(stat -c '%u:%g' "$AGENTHUB_DIR/package.json" 2>/dev/null || true)"
+    if [[ -n "$repo_owner" && "$repo_owner" != "0:0" ]]; then
+      # Restore ownership on every exit path, including errors.
+      # shellcheck disable=SC2064
+      trap "chown -R '$repo_owner' '$AGENTHUB_DIR' 2>/dev/null || true" EXIT
+    fi
+  fi
   # When we re-exec into ourselves after self-updating, the repo is already
   # at origin/main from the previous invocation's reset. Skip the "behind"
   # check and proceed straight to migrate/rebuild/recreate.
