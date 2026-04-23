@@ -299,9 +299,13 @@ export async function dokployDeploy(
       ...(input.composePath ? { composePath: input.composePath } : {}),
     });
   } else {
+    // Dokploy's `composeType` enum is {"docker-compose", "stack"}; "raw"
+    // only ever belonged on `sourceType` (which distinguishes inline-YAML
+    // from git clones). Earlier versions silently accepted the mismatch;
+    // current canonical API rejects it with a 400 zodError.
     await dokployRequest(cfg, "POST", "/api/compose.update", {
       composeId,
-      composeType: "raw",
+      composeType: "docker-compose",
       sourceType: "raw",
       composeFile: composeYaml,
     });
