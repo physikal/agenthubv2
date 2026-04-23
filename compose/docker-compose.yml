@@ -166,6 +166,13 @@ services:
       # Docker install mode we mount the host socket below; this flag tells
       # the DockerDriver's safety assertion to allow it.
       AGENTHUB_ALLOW_SOCKET_MOUNT: "true"
+
+      # Host-side path of the repo bind-mounted at /repo below. The server
+      # needs this at *runtime* (not just compose-time) so /api/admin/update
+      # can `docker run -v ${AGENTHUB_REPO_DIR}:/repo` for the updater
+      # container. Without this passthrough the update button 500s with
+      # "AGENTHUB_REPO_DIR not set".
+      AGENTHUB_REPO_DIR: ${AGENTHUB_REPO_DIR}
     volumes:
       - agenthub-data:/data
       # Required for PROVISIONER_MODE=docker. If you're running dokploy-local
