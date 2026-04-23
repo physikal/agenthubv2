@@ -3,6 +3,7 @@ import { chownSync, mkdirSync } from "node:fs";
 import { AgentServer } from "./ws-server.js";
 import { startFileServer } from "./file-server.js";
 import { registerAgentDeployMcp } from "./mcp-writer.js";
+import { installGitCredentialsFromEnv } from "./github-credentials.js";
 
 const PORT = parseInt(process.env["AGENT_PORT"] ?? "9876", 10);
 const AUTH_TOKEN = process.env["AGENT_TOKEN"] ?? "";
@@ -22,6 +23,11 @@ try {
   const msg = err instanceof Error ? err.message : "unknown";
   console.warn(`[agent] could not prepare /home/coder/.local: ${msg}`);
 }
+
+// If the server injected a GitHub App installation token via env vars,
+// write ~/.gitconfig so every `git clone`/`git push` inside the workspace
+// is authenticated transparently. No-op when GITHUB_TOKEN is absent.
+installGitCredentialsFromEnv();
 
 // Register the agentdeploy MCP with every supported coding CLI so Claude
 // Code / OpenCode / Droid pick it up automatically on first run. Merges
