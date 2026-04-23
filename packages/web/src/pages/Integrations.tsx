@@ -1,17 +1,27 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "../lib/api.ts";
 
-type Provider = "cloudflare" | "digitalocean" | "docker" | "dokploy" | "b2";
+type Provider =
+  | "cloudflare"
+  | "digitalocean"
+  | "digitalocean-apps"
+  | "docker"
+  | "dokploy"
+  | "b2"
+  | "github";
 
 const PROVIDER_LABEL: Record<Provider, string> = {
   cloudflare: "Cloudflare DNS",
-  digitalocean: "DigitalOcean",
+  digitalocean: "DigitalOcean (Droplets)",
+  "digitalocean-apps": "DigitalOcean App Platform",
   docker: "Docker host",
   dokploy: "Dokploy",
   b2: "Backblaze B2",
+  github: "GitHub",
 };
 
-// Compute providers have a hosting node to provision/destroy.
+// Compute providers have a hosting node to provision/destroy. DO Apps +
+// GitHub are PaaS/auth — no per-infra provisioning step.
 const COMPUTE_PROVIDERS: ReadonlySet<Provider> = new Set(["docker", "digitalocean", "dokploy"]);
 
 interface InfraConfig {
@@ -319,6 +329,26 @@ function renderFields(
           {input("b2AppKey", "Application Key", "K001xxxx...", "password", 2)}
         </>
       );
+    case "digitalocean-apps":
+      return (
+        <>
+          {input("apiToken", "API Token", "dop_v1_... with app:* scopes", "password", 2)}
+          {input("region", "Region (optional)", "nyc, sfo3, lon1 — defaults to nyc")}
+        </>
+      );
+    case "github":
+      return (
+        <>
+          {input(
+            "pat",
+            "Personal Access Token",
+            "ghp_... or github_pat_... with contents:write + administration:write + pages:write",
+            "password",
+            2,
+          )}
+          {input("owner", "Owner (user or org)", "your-github-login", "text", 2)}
+        </>
+      );
   }
 }
 
@@ -391,9 +421,11 @@ function AddConfigForm({ onCreated }: { onCreated: () => void }) {
             className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none"
           >
             <option value="cloudflare">Cloudflare DNS</option>
-            <option value="digitalocean">DigitalOcean</option>
+            <option value="digitalocean">DigitalOcean (Droplets)</option>
+            <option value="digitalocean-apps">DigitalOcean App Platform</option>
             <option value="docker">Docker host</option>
             <option value="dokploy">Dokploy</option>
+            <option value="github">GitHub</option>
             <option value="b2">Backblaze B2 (backups)</option>
           </select>
         </div>
