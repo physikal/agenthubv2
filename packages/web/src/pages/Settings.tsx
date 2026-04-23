@@ -8,6 +8,12 @@ interface VersionInfo {
   behind: number;
   ahead: number;
   pending: { sha: string; subject: string }[];
+  // ISO timestamp captured at server-process boot. Bumping this (vs the
+  // value cached when the user clicked Update) is how the UI knows the
+  // new image has actually come up — the SHA alone flips way earlier,
+  // right after `git reset --hard`, well before the rebuild + recreate
+  // lands.
+  serverStartedAt?: string;
 }
 
 export function Settings() {
@@ -145,57 +151,104 @@ function VersionPanel() {
   const [info, setInfo] = useState<VersionInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [opMessage, setOpMessage] = useState<{ text: string; error: boolean } | null>(null);
+  // Snapshot taken when the user clicks "Update now" — used as the "before"
+  // reference when polling so we can tell old-container responses apart
+  // from new-container responses.
+  const [updateBaseline, setUpdateBaseline] = useState<
+    { sha: string; serverStartedAt: string | undefined } | null
+  >(null);
 
-  const fetchVersion = useCallback(async () => {
+  const fetchVersion = useCallback(async (): Promise<VersionInfo | null> => {
     try {
       const res = await api("/api/admin/version");
       if (res.ok) {
-        setInfo((await res.json()) as VersionInfo);
+        const body = (await res.json()) as VersionInfo;
+        setInfo(body);
         setLoadError(null);
-      } else {
-        const body = (await res.json()) as { error?: string };
-        setLoadError(body.error ?? `HTTP ${String(res.status)}`);
+        return body;
       }
+      const body = (await res.json()) as { error?: string };
+      setLoadError(body.error ?? `HTTP ${String(res.status)}`);
+      return null;
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Version check failed");
+      return null;
     }
   }, []);
 
   useEffect(() => { void fetchVersion(); }, [fetchVersion]);
 
-  // While an update is in flight the server is being recreated. Poll every
-  // 2s; the fetch will error-out for ~5s during the recreate, then come
-  // back with a (hopefully) new SHA. When the SHA changes, stop polling
-  // and declare victory.
+  // While an update is in flight, poll every 2s. The `git reset --hard`
+  // step inside the updater flips /repo's SHA within ~15s of clicking
+  // Update, but the server process isn't recreated until `docker build`
+  // + `compose up --force-recreate` finish — typically 1-3 minutes later.
+  // So "done" = (new SHA) AND (server process has actually restarted,
+  // detected via `serverStartedAt` moving). Without the second gate, the
+  // UI used to declare victory on the git reset and send users into a
+  // still-old container serving stale assets.
   useEffect(() => {
-    if (!updating) return;
-    const startSha = info?.current.sha;
+    if (!updating || !updateBaseline) return;
     const interval = setInterval(() => {
       void (async () => {
         try {
           const res = await api("/api/admin/version");
           if (!res.ok) return;
           const next = (await res.json()) as VersionInfo;
-          if (next.current.sha !== startSha) {
+          const shaMoved = next.current.sha !== updateBaseline.sha;
+          const restarted =
+            !!next.serverStartedAt &&
+            next.serverStartedAt !== updateBaseline.serverStartedAt;
+          if (shaMoved && restarted) {
             setInfo(next);
             setUpdating(false);
-            setOpMessage({ text: `Updated to ${next.current.sha}`, error: false });
+            setUpdateBaseline(null);
+            setOpMessage({
+              text: `Updated to ${next.current.sha}. Reload the page to pick up the new UI.`,
+              error: false,
+            });
           }
         } catch { /* expected during recreate */ }
       })();
     }, 2_000);
-    // Safety: stop polling after 3 minutes regardless.
+    // Safety: stop polling after 5 minutes regardless (image rebuilds can
+    // run long on slow disks).
     const timeout = setTimeout(() => {
       setUpdating(false);
-      setOpMessage({ text: "Update didn't complete in 3 minutes — check server logs", error: true });
-    }, 180_000);
+      setUpdateBaseline(null);
+      setOpMessage({
+        text: "Update didn't finish within 5 minutes — check `agenthub logs` on the host.",
+        error: true,
+      });
+    }, 300_000);
     return () => { clearInterval(interval); clearTimeout(timeout); };
-  }, [updating, info?.current.sha]);
+  }, [updating, updateBaseline]);
+
+  const handleCheck = async () => {
+    setChecking(true);
+    setOpMessage(null);
+    const next = await fetchVersion();
+    setChecking(false);
+    if (!next) return;
+    if (next.behind === 0) {
+      setOpMessage({ text: "You're on the latest version.", error: false });
+    } else {
+      setOpMessage({
+        text: `${String(next.behind)} update${next.behind === 1 ? "" : "s"} available.`,
+        error: false,
+      });
+    }
+  };
 
   const handleUpdate = async () => {
-    if (!confirm("Update AgentHub? The server will restart briefly during the update.")) return;
+    if (!confirm("Update AgentHub? The server will restart during the update — expect 1-3 minutes of downtime.")) return;
+    if (!info) return;
     setUpdating(true);
+    setUpdateBaseline({
+      sha: info.current.sha,
+      serverStartedAt: info.serverStartedAt,
+    });
     setOpMessage(null);
     try {
       const res = await api("/api/admin/update", { method: "POST" });
@@ -203,12 +256,17 @@ function VersionPanel() {
         const body = (await res.json()) as { error?: string };
         setOpMessage({ text: body.error ?? `HTTP ${String(res.status)}`, error: true });
         setUpdating(false);
+        setUpdateBaseline(null);
       } else {
-        setOpMessage({ text: "Update kicked off — server will restart shortly...", error: false });
+        setOpMessage({
+          text: "Update running — rebuilding image and recreating the server. This can take 1-3 minutes.",
+          error: false,
+        });
       }
     } catch (e) {
       setOpMessage({ text: e instanceof Error ? e.message : "Update failed", error: true });
       setUpdating(false);
+      setUpdateBaseline(null);
     }
   };
 
@@ -286,11 +344,11 @@ function VersionPanel() {
 
         <div className="flex gap-2 pt-2">
           <button
-            onClick={() => void fetchVersion()}
-            disabled={updating}
+            onClick={() => void handleCheck()}
+            disabled={updating || checking}
             className="px-3 py-1.5 text-xs text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-800 disabled:opacity-40 transition-colors"
           >
-            Check for updates
+            {checking ? "Checking..." : "Check for updates"}
           </button>
           {!isUpToDate && (
             <button
