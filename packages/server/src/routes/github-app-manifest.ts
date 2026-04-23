@@ -26,60 +26,42 @@ import { buildManifest } from "./github-app-manifest-builder.js";
  *   - Generated when the admin starts registration.
  *   - Matched + marked used on callback. Re-use attempts are rejected.
  *
- * The redirect_url in the manifest MUST be publicly reachable by GitHub's
- * servers (ditto callback_urls, setup_url, hook_attributes.url). On a
- * localhost install we let the registration start so the operator can see
- * GitHub's own error message — documenting it separately would go stale.
+ * Manifest URLs (`redirect_url`, `callback_urls`, `setup_url`,
+ * `hook_attributes.url`) use the admin's BROWSER origin, not the
+ * server-side AGENTHUB_PUBLIC_URL. This means an install where compose has
+ * DOMAIN=localhost but the admin is accessing AgentHub via a public tunnel
+ * (Cloudflare Tunnel, ngrok, tailscale funnel) gets the tunnel URL in the
+ * manifest — exactly what GitHub needs to reach. Matches how Dokploy's
+ * add-github-provider.tsx drives its flow. Falls back to AGENTHUB_PUBLIC_URL
+ * only if the client didn't pass an origin.
  */
 
 const STATE_TTL_MS = 15 * 60 * 1000;
 
-function requirePublicUrl(): string {
+function defaultPublicUrl(): string | null {
   const url = process.env["AGENTHUB_PUBLIC_URL"];
-  if (!url) {
-    throw new DeployError(
-      "AGENTHUB_PUBLIC_URL not set — the GitHub App manifest needs a public redirect URL. Compose should inject this from DOMAIN; check compose/.env.",
-      500,
-    );
-  }
-  return url.replace(/\/$/, "");
+  return url ? url.replace(/\/$/, "") : null;
 }
 
-// GitHub's app-manifest endpoint rejects any `hook_attributes.url` /
-// `redirect_url` / `callback_urls` that aren't resolvable over the public
-// Internet, emitting errors like
-//   "Hook url is not supported because it isn't reachable over the public
-//    Internet (localhost)"
-// We catch this BEFORE bouncing the admin through github.com so they don't
-// fill out the manifest just to crash at the end. The list is deliberately
-// narrow — anything that isn't obviously non-public (private IPs, .local
-// TLDs) still goes to GitHub since GitHub is authoritative.
-function rejectIfNotPubliclyReachable(publicUrl: string): string | null {
-  let host: string;
+// Pin the origin to a sane HTTPS URL before we hand it to the manifest
+// builder. We don't block localhost — GitHub will reject it on submit and
+// the admin sees the error there, and a same-box `https://localhost`
+// install where the admin is proxying via a tunnel is a legitimate case
+// (the browser-side origin IS the tunnel). We do block anything we can't
+// parse as a URL, because a malformed manifest URL crashes the form post.
+function validateOrigin(raw: string): { ok: string } | { err: string } {
+  let url: URL;
   try {
-    host = new URL(publicUrl).hostname.toLowerCase();
+    url = new URL(raw);
   } catch {
-    return `AGENTHUB_PUBLIC_URL="${publicUrl}" is not a valid URL — set DOMAIN in compose/.env to your public hostname.`;
+    return { err: `"${raw}" is not a valid URL — expected https://your-host.example` };
   }
-  if (
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "::1" ||
-    host === "0.0.0.0" ||
-    host.endsWith(".localhost") ||
-    host.endsWith(".local")
-  ) {
-    return (
-      `This install is at "${host}", which GitHub can't reach. ` +
-      `Registering a GitHub App requires a public HTTPS domain ` +
-      `(GitHub's servers need to POST to the manifest-callback and webhook URLs). ` +
-      `Either put this install behind a real domain / tunnel ` +
-      `(Cloudflare Tunnel, ngrok) and re-install with DOMAIN=<that-hostname>, ` +
-      `or skip the App and use a per-user Personal Access Token on the ` +
-      `Integrations page.`
-    );
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    return { err: `"${raw}" must be http(s) — got protocol "${url.protocol}"` };
   }
-  return null;
+  // Strip trailing slash + any path/query so callers can pass
+  // window.location.href without surprises.
+  return { ok: `${url.protocol}//${url.host}` };
 }
 
 export function githubAppManifestRoutes() {
@@ -107,25 +89,26 @@ export function githubAppManifestRoutes() {
   // JS-free and works even if the Settings page is served by a CDN.
   app.get("/register", async (c) => {
     const user = c.get("user");
-    let publicUrl: string;
-    try {
-      publicUrl = requirePublicUrl();
-    } catch (err) {
-      if (err instanceof DeployError) {
-        return c.json({ error: err.message }, err.status as 500);
-      }
-      throw err;
-    }
 
-    const unreachable = rejectIfNotPubliclyReachable(publicUrl);
-    if (unreachable) {
-      // Redirect back to the Integrations page with a readable banner
-      // rather than dumping JSON — the admin clicked a button expecting
-      // a UI, not a curl response.
+    // Prefer the browser-side origin the client passed us. Fall back to
+    // AGENTHUB_PUBLIC_URL only for callers without a browser (e.g., a
+    // curl debugging session) — the Integrations UI always sends it.
+    const originParam = c.req.query("origin");
+    const rawOrigin = originParam ?? defaultPublicUrl();
+    if (!rawOrigin) {
       return c.redirect(
-        `/integrations?githubAppError=${encodeURIComponent(unreachable)}`,
+        `/integrations?githubAppError=${encodeURIComponent(
+          "AGENTHUB_PUBLIC_URL not set and no origin supplied. Clicking Register from the Integrations page normally passes the browser's URL automatically — try again from that page.",
+        )}`,
       );
     }
+    const validated = validateOrigin(rawOrigin);
+    if ("err" in validated) {
+      return c.redirect(
+        `/integrations?githubAppError=${encodeURIComponent(validated.err)}`,
+      );
+    }
+    const publicUrl = validated.ok;
 
     // Purge stale state rows lazily — no cron needed for a low-volume
     // admin-only endpoint.

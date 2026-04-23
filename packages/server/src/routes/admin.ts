@@ -173,10 +173,21 @@ export function adminRoutes(sessionManager: SessionManager) {
 
   app.get("/version", (c) => {
     try {
+      // Ensure `origin/main` is actually tracked before we try to resolve it.
+      // `git clone --depth=1 --branch X` (what quick-install.sh uses) installs
+      // a narrow refspec that only tracks branch X — so for installs started
+      // from a non-main branch, `origin/main` literally doesn't exist and
+      // every "Check for updates" silently reported "Up to date" regardless
+      // of how far main had advanced. Widening the refspec is idempotent.
+      try {
+        runGit(["remote", "set-branches", "--add", "origin", "main"]);
+      } catch { /* remote missing or permission issue — surfaces below */ }
+
       // fetch is fire-and-forget; it populates origin/main but doesn't
       // block the response if the network is slow.
+      let fetchOk = true;
       try { runGit(["fetch", "--quiet", "origin", "main"]); }
-      catch { /* non-fatal — stale origin is fine for a status view */ }
+      catch { fetchOk = false; }
 
       const currentSha = runGit(["rev-parse", "HEAD"]);
       const currentShort = runGit(["rev-parse", "--short", "HEAD"]);
@@ -188,6 +199,8 @@ export function adminRoutes(sessionManager: SessionManager) {
       let behind = 0;
       let ahead = 0;
       let pending: { sha: string; subject: string }[] = [];
+      let versionCheckError: string | undefined;
+
       try {
         latestSha = runGit(["rev-parse", "origin/main"]);
         latestShort = runGit(["rev-parse", "--short", "origin/main"]);
@@ -208,7 +221,14 @@ export function adminRoutes(sessionManager: SessionManager) {
               return { sha: (sha ?? "").slice(0, 7), subject: rest.join("\t") };
             });
         }
-      } catch { /* no origin set up — treat as up-to-date */ }
+      } catch {
+        // origin/main still unresolvable after widening + fetch. Could be
+        // no network, no origin remote, or a corrupted .git. Tell the UI
+        // clearly instead of pretending "Up to date".
+        versionCheckError = fetchOk
+          ? "Couldn't resolve origin/main. The repo mount at /repo may be missing the 'main' remote ref. Run 'git fetch origin main' on the host as the install owner."
+          : "Couldn't fetch origin/main from GitHub. Check the server's outbound network and try again.";
+      }
 
       return c.json({
         current: { sha: currentShort, fullSha: currentSha, date: currentDate, subject: currentSubject },
@@ -217,6 +237,7 @@ export function adminRoutes(sessionManager: SessionManager) {
         ahead,
         pending,
         serverStartedAt: SERVER_STARTED_AT,
+        ...(versionCheckError !== undefined && { versionCheckError }),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "git failed";
