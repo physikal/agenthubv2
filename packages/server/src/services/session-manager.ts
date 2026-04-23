@@ -7,7 +7,7 @@ import type {
   ProvisionerDriver,
   WorkspaceRef,
 } from "./provisioner/types.js";
-import { mintTokenForUser } from "./providers/github-app.js";
+import { firstActiveInstallationForUser } from "./providers/github-app.js";
 
 /**
  * Ping the agent every 30s to detect idle NAT/firewall drops that kill the
@@ -223,12 +223,13 @@ export class SessionManager {
 
       const volumeName = `agenthub-home-${userId}`;
 
-      // If the user has a GitHub App installation, mint a fresh 1-hour
-      // installation token and inject it as GITHUB_TOKEN. The agent daemon
-      // picks this up on boot and writes a ~/.gitconfig URL-rewrite rule
-      // so every `git clone`/`git push` inside the workspace "just works"
-      // without per-session PAT management. Failures are non-fatal — the
-      // workspace boots without the token; legacy PAT flow still applies.
+      // If the user has a GitHub App installation, surface the account
+      // login as GITHUB_ACCOUNT_LOGIN so the agent's ~/.gitconfig writer
+      // can seed git user.name/email + write the credential-helper config.
+      // We deliberately do NOT inject the token itself into env — the
+      // helper fetches one server-side per git operation via
+      // /api/agent/github/token, keeping raw tokens off the workspace
+      // filesystem, out of process envs, and out of backups.
       const env: Record<string, string> = {
         PORTAL_URL: this.portalUrl,
         AGENT_TOKEN: agentToken,
@@ -237,14 +238,11 @@ export class SessionManager {
         SESSION_NAME: session.name,
       };
       try {
-        const gh = await mintTokenForUser(userId);
-        if (gh) {
-          env["GITHUB_TOKEN"] = gh.token;
-          env["GITHUB_ACCOUNT_LOGIN"] = gh.accountLogin;
-        }
+        const install = firstActiveInstallationForUser(userId);
+        if (install) env["GITHUB_ACCOUNT_LOGIN"] = install.accountLogin;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[session ${session.id}] skipping GitHub token injection: ${msg}`);
+        console.warn(`[session ${session.id}] skipping GitHub credential setup: ${msg}`);
       }
 
       const ref = await this.provisioner.create({

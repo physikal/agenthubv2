@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { Hono } from "hono";
 import type { AgentSessionContext, AuthUser } from "../middleware/auth.js";
 import { createRepoIfMissing, loadGitHubCreds } from "../services/providers/github.js";
+import { mintTokenForUserWithExpiry } from "../services/providers/github-app.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -28,6 +29,33 @@ export function agentGithubRoutes() {
   const app = new Hono<{
     Variables: { user: AuthUser; agentSession?: AgentSessionContext };
   }>();
+
+  // GET /api/agent/github/token — credential-helper endpoint. The workspace's
+  // git-credential-agenthub script hits this per git operation; we mint (or
+  // reuse the cached) GitHub App installation token server-side and return
+  // it to the helper, which pipes it into git's auth negotiation. The token
+  // itself never lands on disk inside the workspace and never exists in any
+  // long-lived env var — a full octokit round-trip's latency (~1ms when
+  // cached, low tens of ms on a fresh mint) for each `git clone`/`push` is
+  // the cost. Auth-app's in-process cache keeps the GitHub-side load
+  // negligible even under heavy workspace activity.
+  app.get("/token", async (c) => {
+    const user = c.get("user");
+    try {
+      const result = await mintTokenForUserWithExpiry(user.id);
+      if (!result) {
+        return c.json({ error: "no-github-app-install" }, 404);
+      }
+      return c.json({
+        token: result.token,
+        expiresAt: result.expiresAt,
+        accountLogin: result.accountLogin,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: msg }, 502);
+    }
+  });
 
   app.post("/push", async (c) => {
     const user = c.get("user");
