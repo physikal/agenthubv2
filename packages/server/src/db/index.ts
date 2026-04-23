@@ -131,6 +131,42 @@ export function initDb(): void {
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_user_packages_user_package
       ON user_packages(user_id, package_id);
+
+    CREATE TABLE IF NOT EXISTS github_app_config (
+      id TEXT PRIMARY KEY DEFAULT 'default',
+      app_id INTEGER NOT NULL,
+      slug TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      html_url TEXT NOT NULL,
+      registered_by_user_id TEXT NOT NULL REFERENCES users(id),
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS github_installations (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      installation_id INTEGER NOT NULL UNIQUE,
+      account_login TEXT NOT NULL,
+      account_type TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      repository_selection TEXT NOT NULL,
+      permissions TEXT NOT NULL DEFAULT '{}',
+      suspended_at INTEGER,
+      deleted_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_github_installations_user
+      ON github_installations(user_id);
+
+    CREATE TABLE IF NOT EXISTS github_install_state (
+      state TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      used_at INTEGER
+    );
   `);
 
   // Idempotent schema migrations for existing installs — SQLite has no
