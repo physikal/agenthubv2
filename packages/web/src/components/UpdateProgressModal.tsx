@@ -14,6 +14,7 @@
 //   restarting → done       when /api/admin/version succeeds again with
 //                           a new serverStartedAt AND the target SHA
 //   any        → failed     after the caller's timeout (5 min in Settings)
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 export type UpdatePhase =
@@ -27,6 +28,7 @@ interface Props {
   readonly phase: UpdatePhase;
   readonly fromSha: string;
   readonly toSha: string;
+  readonly startedAt: number; // Date.now() captured when the update was kicked off
   readonly errorMessage?: string;
   readonly onHide: () => void;
   readonly onReload: () => void;
@@ -40,10 +42,17 @@ interface Step {
 
 const STEPS: readonly Step[] = [
   { id: "pulling", label: "Fetching latest code", hint: "git fetch + reset to origin/main" },
-  { id: "building", label: "Rebuilding image", hint: "docker build — typically 1-3 minutes" },
+  { id: "building", label: "Rebuilding images", hint: "docker build — typically 3-8 min, up to 15 on cold cache or slow disk" },
   { id: "restarting", label: "Restarting server", hint: "compose up --force-recreate" },
   { id: "done", label: "Ready" },
 ];
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${String(minutes)}m ${String(seconds).padStart(2, "0")}s` : `${String(seconds)}s`;
+}
 
 const PHASE_RANK: Record<UpdatePhase, number> = {
   pulling: 0,
@@ -74,6 +83,7 @@ export function UpdateProgressModal({
   phase,
   fromSha,
   toSha,
+  startedAt,
   errorMessage,
   onHide,
   onReload,
@@ -88,6 +98,17 @@ export function UpdateProgressModal({
       ? "Update failed"
       : "Updating AgentHub";
 
+  // Tick the elapsed counter every second while the update is running so
+  // users can see it's still making progress. Freezes on terminal states
+  // so the final duration stays visible.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (isTerminal) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isTerminal]);
+  const elapsed = now - startedAt;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
@@ -100,9 +121,14 @@ export function UpdateProgressModal({
           <h2 id="update-progress-title" className="text-lg font-semibold text-zinc-100">
             {title}
           </h2>
-          <code className="text-[10px] text-zinc-500 mt-1.5">
-            {fromSha} → {toSha}
-          </code>
+          <div className="text-right">
+            <code className="block text-[10px] text-zinc-500 mt-1.5">
+              {fromSha} → {toSha}
+            </code>
+            <span className="text-[10px] text-zinc-600 tabular-nums">
+              elapsed {formatElapsed(elapsed)}
+            </span>
+          </div>
         </div>
 
         <ol className="space-y-3">
