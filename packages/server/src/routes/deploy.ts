@@ -13,6 +13,13 @@ import {
   ensureGitHubPagesInfra,
   ensureLocalDockerInfra,
 } from "../services/local-docker-seed.js";
+import { resolveInfraConfig } from "../services/secrets/helpers.js";
+import {
+  resolveDokployConfig,
+  resolvePublicHost,
+  isLanOnlyHost,
+} from "../services/deployers/dokploy-api.js";
+import { lookupZoneName } from "../services/dns/cloudflare.js";
 
 interface DeployBody {
   name: string;
@@ -371,6 +378,133 @@ export function deployRoutes() {
     return c.json({
       source_analysis: src,
       viable_targets: viable,
+    });
+  });
+
+  // POST /api/domain-check — return info the agentdeploy MCP needs to build
+  // its `choose_domain` prompt when the agent picked a Dokploy target but
+  // didn't pass a `domain`. Resolves the Dokploy instance's public host
+  // (explicit > baseUrl-derived) and whether the user has a Cloudflare
+  // integration whose zone can cover the eventual domain pick.
+  //
+  // Body: { target: "dokploy:<infra_name>" }
+  app.post("/domain-check", async (c) => {
+    const user = c.get("user");
+    const body = await c.req.json<{ target?: string }>();
+    const target = body.target ?? "";
+    if (!target.startsWith("dokploy:")) {
+      return c.json(
+        {
+          error:
+            "domain-check only supports dokploy:<infra_name> targets today — local-docker / DO Apps / GH Pages each have their own URL semantics",
+        },
+        400,
+      );
+    }
+    const infraName = target.slice("dokploy:".length);
+    const dokployInfra = db
+      .select()
+      .from(schema.infrastructureConfigs)
+      .where(
+        and(
+          eq(schema.infrastructureConfigs.userId, user.id),
+          eq(schema.infrastructureConfigs.provider, "dokploy"),
+          eq(schema.infrastructureConfigs.name, infraName),
+        ),
+      )
+      .get();
+    if (!dokployInfra) {
+      return c.json({ error: `No Dokploy integration named "${infraName}"` }, 404);
+    }
+
+    const dokployCfg = resolveDokployConfig(
+      await resolveInfraConfig(
+        user.id,
+        dokployInfra.id,
+        JSON.parse(dokployInfra.config) as Record<string, unknown>,
+      ),
+    );
+    const { host: publicHost, source: publicHostSource } = resolvePublicHost(dokployCfg);
+    const publicHostWarning = isLanOnlyHost(publicHost)
+      ? `publicHost "${publicHost}" looks LAN-only — external DNS may not be reachable. Consider setting publicHost on the Dokploy integration to the routable IP / hostname.`
+      : null;
+
+    // Look up the user's first Cloudflare integration, if any. Match the
+    // "first config" convention the existing deploy flow uses (deployer.ts
+    // legacy SSH path) — power users can set up multi-zone routing later.
+    const cfInfras = db
+      .select()
+      .from(schema.infrastructureConfigs)
+      .where(
+        and(
+          eq(schema.infrastructureConfigs.userId, user.id),
+          eq(schema.infrastructureConfigs.provider, "cloudflare"),
+        ),
+      )
+      .all();
+    const cfInfra = cfInfras[0];
+
+    let cloudflare:
+      | { configured: false }
+      | { configured: true; name: string; zoneId: string; zoneName: string }
+      | { configured: true; name: string; zoneId: string; error: string } = {
+        configured: false,
+      };
+    if (cfInfra) {
+      const cfResolved = await resolveInfraConfig(
+        user.id,
+        cfInfra.id,
+        JSON.parse(cfInfra.config) as Record<string, unknown>,
+      );
+      const cfToken = cfResolved["apiToken"];
+      const cfZoneId = cfResolved["zoneId"];
+      if (typeof cfToken === "string" && typeof cfZoneId === "string") {
+        try {
+          const zoneName = await lookupZoneName(cfToken, cfZoneId);
+          cloudflare = {
+            configured: true,
+            name: cfInfra.name,
+            zoneId: cfZoneId,
+            zoneName,
+          };
+        } catch (err) {
+          cloudflare = {
+            configured: true,
+            name: cfInfra.name,
+            zoneId: cfZoneId,
+            error: err instanceof Error ? err.message : "zone lookup failed",
+          };
+        }
+      }
+    }
+
+    const hint = (() => {
+      const parts: string[] = [
+        "Rerun `deploy` with `domain=<fqdn>` to register this app in Dokploy. Use `internal_only=true` to skip and keep the app on Dokploy's internal network.",
+      ];
+      if ("zoneName" in cloudflare) {
+        parts.push(
+          `Cloudflare integration "${cloudflare.name}" covers zone ${cloudflare.zoneName}. If your chosen domain falls under it, an A record pointing to ${publicHost} will be created automatically.`,
+        );
+      } else if (cloudflare.configured) {
+        parts.push(
+          `Cloudflare integration "${cloudflare.name}" is configured but its zone lookup failed — DNS will not be auto-created.`,
+        );
+      } else {
+        parts.push(
+          `No Cloudflare integration configured. After picking a domain you'll need to create an A record pointing to ${publicHost} yourself.`,
+        );
+      }
+      if (publicHostWarning) parts.push(publicHostWarning);
+      return parts.join(" ");
+    })();
+
+    return c.json({
+      target,
+      publicHost,
+      publicHostSource,
+      cloudflare,
+      hint,
     });
   });
 

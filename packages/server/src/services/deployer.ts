@@ -15,6 +15,10 @@ import { resolveInfraConfig } from "./secrets/helpers.js";
 import { introspectGitRepo } from "./git-introspect.js";
 import { DeployError } from "./deploy-error.js";
 import {
+  createCloudflareDns,
+  deleteCloudflareDns,
+} from "./dns/cloudflare.js";
+import {
   dokployDeploy,
   dokployLogs,
   dokployRestart,
@@ -324,68 +328,6 @@ CMD ["node", "index.js"]
 COPY . /usr/share/nginx/html
 EXPOSE 80
 `;
-}
-
-async function createCloudflareDns(
-  cfToken: string,
-  cfZoneId: string,
-  domain: string,
-  ip: string,
-): Promise<void> {
-  const resp = await fetch(
-    `https://api.cloudflare.com/client/v4/zones/${cfZoneId}/dns_records`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${cfToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        type: "A",
-        name: domain,
-        content: ip,
-        proxied: false,
-        ttl: 300,
-      }),
-    },
-  );
-
-  if (!resp.ok) {
-    const body = await resp.text();
-    throw new Error(`Cloudflare DNS creation failed: ${body}`);
-  }
-}
-
-async function deleteCloudflareDns(
-  cfToken: string,
-  cfZoneId: string,
-  domain: string,
-): Promise<void> {
-  // List records to find the one to delete
-  const listResp = await fetch(
-    `https://api.cloudflare.com/client/v4/zones/${cfZoneId}/dns_records?name=${domain}`,
-    {
-      headers: { Authorization: `Bearer ${cfToken}` },
-    },
-  );
-
-  if (!listResp.ok) return;
-
-  const data = (await listResp.json()) as {
-    result: { id: string; name: string }[];
-  };
-
-  for (const record of data.result) {
-    if (record.name === domain) {
-      await fetch(
-        `https://api.cloudflare.com/client/v4/zones/${cfZoneId}/dns_records/${record.id}`,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${cfToken}` },
-        },
-      );
-    }
-  }
 }
 
 export async function deploy(
@@ -1000,7 +942,10 @@ export async function destroyDeployment(
           infra.id,
           JSON.parse(infra.config) as Record<string, unknown>,
         );
-        await dokployDestroy(resolved, deployment.containerId);
+        await dokployDestroy(resolved, deployment.containerId, {
+          userId: deployment.userId,
+          domain: deployment.domain,
+        });
       } catch {
         // Best-effort — mark destroyed regardless so the user isn't stuck
       }

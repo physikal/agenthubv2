@@ -24,8 +24,14 @@ function unwrapTrpc(body: unknown): unknown {
  * to a Dokploy instance").
  *
  * Config shape:
- *   { baseUrl: "https://dokploy.example.com", apiToken: "...",
- *     projectId: "...", environmentId: "..." }
+ *   baseUrl        — Dokploy API endpoint (http[s]://host[:port])
+ *   apiToken       — x-api-key token (secret, in Infisical)
+ *   projectId      — target project id
+ *   environmentId  — target environment id inside the project
+ *   publicHost     — OPTIONAL. Externally-reachable hostname/IP for this
+ *                    Dokploy instance; stamped into Cloudflare A records
+ *                    when an agent deploys with a domain. Falls back to the
+ *                    `baseUrl` hostname when empty.
  *
  * No SSH bootstrap, no droplet — Dokploy owns the underlying host. When
  * deployer.ts needs to push an app, it calls POST /api/compose.create
@@ -47,6 +53,17 @@ export class DokployHostingProvider implements HostingProvider {
       !/^https?:\/\//.test(config["baseUrl"])
     ) {
       issues.push("baseUrl must start with http:// or https://");
+    }
+    const publicHost = config["publicHost"];
+    if (
+      publicHost !== undefined &&
+      publicHost !== "" &&
+      (typeof publicHost !== "string" ||
+        !/^[a-zA-Z0-9.:_-]{1,253}$/.test(publicHost))
+    ) {
+      issues.push(
+        "publicHost must be a hostname or IP (alphanumeric, dots, dashes, colons)",
+      );
     }
     return { ok: issues.length === 0, issues };
   }

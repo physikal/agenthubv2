@@ -319,6 +319,13 @@ function renderFields(
           {input("apiToken", "API Token", "Dokploy API token", "password", 2)}
           {input("projectId", "Project ID", "proj_...")}
           {input("environmentId", "Environment ID", "env_...")}
+          {input(
+            "publicHost",
+            "Public Host (optional)",
+            "IP or hostname agents should point DNS at — leaves the baseUrl host as default",
+            "text",
+            2,
+          )}
         </>
       );
     case "b2":
