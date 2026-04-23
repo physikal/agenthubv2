@@ -275,6 +275,47 @@ async function handleToolCall(
         };
       }
 
+      // Step 1.5 (Dokploy only): target is set but the caller didn't pick a
+      // domain and didn't opt into internal_only. Ask the server what the
+      // Dokploy instance's public host is + whether a Cloudflare integration
+      // can auto-create DNS for the eventual choice. Return a `choose_domain`
+      // prompt so the agent surfaces those facts to the user before we
+      // commit to a URL.
+      const domainArg = args["domain"] as string | undefined;
+      const internalOnly = args["internal_only"] === true;
+      if (target.startsWith("dokploy:") && !domainArg && !internalOnly) {
+        const probe = await apiCall("POST", "/domain-check", { target });
+        if (!probe.ok) {
+          const err = probe.data as { error?: string };
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Could not probe domain info: ${err.error ?? "Unknown error"}`,
+              },
+            ],
+          };
+        }
+        const payload = probe.data as {
+          target: string;
+          publicHost: string;
+          publicHostSource: "explicit" | "baseUrl";
+          cloudflare: Record<string, unknown>;
+          hint: string;
+        };
+        const chooseDomain = {
+          status: "choose_domain",
+          target: payload.target,
+          publicHost: payload.publicHost,
+          publicHostSource: payload.publicHostSource,
+          cloudflare: payload.cloudflare,
+          hint: payload.hint,
+        };
+        return {
+          content: [{ type: "text", text: JSON.stringify(chooseDomain, null, 2) }],
+        };
+      }
+
       // Step 2: `target` is set — build the request body and deploy.
       const body: Record<string, unknown> = {
         name: args["name"],
