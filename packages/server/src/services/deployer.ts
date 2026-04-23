@@ -20,6 +20,12 @@ import {
   dokployDestroy,
   type DokployDeployInput,
 } from "./deployers/dokploy-deploy.js";
+import {
+  localDockerDeploy,
+  localDockerDestroy,
+  localDockerLogs,
+} from "./deployers/local-deploy.js";
+import type { AgentSessionContext } from "../middleware/auth.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -371,7 +377,10 @@ async function deleteCloudflareDns(
   }
 }
 
-export async function deploy(input: DeployInput): Promise<DeployResult> {
+export async function deploy(
+  input: DeployInput,
+  agentSession?: AgentSessionContext,
+): Promise<DeployResult> {
   const infraRows = db
     .select()
     .from(schema.infrastructureConfigs)
@@ -381,6 +390,25 @@ export async function deploy(input: DeployInput): Promise<DeployResult> {
   const infra = infraRows[0];
   if (!infra) throw new Error("Infrastructure config not found");
   if (infra.status !== "ready") throw new Error("Hosting node not ready");
+
+  // Local Docker provider — builds + runs on AgentHub's own daemon via
+  // the server container's docker socket. No SSH, no NFS.
+  if (infra.provider === "local-docker") {
+    const result = await localDockerDeploy(
+      infra,
+      {
+        userId: input.userId,
+        infraId: input.infraId,
+        name: input.name,
+        sourcePath: input.sourcePath,
+        composeConfig: input.composeConfig,
+        envVars: input.envVars,
+        existingDeployId: input.existingDeployId,
+      },
+      agentSession,
+    );
+    return { id: result.id, url: result.url };
+  }
 
   // Dokploy provider — API-driven, no SSH + no hostingNodeIp needed.
   if (infra.provider === "dokploy") {
@@ -734,6 +762,14 @@ export async function getDeploymentLogs(
     return dokployLogs(resolved, deployment.containerId, lines);
   }
 
+  if (infra.provider === "local-docker") {
+    if (!deployment.containerId) throw new Error("No local compose project stored");
+    if (deployment.status === "failed") {
+      return `[Build Error]\n${deployment.statusDetail ?? "Unknown failure"}`;
+    }
+    return localDockerLogs(deployment.containerId, lines);
+  }
+
   if (!infra.hostingNodeIp) throw new Error("Hosting node not available");
 
   assertSafeName(deployment.name);
@@ -802,6 +838,20 @@ export async function restartDeployment(
     return;
   }
 
+  if (infra.provider === "local-docker") {
+    if (!deployment.containerId) throw new Error("No local compose project stored");
+    await execFileAsync(
+      "docker",
+      ["compose", "-p", deployment.containerId, "restart"],
+      { timeout: 60_000 },
+    );
+    db.update(schema.deployments)
+      .set({ status: "running", statusDetail: null, updatedAt: new Date() })
+      .where(eq(schema.deployments.id, deployId))
+      .run();
+    return;
+  }
+
   if (!infra.hostingNodeIp) throw new Error("Hosting node not available");
 
   assertSafeName(deployment.name);
@@ -852,6 +902,17 @@ export async function destroyDeployment(
       } catch {
         // Best-effort — mark destroyed regardless so the user isn't stuck
       }
+    }
+    db.update(schema.deployments)
+      .set({ status: "destroyed", statusDetail: null, updatedAt: new Date() })
+      .where(eq(schema.deployments.id, deployId))
+      .run();
+    return;
+  }
+
+  if (infra?.provider === "local-docker") {
+    if (deployment.containerId) {
+      await localDockerDestroy(deployment.containerId);
     }
     db.update(schema.deployments)
       .set({ status: "destroyed", statusDetail: null, updatedAt: new Date() })

@@ -1,13 +1,14 @@
 import { Hono } from "hono";
 import { eq, and, not } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
-import type { AuthUser } from "../middleware/auth.js";
+import type { AgentSessionContext, AuthUser } from "../middleware/auth.js";
 import {
   deploy,
   getDeploymentLogs,
   restartDeployment,
   destroyDeployment,
 } from "../services/deployer.js";
+import { ensureLocalDockerInfra } from "../services/local-docker-seed.js";
 
 interface DeployBody {
   name: string;
@@ -35,7 +36,9 @@ const MAX_ENV_VARS = 100;
 const MAX_ENV_VALUE_LEN = 4096;
 
 export function deployRoutes() {
-  const app = new Hono<{ Variables: { user: AuthUser } }>();
+  const app = new Hono<{
+    Variables: { user: AuthUser; agentSession?: AgentSessionContext };
+  }>();
 
   // POST /api/deploy — start a new deployment
   app.post("/", async (c) => {
@@ -181,29 +184,131 @@ export function deployRoutes() {
     }
 
     try {
-      const result = await deploy({
-        userId: user.id,
-        infraId: existing?.infraId ?? infra.id,
-        name: body.name,
-        domain: existing?.domain ?? body.domain,
-        internalOnly: existing?.internalOnly ?? body.internalOnly,
-        sourcePath: body.sourcePath,
-        composeConfig: body.composeConfig,
-        composePath: body.composePath,
-        gitUrl: body.gitUrl,
-        gitBranch: body.gitBranch,
-        envVars: body.envVars,
-        database: body.database,
-        dnsName: body.dnsName,
-        existingDeployId: existing?.id,
-        existingHostPort,
-      });
+      const result = await deploy(
+        {
+          userId: user.id,
+          infraId: existing?.infraId ?? infra.id,
+          name: body.name,
+          domain: existing?.domain ?? body.domain,
+          internalOnly: existing?.internalOnly ?? body.internalOnly,
+          sourcePath: body.sourcePath,
+          composeConfig: body.composeConfig,
+          composePath: body.composePath,
+          gitUrl: body.gitUrl,
+          gitBranch: body.gitBranch,
+          envVars: body.envVars,
+          database: body.database,
+          dnsName: body.dnsName,
+          existingDeployId: existing?.id,
+          existingHostPort,
+        },
+        c.get("agentSession"),
+      );
 
       return c.json(result, existing ? 200 : 201);
     } catch (err) {
       console.error("[deploy] Error:", err instanceof Error ? err.message : err);
       return c.json({ error: "Deploy failed" }, 500);
     }
+  });
+
+  // POST /api/deploy/targets — return viable deploy targets for the caller.
+  //
+  // Called by the `agentdeploy` MCP BEFORE a deploy call, with facts about
+  // the source directory the MCP introspected locally (has Dockerfile?,
+  // has compose?, is a static site?, git state). The server filters
+  // configured integrations by what each can accept, lazy-seeds a
+  // local-docker row when the socket is available, and returns a
+  // target list the agent can surface to the user.
+  //
+  // Shape matches the "choose_target" response the MCP emits to Claude
+  // Code — the MCP wraps this payload plus a `hint`.
+  app.post("/targets", async (c) => {
+    const user = c.get("user");
+    const body = await c.req.json<{
+      source_analysis?: {
+        hasDockerfile?: boolean;
+        hasCompose?: boolean;
+        isStaticSite?: boolean;
+        gitState?: {
+          remote?: string;
+          branch?: string;
+          clean?: boolean;
+          aheadOfOrigin?: boolean;
+        } | null;
+      };
+    }>();
+
+    // Lazy-create the local-docker row so fresh installs see it without
+    // clicking through the Integrations page.
+    ensureLocalDockerInfra(user.id);
+
+    const infras = db
+      .select()
+      .from(schema.infrastructureConfigs)
+      .where(
+        and(
+          eq(schema.infrastructureConfigs.userId, user.id),
+          eq(schema.infrastructureConfigs.status, "ready"),
+        ),
+      )
+      .all();
+
+    const src = body.source_analysis ?? {};
+    const viable: Array<{
+      id: string;
+      label: string;
+      description: string;
+      requires?: string[];
+    }> = [];
+
+    const localInfra = infras.find((i) => i.provider === "local-docker");
+    if (localInfra) {
+      if (src.hasDockerfile || src.hasCompose) {
+        const host = process.env["AGENTHUB_PUBLIC_HOST"] ?? "<agenthub-host>";
+        viable.push({
+          id: "local",
+          label: "Local Docker (zero setup)",
+          description: `Build + run on this AgentHub host's Docker daemon. Assigned URL: http://${host}:<auto-port>. Shareable on LAN; no TLS.`,
+        });
+      } else {
+        viable.push({
+          id: "local",
+          label: "Local Docker (needs Dockerfile)",
+          description: "Add a Dockerfile or compose.yaml to the project root to enable this target.",
+          requires: ["Dockerfile or compose.yaml"],
+        });
+      }
+    }
+
+    const dokployInfras = infras.filter((i) => i.provider === "dokploy");
+    for (const d of dokployInfras) {
+      const clean = src.gitState?.clean === true && src.gitState?.aheadOfOrigin !== true;
+      if (clean && src.gitState?.remote) {
+        viable.push({
+          id: `dokploy:${d.name}`,
+          label: `Dokploy via GitHub (${d.name})`,
+          description: `Dokploy pulls ${src.gitState.remote}@${src.gitState.branch ?? "main"} and builds + runs.`,
+        });
+      } else {
+        const reason = !src.gitState?.remote
+          ? "source has no origin remote — push to GitHub first"
+          : src.gitState.aheadOfOrigin
+            ? "local commits not pushed to origin"
+            : "working tree has uncommitted changes";
+        viable.push({
+          id: `dokploy:${d.name}`,
+          label: `Dokploy via GitHub (${d.name}) — not ready`,
+          description: `Dokploy pulls from GitHub. Current blocker: ${reason}.`,
+          requires: ["clean pushed git repo"],
+        });
+      }
+    }
+
+    return c.json({
+      source_analysis: src,
+      viable_targets: viable,
+    });
   });
 
   // GET /api/deployments — list deployments (admins see all, users see own)
@@ -219,16 +324,19 @@ export function deployRoutes() {
           .where(eq(schema.deployments.userId, user.id))
           .all();
 
-    // Join infra names
-    const infraMap = new Map<string, string>();
+    // Join infra names + providers
+    const infraMap = new Map<string, { name: string; provider: string }>();
     const infraIds = [...new Set(rows.map((r) => r.infraId))];
     for (const infraId of infraIds) {
       const infra = db
-        .select({ name: schema.infrastructureConfigs.name })
+        .select({
+          name: schema.infrastructureConfigs.name,
+          provider: schema.infrastructureConfigs.provider,
+        })
         .from(schema.infrastructureConfigs)
         .where(eq(schema.infrastructureConfigs.id, infraId))
         .all();
-      if (infra[0]) infraMap.set(infraId, infra[0].name);
+      if (infra[0]) infraMap.set(infraId, { name: infra[0].name, provider: infra[0].provider });
     }
 
     // Join usernames for admin view
@@ -248,11 +356,15 @@ export function deployRoutes() {
     return c.json(
       rows
         .filter((d) => d.status !== "destroyed")
-        .map((d) => ({
-          ...d,
-          infraName: infraMap.get(d.infraId) ?? "unknown",
-          ...(isAdmin ? { username: userMap.get(d.userId) ?? "unknown" } : {}),
-        })),
+        .map((d) => {
+          const infra = infraMap.get(d.infraId);
+          return {
+            ...d,
+            infraName: infra?.name ?? "unknown",
+            provider: infra?.provider ?? null,
+            ...(isAdmin ? { username: userMap.get(d.userId) ?? "unknown" } : {}),
+          };
+        }),
     );
   });
 

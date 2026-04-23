@@ -1,15 +1,22 @@
 import { DockerHostingProvider } from "./docker-hosting.js";
 import { DigitalOceanProvider } from "./digitalocean.js";
 import { DokployHostingProvider } from "./dokploy-hosting.js";
+import { LocalDockerProvider } from "./local-docker.js";
 import type { HostingProvider } from "./types.js";
 
 export * from "./types.js";
-export { DockerHostingProvider, DigitalOceanProvider, DokployHostingProvider };
+export {
+  DockerHostingProvider,
+  DigitalOceanProvider,
+  DokployHostingProvider,
+  LocalDockerProvider,
+};
 
 const REGISTRY: Record<string, () => HostingProvider> = {
   docker: () => new DockerHostingProvider(),
   digitalocean: () => new DigitalOceanProvider(),
   dokploy: () => new DokployHostingProvider(),
+  "local-docker": () => new LocalDockerProvider(),
 };
 
 export function getHostingProvider(name: string): HostingProvider | null {
