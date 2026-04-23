@@ -8,12 +8,21 @@ const execFileAsync = promisify(execFile);
 
 /**
  * Server-side helper that lets the agent push its workspace source to
- * GitHub without teaching the agent about PATs. The agent calls the
- * `push_to_github` MCP tool → MCP posts here with {path, repo} →
- * server resolves the user's GitHub PAT from Infisical, creates the
- * repo if needed, then `docker exec`'s into the caller's workspace
- * container to run git + gh with GH_TOKEN injected at command time
- * (never written to disk inside the workspace).
+ * GitHub. Two auth paths, chosen by loadGitHubCreds:
+ *
+ *   - github-app: the session already has GITHUB_TOKEN in its env and a
+ *     ~/.gitconfig url-rewrite rule written by the agent at boot. We just
+ *     run git against `https://github.com/<full-name>.git` — credentials
+ *     flow through the existing workspace setup, no per-invocation
+ *     secret injection needed.
+ *   - pat: legacy path — bake the PAT into the remote URL for this one
+ *     push, strip it from .git/config afterwards so it doesn't get
+ *     persisted alongside the user's code.
+ *
+ * createRepoIfMissing still uses whichever bearer we have. App-source
+ * creds lack administration:write (per the App manifest in Phase 2), so
+ * if the caller asks us to create a missing repo we surface a clear 400
+ * instead of letting GitHub's 403 bubble up uninterpreted.
  */
 export function agentGithubRoutes() {
   const app = new Hono<{
@@ -62,15 +71,35 @@ export function agentGithubRoutes() {
       repo = await createRepoIfMissing(creds, body.repo, opts);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // App-sourced creds can't create repos — surface a specific error so
+      // the agent can tell the user to either create the repo on github.com
+      // first or add a PAT with administration:write. Everything else stays
+      // as an upstream 502.
+      if (creds.source === "github-app" && /\b403\b/.test(msg)) {
+        return c.json(
+          {
+            error: `GitHub App can't create repos (no administration:write). Create "${body.repo}" on github.com first, or add a Personal Access Token integration with administration:write.`,
+          },
+          400,
+        );
+      }
       return c.json({ error: `Could not create repo: ${msg}` }, 502);
     }
 
-    // Push from the workspace container. GH_TOKEN reaches `gh` via docker
-    // exec's -e flag; never touches the container's filesystem.
+    // Push from the workspace container. Two flavors:
+    //   - github-app: the session's ~/.gitconfig already has a url-rewrite
+    //     rule injecting the installation token. Plain `https://github.com/
+    //     <owner>/<repo>.git` resolves through it.
+    //   - pat: inject the PAT into the remote URL for this one push, strip
+    //     it after so it doesn't persist in .git/config.
     const containerName = `agenthub-ws-${session.workspaceId}`;
-    const authedUrl = `https://x-access-token:${creds.pat}@github.com/${repo.fullName}.git`;
+    const plainUrl = `https://github.com/${repo.fullName}.git`;
+    const remoteUrl =
+      creds.source === "github-app"
+        ? plainUrl
+        : `https://x-access-token:${creds.pat}@github.com/${repo.fullName}.git`;
     const commitMsg = body.commitMessage ?? "Initial commit";
-    const script = [
+    const steps = [
       `cd ${JSON.stringify(body.path)}`,
       "git init -b main 2>/dev/null || true",
       "git config user.email 'agenthub@users.noreply.github.com'",
@@ -78,14 +107,16 @@ export function agentGithubRoutes() {
       "git add -A",
       // No-op if nothing to commit.
       `git diff --cached --quiet || git commit -m ${JSON.stringify(commitMsg)}`,
-      `git remote remove origin 2>/dev/null || true`,
-      `git remote add origin ${JSON.stringify(authedUrl)}`,
+      "git remote remove origin 2>/dev/null || true",
+      `git remote add origin ${JSON.stringify(remoteUrl)}`,
       "git branch -M main",
       "git push -u origin main",
-      // Strip the PAT from the stored remote URL so it doesn't leak into
-      // .git/config for the user to see or back up.
-      `git remote set-url origin https://github.com/${repo.fullName}.git`,
-    ].join(" && ");
+    ];
+    if (creds.source === "pat") {
+      // Strip the PAT-bearing remote so it doesn't persist on disk.
+      steps.push(`git remote set-url origin ${JSON.stringify(plainUrl)}`);
+    }
+    const script = steps.join(" && ");
 
     try {
       const { stdout, stderr } = await execFileAsync(

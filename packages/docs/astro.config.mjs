@@ -60,6 +60,12 @@ export default defineConfig({
           ],
         },
         {
+          label: "Integrations",
+          items: [
+            { label: "GitHub App", slug: "integrations/github-app" },
+          ],
+        },
+        {
           label: "Infisical",
           items: [
             { label: "Why Infisical", slug: "infisical/overview" },

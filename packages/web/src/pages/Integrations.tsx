@@ -346,6 +346,9 @@ function renderFields(
     case "github":
       return (
         <>
+          <div className="col-span-2 text-xs text-yellow-400/90 bg-yellow-500/5 border border-yellow-500/20 rounded px-3 py-2">
+            Legacy path. Prefer the <strong>GitHub App</strong> card at the top of this page — per-repo scoped, auto-rotating 1-hour tokens, revokes instantly on uninstall. Use this PAT form only if you need repo creation (the App is scoped without administration:write) or if the App isn't registered on this install.
+          </div>
           {input(
             "pat",
             "Personal Access Token",
@@ -687,6 +690,16 @@ export function Integrations() {
       </p>
 
       <div className="max-w-2xl space-y-4">
+        {ghStatus?.registered &&
+          ghStatus.installations.length === 0 &&
+          configs.some((c) => c.provider === "github") && (
+            <div className="bg-purple-500/5 border border-purple-500/30 rounded-xl px-4 py-3 text-sm text-purple-200">
+              You have a legacy GitHub PAT integration. Install the GitHub
+              App below for per-repo scoping + auto-rotating tokens — both
+              can coexist while you migrate.
+            </div>
+          )}
+
         {ghStatus && (
           <GithubAppCard
             status={ghStatus}
