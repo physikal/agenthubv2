@@ -92,6 +92,9 @@ export function initDb(): void {
       container_id TEXT,
       source_path TEXT,
       compose_config TEXT,
+      git_url TEXT,
+      git_branch TEXT,
+      build_strategy TEXT,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -130,6 +133,14 @@ export function initDb(): void {
       ON user_packages(user_id, package_id);
   `);
 
+  // Idempotent schema migrations for existing installs — SQLite has no
+  // `ADD COLUMN IF NOT EXISTS`, so we try-and-ignore "duplicate column".
+  // Each call is a no-op on fresh DBs (already in the CREATE TABLE above)
+  // and a one-time backfill on upgraded DBs.
+  addColumnIfMissing("deployments", "git_url", "TEXT");
+  addColumnIfMissing("deployments", "git_branch", "TEXT");
+  addColumnIfMissing("deployments", "build_strategy", "TEXT");
+
   // Seed default admin account. Password priority:
   //   1. AGENTHUB_ADMIN_PASSWORD env var (installer writes this into .env)
   //   2. random UUID slice if unset — surfaces once in stdout, must be rotated
@@ -161,6 +172,18 @@ export function initDb(): void {
     .run(Date.now());
   if (deleted.changes > 0) {
     console.log(`[db] cleaned up ${String(deleted.changes)} expired session token(s)`);
+  }
+}
+
+function addColumnIfMissing(table: string, column: string, type: string): void {
+  try {
+    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // SQLite's error message on duplicate: "duplicate column name: <name>"
+    if (!/duplicate column name/i.test(msg)) {
+      console.warn(`[db] ADD COLUMN ${table}.${column} failed: ${msg}`);
+    }
   }
 }
 

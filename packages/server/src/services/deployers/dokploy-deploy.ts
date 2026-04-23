@@ -19,6 +19,12 @@ export interface DokployDeployInput {
   domain?: string | undefined;
   composeConfig?: string | undefined;
   composePath?: string | undefined;
+  /** HTTPS Git URL. When present, Dokploy clones + builds from Git
+   * instead of deploying an inline compose file. Mutually exclusive
+   * with composeConfig. */
+  gitUrl?: string | undefined;
+  /** Branch to clone. Defaults to "main". */
+  gitBranch?: string | undefined;
   envVars?: Record<string, string> | undefined;
   existingDeployId?: string | undefined;
 }
@@ -115,7 +121,12 @@ export async function dokployDeploy(
 
   const appName = `agenthub-${input.name}-${randomUUID().slice(0, 8)}`.toLowerCase();
   const deployId = input.existingDeployId ?? randomUUID();
-  const composeYaml = renderComposeForDokploy(input);
+  // git_url branch: tell Dokploy to clone + build from Git. No inline
+  // compose — Dokploy reads docker-compose.yml from the repo. Mutually
+  // exclusive with composeConfig (enforced at the route layer).
+  const useGit = Boolean(input.gitUrl);
+  const composeYaml = useGit ? "" : renderComposeForDokploy(input);
+  const gitBranch = input.gitBranch ?? "main";
 
   let composeId: string;
   if (input.existingDeployId) {
@@ -145,12 +156,27 @@ export async function dokployDeploy(
     composeId = created.composeId;
   }
 
-  await dokployRequest(cfg, "POST", "/api/compose.update", {
-    composeId,
-    composeType: "raw",
-    sourceType: "raw",
-    composeFile: composeYaml,
-  });
+  // Switch Dokploy's sourceType based on what the caller gave us.
+  //  - git: Dokploy clones `customGitUrl`@`customGitBranch` and uses the
+  //    `docker-compose.yml` at the repo root (or `composePath` if given).
+  //  - raw: We hand Dokploy a verbatim compose YAML string.
+  if (useGit) {
+    await dokployRequest(cfg, "POST", "/api/compose.update", {
+      composeId,
+      composeType: "docker-compose",
+      sourceType: "git",
+      customGitUrl: input.gitUrl,
+      customGitBranch: gitBranch,
+      ...(input.composePath ? { composePath: input.composePath } : {}),
+    });
+  } else {
+    await dokployRequest(cfg, "POST", "/api/compose.update", {
+      composeId,
+      composeType: "raw",
+      sourceType: "raw",
+      composeFile: composeYaml,
+    });
+  }
 
   await dokployRequest(cfg, "POST", "/api/compose.deploy", {
     composeId,
@@ -167,7 +193,10 @@ export async function dokployDeploy(
         status: "running",
         statusDetail: null,
         url,
-        composeConfig: composeYaml,
+        composeConfig: useGit ? null : composeYaml,
+        gitUrl: input.gitUrl ?? null,
+        gitBranch: useGit ? gitBranch : null,
+        buildStrategy: useGit ? "git-pull" : "compose-inline",
         updatedAt: now,
       })
       .where(eq(schema.deployments.id, input.existingDeployId))
@@ -185,7 +214,10 @@ export async function dokployDeploy(
         statusDetail: null,
         url,
         containerId: composeId, // store Dokploy composeId here for later ops
-        composeConfig: composeYaml,
+        composeConfig: useGit ? null : composeYaml,
+        gitUrl: input.gitUrl ?? null,
+        gitBranch: useGit ? gitBranch : null,
+        buildStrategy: useGit ? "git-pull" : "compose-inline",
         createdAt: now,
         updatedAt: now,
       })
