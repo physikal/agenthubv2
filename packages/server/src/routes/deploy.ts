@@ -200,7 +200,11 @@ export function deployRoutes() {
           userId: user.id,
           infraId: existing?.infraId ?? infra.id,
           name: body.name,
-          domain: existing?.domain ?? body.domain,
+          // Body wins when explicitly provided so operators can rotate the
+          // domain on redeploy; existing value fills in the common case
+          // where the caller didn't pass one. The deployer layer handles
+          // Dokploy domain + Cloudflare DNS cleanup when the value moves.
+          domain: body.domain ?? existing?.domain ?? undefined,
           internalOnly: existing?.internalOnly ?? body.internalOnly,
           sourcePath: body.sourcePath,
           composeConfig: body.composeConfig,
