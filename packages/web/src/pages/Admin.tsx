@@ -9,22 +9,8 @@ interface AdminUser {
   createdAt: string;
 }
 
-interface GithubAppStatus {
-  registered: boolean;
-  appId?: number;
-  slug?: string;
-  name?: string;
-  htmlUrl?: string;
-}
-
 export function Admin() {
   const [users, setUsers] = useState<AdminUser[]>([]);
-  const [ghApp, setGhApp] = useState<GithubAppStatus | null>(null);
-  const [ghAppBanner, setGhAppBanner] = useState<
-    | { kind: "success"; text: string }
-    | { kind: "error"; text: string }
-    | null
-  >(null);
   const [showCreate, setShowCreate] = useState(false);
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -44,70 +30,7 @@ export function Admin() {
     }
   }, []);
 
-  const fetchGhAppStatus = useCallback(async () => {
-    try {
-      const res = await api("/api/admin/github-app/status");
-      if (res.ok) setGhApp((await res.json()) as GithubAppStatus);
-    } catch {
-      // ignore — surfaces as "loading" in UI
-    }
-  }, []);
-
-  useEffect(() => {
-    void fetchUsers();
-    void fetchGhAppStatus();
-
-    // Reflect manifest-callback redirects back from GitHub as a banner
-    // (?githubAppRegistered=1 on success, ?githubAppError=<reason> on
-    // failure). Strip the params from the URL once we've read them so a
-    // browser reload doesn't re-surface the banner.
-    const url = new URL(window.location.href);
-    const registered = url.searchParams.get("githubAppRegistered");
-    const errReason = url.searchParams.get("githubAppError");
-    if (registered === "1") {
-      setGhAppBanner({ kind: "success", text: "GitHub App registered." });
-      url.searchParams.delete("githubAppRegistered");
-      window.history.replaceState({}, "", url.toString());
-    } else if (errReason) {
-      setGhAppBanner({
-        kind: "error",
-        text: `GitHub App registration failed: ${errReason}`,
-      });
-      url.searchParams.delete("githubAppError");
-      window.history.replaceState({}, "", url.toString());
-    }
-  }, [fetchUsers, fetchGhAppStatus]);
-
-  const handleRegisterGhApp = () => {
-    // Full-page navigation — the endpoint returns HTML that auto-POSTs to
-    // github.com. Using window.location keeps the admin's session cookie
-    // in the request so the redirect_url callback authenticates.
-    window.location.href = "/api/admin/github-app/register";
-  };
-
-  const handleUnregisterGhApp = async () => {
-    if (
-      !confirm(
-        "Unregister the GitHub App from AgentHub? The App will remain on GitHub's side — you must delete it at github.com/settings/apps/<slug> to fully tear down.",
-      )
-    )
-      return;
-    try {
-      const res = await api("/api/admin/github-app", { method: "DELETE" });
-      if (res.ok) {
-        setGhApp({ registered: false });
-        setGhAppBanner({ kind: "success", text: "GitHub App unregistered locally." });
-      } else {
-        const body = (await res.json()) as { error?: string };
-        setGhAppBanner({
-          kind: "error",
-          text: body.error ?? "Failed to unregister",
-        });
-      }
-    } catch {
-      setGhAppBanner({ kind: "error", text: "Failed to unregister" });
-    }
-  };
+  useEffect(() => { void fetchUsers(); }, [fetchUsers]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -236,77 +159,6 @@ export function Admin() {
             ))}
           </tbody>
         </table>
-      </div>
-
-      <div className="mt-10">
-        <h2 className="text-2xl font-semibold mb-4">GitHub App</h2>
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-          {ghAppBanner && (
-            <div
-              className={`mb-4 px-3 py-2 rounded text-sm ${
-                ghAppBanner.kind === "success"
-                  ? "bg-green-500/10 text-green-400 border border-green-500/30"
-                  : "bg-red-500/10 text-red-400 border border-red-500/30"
-              }`}
-            >
-              {ghAppBanner.text}
-            </div>
-          )}
-          {ghApp === null ? (
-            <p className="text-sm text-zinc-500">Loading…</p>
-          ) : ghApp.registered ? (
-            <>
-              <p className="text-sm text-zinc-300 mb-1">
-                Registered as <span className="font-mono text-purple-300">{ghApp.name}</span>{" "}
-                (App ID {ghApp.appId})
-              </p>
-              <p className="text-xs text-zinc-500 mb-4">
-                <a
-                  href={ghApp.htmlUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="hover:text-zinc-300 underline"
-                >
-                  View on GitHub
-                </a>
-                {" · "}
-                Users install the App from the Integrations page to grant repo access.
-              </p>
-              <div className="flex gap-3">
-                <button
-                  onClick={handleRegisterGhApp}
-                  className="px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm hover:bg-zinc-700 transition-colors"
-                >
-                  Re-register
-                </button>
-                <button
-                  onClick={() => void handleUnregisterGhApp()}
-                  className="px-4 py-2 text-sm text-red-400 hover:text-red-300 transition-colors"
-                >
-                  Unregister
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <p className="text-sm text-zinc-300 mb-2">
-                Register this AgentHub install as a GitHub App so users can authorize repos
-                without per-user Personal Access Tokens.
-              </p>
-              <p className="text-xs text-zinc-500 mb-4">
-                You'll be redirected to GitHub to approve the App manifest. The redirect
-                target and webhook URL must be publicly reachable — localhost installs
-                should tunnel or use a real domain.
-              </p>
-              <button
-                onClick={handleRegisterGhApp}
-                className="px-5 py-2.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-500 transition-colors"
-              >
-                Register GitHub App
-              </button>
-            </>
-          )}
-        </div>
       </div>
 
       {showCreate && (

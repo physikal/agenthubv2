@@ -64,7 +64,7 @@ export function githubIntegrationRoutes() {
       return c.json(
         {
           error:
-            "GitHub App isn't registered yet — ask an admin to complete the GitHub App setup on /admin.",
+            "GitHub App isn't registered yet — an admin needs to register it first on the Integrations page.",
         },
         409,
       );

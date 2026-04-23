@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "../lib/api.ts";
+import { useAuthStore } from "../stores/auth.ts";
 
 type Provider =
   | "cloudflare"
@@ -478,14 +479,32 @@ interface GithubIntegrationStatus {
   installations: GithubInstallation[];
 }
 
+// Admin-only — populated from /api/admin/github-app/status so the
+// registration panel can link out to the App's page on GitHub and offer
+// re-register / unregister controls. Non-admins can't hit that endpoint
+// (it's behind the admin middleware) and get `null` here.
+interface GithubAppAdminStatus {
+  registered: boolean;
+  appId?: number;
+  slug?: string;
+  name?: string;
+  htmlUrl?: string;
+}
+
 function GithubAppCard({
   status,
+  adminStatus,
+  isAdmin,
   onRefresh,
+  onAdminRefresh,
   banner,
   onDismissBanner,
 }: {
   status: GithubIntegrationStatus;
+  adminStatus: GithubAppAdminStatus | null;
+  isAdmin: boolean;
   onRefresh: () => void;
+  onAdminRefresh: () => void;
   banner: { kind: "success" | "error"; text: string } | null;
   onDismissBanner: () => void;
 }) {
@@ -494,6 +513,27 @@ function GithubAppCard({
     // window.location keeps the session cookie in the request so the
     // callback authenticates back to this user.
     window.location.href = "/api/integrations/github/install";
+  };
+
+  const handleRegister = () => {
+    // Same reason as handleInstall — cookie has to ride along for the
+    // manifest-callback to authenticate the admin back on return.
+    window.location.href = "/api/admin/github-app/register";
+  };
+
+  const handleUnregister = async () => {
+    if (
+      !confirm(
+        "Unregister the GitHub App from AgentHub? The App stays on GitHub's side — you must delete it at github.com/settings/apps/<slug> to fully tear down.",
+      )
+    )
+      return;
+    try {
+      const res = await api("/api/admin/github-app", { method: "DELETE" });
+      if (res.ok) onAdminRefresh();
+    } catch {
+      // ignore — surfaces as no state change
+    }
   };
 
   const handleRemove = async (install: GithubInstallation) => {
@@ -544,10 +584,30 @@ function GithubAppCard({
       )}
 
       {!status.registered ? (
-        <p className="text-sm text-zinc-400">
-          An admin needs to register the GitHub App from the Admin page before
-          you can install it on your account.
-        </p>
+        isAdmin ? (
+          <div className="space-y-3">
+            <p className="text-sm text-zinc-300">
+              Register this AgentHub install as a GitHub App so users can
+              authorize repos without per-user Personal Access Tokens.
+            </p>
+            <p className="text-xs text-zinc-500">
+              You'll be redirected to GitHub to approve the App manifest.
+              The redirect target and webhook URL must be publicly reachable
+              — localhost installs need a tunnel or a real domain first.
+            </p>
+            <button
+              onClick={handleRegister}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-500 transition-colors"
+            >
+              Register GitHub App
+            </button>
+          </div>
+        ) : (
+          <p className="text-sm text-zinc-400">
+            An admin needs to register the GitHub App here before you can
+            install it on your account.
+          </p>
+        )
       ) : status.installations.length === 0 ? (
         <>
           <p className="text-sm text-zinc-400">
@@ -611,15 +671,52 @@ function GithubAppCard({
           </button>
         </>
       )}
+
+      {status.registered && isAdmin && adminStatus?.registered && (
+        <div className="pt-3 border-t border-zinc-800 text-xs text-zinc-500 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span>
+            Admin:{" "}
+            <span className="font-mono text-zinc-300">{adminStatus.name}</span>
+            {adminStatus.appId && (
+              <span className="text-zinc-600"> (App ID {adminStatus.appId})</span>
+            )}
+          </span>
+          {adminStatus.htmlUrl && (
+            <a
+              href={adminStatus.htmlUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="underline hover:text-zinc-300"
+            >
+              View on GitHub
+            </a>
+          )}
+          <button
+            onClick={handleRegister}
+            className="text-zinc-400 hover:text-zinc-200 underline"
+          >
+            Re-register
+          </button>
+          <button
+            onClick={() => void handleUnregister()}
+            className="text-red-400 hover:text-red-300 underline"
+          >
+            Unregister
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 export function Integrations() {
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === "admin";
   const [configs, setConfigs] = useState<InfraConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [ghStatus, setGhStatus] = useState<GithubIntegrationStatus | null>(null);
+  const [ghAdminStatus, setGhAdminStatus] = useState<GithubAppAdminStatus | null>(null);
   const [ghBanner, setGhBanner] = useState<
     | { kind: "success"; text: string }
     | { kind: "error"; text: string }
@@ -643,13 +740,32 @@ export function Integrations() {
     }
   }, []);
 
-  useEffect(() => { void fetchConfigs(); void fetchGhStatus(); }, [fetchConfigs, fetchGhStatus]);
+  const fetchGhAdminStatus = useCallback(async () => {
+    if (!isAdmin) return;
+    try {
+      const res = await api("/api/admin/github-app/status");
+      if (res.ok) setGhAdminStatus((await res.json()) as GithubAppAdminStatus);
+    } catch {
+      // ignore — admin footer silently hides on failure
+    }
+  }, [isAdmin]);
+
+  useEffect(() => {
+    void fetchConfigs();
+    void fetchGhStatus();
+    void fetchGhAdminStatus();
+  }, [fetchConfigs, fetchGhStatus, fetchGhAdminStatus]);
 
   useEffect(() => {
     const url = new URL(window.location.href);
     const added = url.searchParams.get("githubInstallAdded");
     const updated = url.searchParams.get("githubInstallUpdated");
-    const err = url.searchParams.get("githubInstallError");
+    const installErr = url.searchParams.get("githubInstallError");
+    // Admin manifest-flow callback params — same shape as the user install
+    // ones but point at the app-registration roundtrip, not the per-user
+    // install. Handled on the same page now that the admin card lives here.
+    const registered = url.searchParams.get("githubAppRegistered");
+    const registerErr = url.searchParams.get("githubAppError");
     if (added === "1") {
       setGhBanner({ kind: "success", text: "GitHub App installed." });
       url.searchParams.delete("githubInstallAdded");
@@ -658,9 +774,17 @@ export function Integrations() {
       setGhBanner({ kind: "success", text: "GitHub App repos updated." });
       url.searchParams.delete("githubInstallUpdated");
       window.history.replaceState({}, "", url.toString());
-    } else if (err) {
-      setGhBanner({ kind: "error", text: `GitHub App install failed: ${err}` });
+    } else if (installErr) {
+      setGhBanner({ kind: "error", text: `GitHub App install failed: ${installErr}` });
       url.searchParams.delete("githubInstallError");
+      window.history.replaceState({}, "", url.toString());
+    } else if (registered === "1") {
+      setGhBanner({ kind: "success", text: "GitHub App registered." });
+      url.searchParams.delete("githubAppRegistered");
+      window.history.replaceState({}, "", url.toString());
+    } else if (registerErr) {
+      setGhBanner({ kind: "error", text: `GitHub App registration failed: ${registerErr}` });
+      url.searchParams.delete("githubAppError");
       window.history.replaceState({}, "", url.toString());
     }
   }, []);
@@ -703,7 +827,13 @@ export function Integrations() {
         {ghStatus && (
           <GithubAppCard
             status={ghStatus}
+            adminStatus={ghAdminStatus}
+            isAdmin={isAdmin}
             onRefresh={() => void fetchGhStatus()}
+            onAdminRefresh={() => {
+              void fetchGhStatus();
+              void fetchGhAdminStatus();
+            }}
             banner={ghBanner}
             onDismissBanner={() => setGhBanner(null)}
           />
