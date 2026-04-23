@@ -137,22 +137,24 @@ migrate_env() {
   fi
 }
 
-# Replace the currently-running CLI script on PATH with the one from the
-# freshly-pulled repo, then re-exec so the rest of the update runs with
-# the new logic (new migrations, new subcommands, new bug fixes). No-op
-# when the scripts are already identical.
-self_update_cli() {
+# Install the freshly-pulled CLI script over the one on PATH. Called at
+# the END of cmd_update so the whole update runs under one code path
+# (the currently-executing CLI). No re-exec. No-op when identical.
+#
+# Contract: rebuild_changed_images, migrate_env, and compose invocations
+# are deterministic functions of (repo contents, docker CLI) — the
+# currently-running CLI can execute them correctly against the fresh
+# repo regardless of its own age. migrate_env migrations MUST be
+# idempotent + backward-compatible so an older CLI can run a newer
+# migration.
+install_new_cli() {
   local my_path
   my_path="$(realpath "$(command -v agenthub)" 2>/dev/null || echo "")"
   local repo_script="$AGENTHUB_DIR/scripts/agenthub"
   [[ -z "$my_path" || ! -f "$repo_script" ]] && return 0
   if cmp -s "$repo_script" "$my_path"; then return 0; fi
-  msg "CLI updated — installing new version and re-executing"
+  msg "installing new CLI at $my_path"
   $SUDO install -m 0755 "$repo_script" "$my_path"
-  # Pass a sentinel so we don't re-enter self-update in a loop on the new
-  # binary (which reads the same file we just wrote).
-  export AGENTHUB_SELF_UPDATED=1
-  exec "$my_path" update "$@"
 }
 
 cmd_update() {
@@ -175,37 +177,6 @@ cmd_update() {
       # shellcheck disable=SC2064
       trap "chown -R '$repo_owner' '$AGENTHUB_DIR' 2>/dev/null || true" EXIT
     fi
-  fi
-  # When we re-exec into ourselves after self-updating, the repo is already
-  # at origin/main from the previous invocation's reset. Skip the "behind"
-  # check and proceed straight to migrate/rebuild/recreate.
-  #
-  # AGENTHUB_UPDATE_FROM_SHA is set by the first-pass invocation before
-  # exec'ing into the new CLI; it carries the pre-update SHA so that
-  # rebuild_changed_images can diff against the right range. Without it,
-  # the SELF_UPDATED path would diff A..A (HEAD..HEAD), detect no changes,
-  # and silently skip every image rebuild.
-  if [[ -n "${AGENTHUB_SELF_UPDATED:-}" ]]; then
-    msg "continuing update after CLI self-update"
-    local local_sha remote_sha from_sha
-    local_sha="$(git rev-parse HEAD)"
-    remote_sha="$local_sha"
-    if [[ -n "${AGENTHUB_UPDATE_FROM_SHA:-}" ]]; then
-      from_sha="$AGENTHUB_UPDATE_FROM_SHA"
-    else
-      warn "AGENTHUB_UPDATE_FROM_SHA not set — rebuild diff range unknown, skipping image rebuild"
-      from_sha="$local_sha"
-    fi
-    migrate_env
-    rebuild_changed_images "$from_sha" "$remote_sha" || true
-    unset AGENTHUB_UPDATE_FROM_SHA || true
-    msg "applying compose changes"
-    compose up -d >/dev/null
-    msg "recreating server with new image"
-    compose up -d --force-recreate agenthub-server >/dev/null
-    probe_front_door
-    ok "updated to $(git rev-parse --short HEAD)"
-    return 0
   fi
 
   git fetch --quiet origin main
@@ -230,21 +201,12 @@ cmd_update() {
   local old_sha="$local_sha"
   git reset --hard origin/main --quiet
 
-  # After the pull the repo has the latest CLI + compose schema. Swap in
-  # the new CLI first (so any migration logic it carries takes effect),
-  # then migrate the env, then rebuild + recreate.
-  #
-  # Persist old_sha into the environment so the re-exec'd CLI can
-  # recover it — without this the SELF_UPDATED branch would lose the
-  # pre-update SHA and rebuild_changed_images would diff A..A.
-  if [[ -z "${AGENTHUB_SELF_UPDATED:-}" ]]; then
-    export AGENTHUB_UPDATE_FROM_SHA="$old_sha"
-    self_update_cli
-  fi
-
+  # Single-pass update under the currently-running CLI. No self-update
+  # re-exec: rebuild, migrate, and recreate are all backward-compatible
+  # operations against the new repo. Installing the new CLI happens
+  # at the very end so any subsequent `agenthub` invocation picks it up.
   migrate_env
   rebuild_changed_images "$old_sha" "$remote_sha"
-  unset AGENTHUB_UPDATE_FROM_SHA || true
 
   # Two steps:
   #   1. `compose up -d` with no filter picks up config drift on every
@@ -259,6 +221,12 @@ cmd_update() {
   compose up -d --force-recreate agenthub-server >/dev/null
 
   probe_front_door
+
+  # Install the new CLI last — everything above ran under the
+  # previously-installed CLI against the freshly-pulled repo. The next
+  # `agenthub` invocation will pick up the new script.
+  install_new_cli
+
   ok "updated to $(git rev-parse --short HEAD)"
 }
 
