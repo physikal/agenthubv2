@@ -79,7 +79,7 @@ export const infrastructureConfigs = sqliteTable("infrastructure_configs", {
     .references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull().default(""),
   provider: text("provider", {
-    enum: ["docker", "digitalocean", "dokploy", "cloudflare", "b2"],
+    enum: ["docker", "digitalocean", "dokploy", "cloudflare", "b2", "github"],
   }).notNull(),
   config: text("config").notNull(),
   hostingNodeIp: text("hosting_node_ip"),
@@ -122,6 +122,14 @@ export const deployments = sqliteTable("deployments", {
   containerId: text("container_id"),
   sourcePath: text("source_path"),
   composeConfig: text("compose_config"),
+  // Git-based deploys (Dokploy, and potentially other providers later):
+  // clone + build from a Git URL instead of uploading source or receiving
+  // a pre-built compose. Populated only when buildStrategy = "git-pull".
+  gitUrl: text("git_url"),
+  gitBranch: text("git_branch"),
+  buildStrategy: text("build_strategy", {
+    enum: ["source-upload", "compose-inline", "git-pull"],
+  }),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),

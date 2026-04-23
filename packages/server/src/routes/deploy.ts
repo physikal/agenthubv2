@@ -16,11 +16,19 @@ interface DeployBody {
   sourcePath?: string;
   composeConfig?: string;
   composePath?: string;
+  gitUrl?: string;
+  gitBranch?: string;
   envVars?: Record<string, string>;
   database?: "none" | "sqlite" | "postgres";
   infraName?: string;
   dnsName?: string;
 }
+
+// Conservative: HTTPS only, host label charset only, no path traversal.
+// Covers github.com, gitlab.com, self-hosted GitLab/Gitea; rejects ssh,
+// file://, and anything with shell metacharacters.
+const GIT_URL_RE = /^https:\/\/[A-Za-z0-9.-]{1,253}(?::\d{1,5})?\/[A-Za-z0-9._\-\/]{1,255}(?:\.git)?$/;
+const GIT_BRANCH_RE = /^[A-Za-z0-9._\-\/]{1,255}$/;
 
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_ENV_VARS = 100;
@@ -38,8 +46,22 @@ export function deployRoutes() {
       return c.json({ error: "name required" }, 400);
     }
 
-    if (!body.sourcePath && !body.composeConfig) {
-      return c.json({ error: "Either sourcePath or composeConfig required" }, 400);
+    const sourceModes = [body.sourcePath, body.composeConfig, body.gitUrl].filter(Boolean).length;
+    if (sourceModes === 0) {
+      return c.json({ error: "One of sourcePath, composeConfig, or gitUrl is required" }, 400);
+    }
+    if (sourceModes > 1) {
+      return c.json({ error: "sourcePath, composeConfig, and gitUrl are mutually exclusive" }, 400);
+    }
+
+    if (body.gitUrl && !GIT_URL_RE.test(body.gitUrl)) {
+      return c.json(
+        { error: "gitUrl must be an https Git URL (e.g. https://github.com/owner/repo.git)" },
+        400,
+      );
+    }
+    if (body.gitBranch && !GIT_BRANCH_RE.test(body.gitBranch)) {
+      return c.json({ error: "gitBranch has invalid characters" }, 400);
     }
 
     // Validate name (alphanumeric + hyphens only)
@@ -168,6 +190,8 @@ export function deployRoutes() {
         sourcePath: body.sourcePath,
         composeConfig: body.composeConfig,
         composePath: body.composePath,
+        gitUrl: body.gitUrl,
+        gitBranch: body.gitBranch,
         envVars: body.envVars,
         database: body.database,
         dnsName: body.dnsName,

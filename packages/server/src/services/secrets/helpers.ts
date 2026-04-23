@@ -10,6 +10,7 @@ const SECRET_FIELDS: Record<string, readonly string[]> = {
   digitalocean: ["apiToken"],
   dokploy: ["apiToken"],
   b2: ["b2AppKey"],
+  github: ["pat"],
 };
 
 /**

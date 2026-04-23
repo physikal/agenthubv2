@@ -57,7 +57,7 @@ interface JsonRpcResponse {
 const TOOLS = [
   {
     name: "deploy",
-    description: "Deploy an app to the user's hosting node. Idempotent — calling `deploy` with the same `name` updates the existing deployment in place (reuses port, domain, DNS). Either build from source (source_path) or deploy a pre-built Docker image (compose_config). For pre-built apps like n8n, Grafana, etc., research the app's Docker setup and provide a complete docker-compose.yml via compose_config.",
+    description: "Deploy an app to the user's hosting node. Idempotent — calling `deploy` with the same `name` updates the existing deployment in place (reuses port, domain, DNS). Exactly one source must be specified: build from uploaded source (source_path), run pre-built compose (compose_config), or clone+build from Git (git_url — Dokploy-only; Dokploy handles the clone, build, and deploy). For pre-built apps like n8n, Grafana, etc., research the app's Docker setup and provide a complete docker-compose.yml via compose_config.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -75,7 +75,15 @@ const TOOLS = [
         },
         compose_config: {
           type: "string" as const,
-          description: "Raw docker-compose.yml content for deploying pre-built images. Research the app and generate a complete compose config with images, volumes, ports, and environment variables. Omit when using source_path.",
+          description: "Raw docker-compose.yml content for deploying pre-built images. Research the app and generate a complete compose config with images, volumes, ports, and environment variables. Omit when using source_path or git_url.",
+        },
+        git_url: {
+          type: "string" as const,
+          description: "HTTPS Git URL for 'Dokploy clones + builds from Git' flow (e.g. 'https://github.com/owner/repo.git'). Dokploy infra only — the Dokploy server handles the clone, build, and run. Omit when using source_path or compose_config.",
+        },
+        git_branch: {
+          type: "string" as const,
+          description: "Branch to deploy when using git_url. Default: 'main'.",
         },
         compose_path: {
           type: "string" as const,
@@ -175,7 +183,10 @@ async function handleToolCall(
         internalOnly: args["internal_only"] ?? false,
         database: args["database"] ?? "none",
       };
-      if (args["compose_config"]) {
+      if (args["git_url"]) {
+        body["gitUrl"] = args["git_url"];
+        if (args["git_branch"]) body["gitBranch"] = args["git_branch"];
+      } else if (args["compose_config"]) {
         body["composeConfig"] = args["compose_config"];
       } else {
         body["sourcePath"] = (args["source_path"] as string | undefined) ?? process.cwd();

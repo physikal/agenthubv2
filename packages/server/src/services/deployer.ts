@@ -34,6 +34,12 @@ interface DeployInput {
    * compose.yaml / compose.yml / docker-compose.yaml / docker-compose.yml
    * at the project root (in that order). */
   composePath?: string | undefined;
+  /** Git URL for the "Dokploy clones + builds from Git" flow. HTTPS only,
+   * validated at the route layer. Mutually exclusive with sourcePath and
+   * composeConfig. Dokploy-only for now. */
+  gitUrl?: string | undefined;
+  /** Branch to deploy when using gitUrl. Defaults to "main". */
+  gitBranch?: string | undefined;
   /** Environment variables to write to `${appDir}/.env` before compose-up.
    * Docker Compose auto-loads `.env` for substitution and for services that
    * reference `env_file: .env`. */
@@ -390,9 +396,20 @@ export async function deploy(input: DeployInput): Promise<DeployResult> {
     if (input.domain !== undefined) out.domain = input.domain;
     if (input.composeConfig !== undefined) out.composeConfig = input.composeConfig;
     if (input.composePath !== undefined) out.composePath = input.composePath;
+    if (input.gitUrl !== undefined) out.gitUrl = input.gitUrl;
+    if (input.gitBranch !== undefined) out.gitBranch = input.gitBranch;
     if (input.envVars !== undefined) out.envVars = input.envVars;
     if (input.existingDeployId !== undefined) out.existingDeployId = input.existingDeployId;
     return dokployDeploy(infra, resolved, out);
+  }
+
+  // Non-Dokploy providers don't support gitUrl yet — fail fast with a
+  // clear message instead of silently ignoring the field.
+  if (input.gitUrl) {
+    throw new Error(
+      "gitUrl is only supported for Dokploy infra (Dokploy clones + builds from Git). " +
+        "For Docker/DigitalOcean, use sourcePath or composeConfig instead.",
+    );
   }
 
   if (!infra.hostingNodeIp) throw new Error("Hosting node has no IP");

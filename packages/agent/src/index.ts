@@ -2,6 +2,7 @@ import { hostname } from "node:os";
 import { chownSync, mkdirSync } from "node:fs";
 import { AgentServer } from "./ws-server.js";
 import { startFileServer } from "./file-server.js";
+import { registerAgentDeployMcp } from "./mcp-writer.js";
 
 const PORT = parseInt(process.env["AGENT_PORT"] ?? "9876", 10);
 const AUTH_TOKEN = process.env["AGENT_TOKEN"] ?? "";
@@ -20,6 +21,23 @@ try {
 } catch (err) {
   const msg = err instanceof Error ? err.message : "unknown";
   console.warn(`[agent] could not prepare /home/coder/.local: ${msg}`);
+}
+
+// Register the agentdeploy MCP with every supported coding CLI so Claude
+// Code / OpenCode / Droid pick it up automatically on first run. Merges
+// into any pre-existing config (a user's Notion MCP etc. survives). Non-
+// fatal — daemon keeps running even if every writer fails.
+try {
+  registerAgentDeployMcp({
+    mcpBinary: "/opt/agenthub-agent/mcp-deploy.js",
+    portalUrl: process.env["PORTAL_URL"] ?? "",
+    agentToken: AUTH_TOKEN,
+    coderHome: "/home/coder",
+    log: (line) => console.log(`[mcp-writer] ${line}`),
+  });
+} catch (err) {
+  const msg = err instanceof Error ? err.message : "unknown";
+  console.warn(`[mcp-writer] unexpected failure: ${msg}`);
 }
 
 console.log(`[agent] starting on port ${String(PORT)}, host: ${hostname()}`);
