@@ -59,7 +59,7 @@ When you start a session, AgentHub:
     - A `credential.helper` fallback for tools (like `gh`) that bypass the URL rewrite.
     - `user.name` and `user.email` seeded from your GitHub login.
 
-`git clone`, `git push`, and `gh` all authenticate transparently.
+`git clone`, `git push`, and `gh` all authenticate transparently. `gh auth status` will report the install as authenticated — agents won't nag you to run `gh auth login`.
 
 ### Token lifetime
 

@@ -27,13 +27,22 @@ TTYD_PORT="${TTYD_PORT:-7681}"
 chown -R coder:coder /home/coder
 
 # Expose session metadata to the interactive shell via ~coder/.agenthub-env
-# — profile.d sources this on login.
+# — profile.d sources this on login. AGENT_TOKEN + PORTAL_URL are included
+# so the git credential helper AND the `gh` wrapper can find them even in
+# shells where sudo -u coder stripped them from the inherited env. The
+# file is mode 600 because it carries the per-session bearer — that token
+# is scoped to this container and only useful from inside it, so leaking
+# it within the container to another user doesn't matter (there is no
+# other real user), but 600 is still the right default.
 cat > /home/coder/.agenthub-env <<EOF
 export AGENTHUB_SESSION_ID="${SESSION_ID:-}"
 export AGENTHUB_SESSION_NAME="${SESSION_NAME:-}"
 export AGENTHUB_URL="${AGENTHUB_PUBLIC_URL:-${PORTAL_URL:-}}"
+export AGENT_TOKEN="${AGENT_TOKEN:-}"
+export PORTAL_URL="${PORTAL_URL:-}"
 EOF
 chown coder:coder /home/coder/.agenthub-env
+chmod 600 /home/coder/.agenthub-env
 
 cat > /etc/profile.d/agenthub-env.sh <<'EOF'
 [ -f /home/coder/.agenthub-env ] && . /home/coder/.agenthub-env

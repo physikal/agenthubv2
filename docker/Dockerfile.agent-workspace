@@ -128,6 +128,16 @@ RUN chmod +x /usr/local/bin/agenthub-entrypoint
 COPY docker/git-credential-agenthub.sh /opt/agenthub-agent/git-credential-agenthub
 RUN chmod 0755 /opt/agenthub-agent/git-credential-agenthub
 
+# `gh` wrapper that bridges the GitHub App install to the GitHub CLI —
+# same ephemeral-token approach as the git credential helper, but for
+# `gh`'s own auth discovery (GH_TOKEN) since `gh` doesn't read git
+# credential helpers. Installed to /usr/local/bin/gh so it shadows
+# /usr/bin/gh in PATH. Agents probing `gh auth status` now see
+# "authenticated" out of the box instead of "not logged in", stopping
+# the "I need you to run gh auth login" chorus.
+COPY docker/gh-agenthub-wrapper.sh /usr/local/bin/gh
+RUN chmod 0755 /usr/local/bin/gh
+
 EXPOSE 7681 9876
 
 # Declared as a volume so operators who use docker-compose without an explicit
