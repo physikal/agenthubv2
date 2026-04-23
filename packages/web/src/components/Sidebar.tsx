@@ -9,8 +9,8 @@ interface NavItem {
 }
 
 // "external" links fall outside React Router — they point at the Starlight
-// docs site served from the same origin under /docs/ and need a full-page
-// navigation so Starlight's own router can take over.
+// docs site served from the same origin under /docs/ and open in a new tab
+// so users don't lose their place in the platform.
 const links: readonly NavItem[] = [
   { to: "/", label: "My Sessions", icon: "●" },
   { to: "/deployments", label: "Deployments", icon: "●" },
@@ -49,6 +49,8 @@ export function Sidebar() {
             <a
               key={link.to}
               href={link.to}
+              target="_blank"
+              rel="noopener noreferrer"
               className={linkClass}
             >
               <span className="text-[8px] text-zinc-600">{link.icon}</span>
