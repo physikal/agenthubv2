@@ -28,60 +28,13 @@ export default defineConfig({
         },
       ],
       sidebar: [
-        {
-          label: "Getting Started",
-          items: [
-            { label: "What is AgentHub?", slug: "getting-started/what-is-agenthub" },
-            { label: "Your first session", slug: "getting-started/first-session" },
-            { label: "How the install works", slug: "getting-started/install-modes" },
-          ],
-        },
-        {
-          label: "Agent CLIs",
-          items: [
-            { label: "Overview", slug: "clis/overview" },
-            { label: "Claude Code", slug: "clis/claude-code" },
-            { label: "OpenCode", slug: "clis/opencode" },
-            { label: "MiniMax", slug: "clis/minimax" },
-            { label: "Droid (Factory AI)", slug: "clis/droid" },
-            { label: "Supporting tools", slug: "clis/supporting-tools" },
-          ],
-        },
-        {
-          label: "Web UI",
-          items: [
-            { label: "Sessions", slug: "web-ui/sessions" },
-            { label: "Packages", slug: "web-ui/packages" },
-            { label: "Integrations", slug: "web-ui/integrations" },
-            { label: "Backups", slug: "web-ui/backups" },
-            { label: "Secrets", slug: "web-ui/secrets" },
-            { label: "Deployments", slug: "web-ui/deployments" },
-            { label: "Settings", slug: "web-ui/settings" },
-          ],
-        },
-        {
-          label: "Infisical",
-          items: [
-            { label: "Why Infisical", slug: "infisical/overview" },
-            { label: "Using the console", slug: "infisical/console" },
-          ],
-        },
-        {
-          label: "agentdeploy MCP",
-          items: [
-            { label: "What it does", slug: "agentdeploy/overview" },
-            { label: "Supported providers", slug: "agentdeploy/providers" },
-          ],
-        },
-        {
-          label: "Operating AgentHub",
-          items: [
-            { label: "The agenthub CLI", slug: "operators/cli" },
-            { label: "Updates", slug: "operators/updates" },
-            { label: "Data & volumes", slug: "operators/data" },
-            { label: "Troubleshooting", slug: "operators/troubleshooting" },
-          ],
-        },
+        { label: "Overview", slug: "index" },
+        { label: "Getting Started", autogenerate: { directory: "getting-started" } },
+        { label: "Agent CLIs", autogenerate: { directory: "clis" } },
+        { label: "Web UI", autogenerate: { directory: "web-ui" } },
+        { label: "Infisical", autogenerate: { directory: "infisical" } },
+        { label: "agentdeploy MCP", autogenerate: { directory: "agentdeploy" } },
+        { label: "Operating AgentHub", autogenerate: { directory: "operators" } },
       ],
     }),
   ],
