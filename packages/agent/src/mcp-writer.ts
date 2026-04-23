@@ -42,6 +42,16 @@ export interface RegisterMcpOptions {
  * rest still run.
  */
 export function registerAgentDeployMcp(opts: RegisterMcpOptions): void {
+  // Refuse to write half-configured entries — `AGENT_TOKEN` empty means
+  // the MCP server would refuse every API call anyway, and we'd be
+  // leaving a useless entry in the user's Claude Code / OpenCode /
+  // Droid config that they'd have to clean up by hand.
+  if (!opts.portalUrl || !opts.agentToken) {
+    opts.log(
+      `skipped: PORTAL_URL or AGENT_TOKEN not set (portalUrl=${opts.portalUrl ? "present" : "empty"}, agentToken=${opts.agentToken ? "present" : "empty"})`,
+    );
+    return;
+  }
   const writers: Array<readonly [string, (o: RegisterMcpOptions) => void]> = [
     ["claude-code", writeClaudeCode],
     ["opencode", writeOpenCode],
