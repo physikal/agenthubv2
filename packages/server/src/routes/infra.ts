@@ -31,16 +31,20 @@ type Provider = (typeof schema.infrastructureConfigs.$inferSelect)["provider"];
 const KNOWN_PROVIDERS: Provider[] = [
   "docker",
   "digitalocean",
+  "digitalocean-apps",
   "dokploy",
   "cloudflare",
   "b2",
+  "github",
 ];
 const FULLY_IMPLEMENTED: Provider[] = [
   "cloudflare",
   "docker",
   "digitalocean",
+  "digitalocean-apps",
   "dokploy",
   "b2",
+  "github",
 ];
 
 function maskConfig(configJson: string): Record<string, unknown> {
@@ -72,6 +76,16 @@ function validateConfigForProvider(
     if (!config["b2KeyId"]) issues.push("b2KeyId required");
     if (!config["b2AppKey"]) issues.push("b2AppKey required");
     if (!config["b2Bucket"]) issues.push("b2Bucket required");
+    return { ok: issues.length === 0, issues };
+  }
+  if (provider === "github") {
+    const issues: string[] = [];
+    if (!config["pat"]) {
+      issues.push(
+        "pat required (fine-grained PAT with contents:write + administration:write + pages:write)",
+      );
+    }
+    if (!config["owner"]) issues.push("owner required (GitHub user or org)");
     return { ok: issues.length === 0, issues };
   }
   // Compute providers: defer to the HostingProvider's own validate() so we
