@@ -19,6 +19,7 @@ import { agentGithubRoutes } from "./routes/agent-github.js";
 import { packagesRoutes } from "./routes/packages.js";
 import { PackageManager } from "./services/packages/manager.js";
 import { authMiddleware, adminMiddleware, agentAuthMiddleware } from "./middleware/auth.js";
+import { githubAppManifestRoutes } from "./routes/github-app-manifest.js";
 import { ALLOWED_ORIGINS, isOriginAllowed } from "./middleware/origin.js";
 import { setupTerminalProxy } from "./ws/terminal-proxy.js";
 import { setupPreviewProxy } from "./ws/preview-proxy.js";
@@ -102,6 +103,7 @@ app.route("/api", deployRoutes());
 // --- Admin-only routes ---
 app.use("/api/admin/*", adminMiddleware);
 app.route("/api/admin", adminRoutes(sessionManager));
+app.route("/api/admin/github-app", githubAppManifestRoutes());
 
 if (process.env["NODE_ENV"] === "production") {
   // Static assets for the React SPA + the Starlight docs site (the latter
