@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
+import { DeployError } from "../deploy-error.js";
 
 /**
  * Deploy to DigitalOcean App Platform. Creates an app pointing at a
@@ -51,7 +52,7 @@ const DO_API = "https://api.digitalocean.com/v2";
 function resolveCfg(merged: Record<string, unknown>): DOAppsConfig {
   const apiToken = merged["apiToken"];
   if (typeof apiToken !== "string" || !apiToken) {
-    throw new Error("DO Apps config missing apiToken");
+    throw new DeployError("DO Apps config missing apiToken");
   }
   const region = typeof merged["region"] === "string" ? merged["region"] : undefined;
   const cfg: DOAppsConfig = { apiToken };
@@ -76,7 +77,10 @@ async function doRequest<T>(
   const resp = await fetch(`${DO_API}${path}`, init);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    throw new Error(`DO Apps ${method} ${path} failed (${String(resp.status)}): ${text}`);
+    throw new DeployError(
+      `DO Apps ${method} ${path} failed (${String(resp.status)}): ${text}`,
+      502,
+    );
   }
   if (resp.status === 204) return {} as T;
   return (await resp.json()) as T;
@@ -86,7 +90,7 @@ async function doRequest<T>(
 function githubRepoFromUrl(url: string): string {
   const m = /github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/.exec(url);
   if (!m || !m[1] || !m[2]) {
-    throw new Error(
+    throw new DeployError(
       `DO Apps requires a github.com gitUrl, got: ${url}. Push your repo to GitHub (push_to_github MCP tool) first.`,
     );
   }

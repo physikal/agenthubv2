@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
 import type { InfrastructureConfig } from "../../db/schema.js";
+import { DeployError } from "../deploy-error.js";
 
 /**
  * Dokploy-backed deploy path. Mirrors the public API of deployer.ts but
@@ -65,7 +66,10 @@ async function dokployRequest<T>(
   const resp = await fetch(`${cfg.baseUrl.replace(/\/$/, "")}${path}`, init);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
-    throw new Error(`Dokploy ${method} ${path} failed (${String(resp.status)}): ${text}`);
+    throw new DeployError(
+      `Dokploy ${method} ${path} failed (${String(resp.status)}): ${text}`,
+      502,
+    );
   }
   return (await resp.json()) as T;
 }
@@ -78,7 +82,7 @@ function resolveDokployConfig(
   const projectId = merged["projectId"] as string | undefined;
   const environmentId = merged["environmentId"] as string | undefined;
   if (!baseUrl || !apiToken || !projectId || !environmentId) {
-    throw new Error(
+    throw new DeployError(
       "Dokploy infra config missing one of: baseUrl, apiToken, projectId, environmentId",
     );
   }
@@ -107,7 +111,7 @@ export async function dokployDeploy(
   //     for pre-built images like n8n. Dokploy runs it as-is.
   const useGit = Boolean(input.gitUrl);
   if (!useGit && !input.composeConfig) {
-    throw new Error(
+    throw new DeployError(
       "Dokploy deploy requires either a git URL (derived from source_path or passed explicitly) or composeConfig",
     );
   }

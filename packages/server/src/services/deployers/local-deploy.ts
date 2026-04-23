@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
 import type { InfrastructureConfig } from "../../db/schema.js";
 import type { AgentSessionContext } from "../../middleware/auth.js";
+import { DeployError } from "../deploy-error.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -117,12 +118,12 @@ export async function localDockerDeploy(
 ): Promise<LocalDeployResult> {
   // Validation: source_path requires a workspace container to copy from.
   if (input.sourcePath && !agentSession?.workspaceId) {
-    throw new Error(
+    throw new DeployError(
       "Local-docker deploys with sourcePath require an agent session — call from inside a workspace via the agentdeploy MCP, not the web UI.",
     );
   }
   if (!input.sourcePath && !input.composeConfig) {
-    throw new Error(
+    throw new DeployError(
       "Local-docker deploys require sourcePath (with a Dockerfile) or composeConfig",
     );
   }
