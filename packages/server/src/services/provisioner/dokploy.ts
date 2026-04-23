@@ -51,7 +51,7 @@ export class DokployDriver implements ProvisionerDriver {
     this.environmentId = opts.environmentId;
     this.headers = {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${opts.apiToken}`,
+      "x-api-key": opts.apiToken,
     };
   }
 

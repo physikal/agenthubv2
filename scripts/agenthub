@@ -179,13 +179,26 @@ cmd_update() {
   # When we re-exec into ourselves after self-updating, the repo is already
   # at origin/main from the previous invocation's reset. Skip the "behind"
   # check and proceed straight to migrate/rebuild/recreate.
+  #
+  # AGENTHUB_UPDATE_FROM_SHA is set by the first-pass invocation before
+  # exec'ing into the new CLI; it carries the pre-update SHA so that
+  # rebuild_changed_images can diff against the right range. Without it,
+  # the SELF_UPDATED path would diff A..A (HEAD..HEAD), detect no changes,
+  # and silently skip every image rebuild.
   if [[ -n "${AGENTHUB_SELF_UPDATED:-}" ]]; then
     msg "continuing update after CLI self-update"
-    local local_sha remote_sha
+    local local_sha remote_sha from_sha
     local_sha="$(git rev-parse HEAD)"
     remote_sha="$local_sha"
+    if [[ -n "${AGENTHUB_UPDATE_FROM_SHA:-}" ]]; then
+      from_sha="$AGENTHUB_UPDATE_FROM_SHA"
+    else
+      warn "AGENTHUB_UPDATE_FROM_SHA not set — rebuild diff range unknown, skipping image rebuild"
+      from_sha="$local_sha"
+    fi
     migrate_env
-    rebuild_changed_images "$local_sha" "$remote_sha" || true
+    rebuild_changed_images "$from_sha" "$remote_sha" || true
+    unset AGENTHUB_UPDATE_FROM_SHA || true
     msg "applying compose changes"
     compose up -d >/dev/null
     msg "recreating server with new image"
@@ -220,12 +233,18 @@ cmd_update() {
   # After the pull the repo has the latest CLI + compose schema. Swap in
   # the new CLI first (so any migration logic it carries takes effect),
   # then migrate the env, then rebuild + recreate.
+  #
+  # Persist old_sha into the environment so the re-exec'd CLI can
+  # recover it — without this the SELF_UPDATED branch would lose the
+  # pre-update SHA and rebuild_changed_images would diff A..A.
   if [[ -z "${AGENTHUB_SELF_UPDATED:-}" ]]; then
+    export AGENTHUB_UPDATE_FROM_SHA="$old_sha"
     self_update_cli
   fi
 
   migrate_env
   rebuild_changed_images "$old_sha" "$remote_sha"
+  unset AGENTHUB_UPDATE_FROM_SHA || true
 
   # Two steps:
   #   1. `compose up -d` with no filter picks up config drift on every

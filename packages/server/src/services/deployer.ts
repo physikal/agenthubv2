@@ -12,6 +12,7 @@ import {
   sshWriteFile,
 } from "./shell-safety.js";
 import { resolveInfraConfig } from "./secrets/helpers.js";
+import { introspectGitRepo } from "./git-introspect.js";
 import {
   dokployDeploy,
   dokployLogs,
@@ -396,10 +397,24 @@ export async function deploy(input: DeployInput): Promise<DeployResult> {
     if (input.domain !== undefined) out.domain = input.domain;
     if (input.composeConfig !== undefined) out.composeConfig = input.composeConfig;
     if (input.composePath !== undefined) out.composePath = input.composePath;
-    if (input.gitUrl !== undefined) out.gitUrl = input.gitUrl;
-    if (input.gitBranch !== undefined) out.gitBranch = input.gitBranch;
     if (input.envVars !== undefined) out.envVars = input.envVars;
     if (input.existingDeployId !== undefined) out.existingDeployId = input.existingDeployId;
+
+    // Dokploy deploys via git-pull. If the caller passed `gitUrl` directly,
+    // use it. Otherwise, derive it from the repo at `sourcePath` — Dokploy
+    // has no way to receive local source, so the repo must be pushed.
+    if (input.gitUrl !== undefined) {
+      out.gitUrl = input.gitUrl;
+      if (input.gitBranch !== undefined) out.gitBranch = input.gitBranch;
+    } else if (input.sourcePath !== undefined) {
+      const info = introspectGitRepo(input.sourcePath);
+      if (info.kind !== "ok") {
+        throw new Error(`Cannot deploy to Dokploy: ${info.message}`);
+      }
+      out.gitUrl = info.remote;
+      out.gitBranch = input.gitBranch ?? info.branch;
+    }
+
     return dokployDeploy(infra, resolved, out);
   }
 

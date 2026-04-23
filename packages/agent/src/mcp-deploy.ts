@@ -57,7 +57,7 @@ interface JsonRpcResponse {
 const TOOLS = [
   {
     name: "deploy",
-    description: "Deploy an app to the user's hosting node. Idempotent — calling `deploy` with the same `name` updates the existing deployment in place (reuses port, domain, DNS). Exactly one source must be specified: build from uploaded source (source_path), run pre-built compose (compose_config), or clone+build from Git (git_url — Dokploy-only; Dokploy handles the clone, build, and deploy). For pre-built apps like n8n, Grafana, etc., research the app's Docker setup and provide a complete docker-compose.yml via compose_config.",
+    description: "Deploy an app to the user's hosting node. Idempotent — calling `deploy` with the same `name` updates the existing deployment in place (reuses port, domain, DNS). Exactly one source must be specified:\n- `source_path`: project directory to build and run. On docker/DigitalOcean infra, the source is SCP'd to the hosting node and built with `docker compose up -d --build`. On Dokploy infra, source_path is auto-converted to a git-pull — the directory MUST be a clean, pushed git repo (Dokploy clones `origin` at the current branch). Push to GitHub first with `gh repo create --source=. --push` if it isn't.\n- `compose_config`: raw docker-compose.yml for pre-built images (n8n, Grafana, etc.). Works on all providers.\n- `git_url`: HTTPS Git URL for a pre-pushed repo. Dokploy infra only.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -71,7 +71,7 @@ const TOOLS = [
         },
         source_path: {
           type: "string" as const,
-          description: "Path to project directory for building from source. Omit when using compose_config.",
+          description: "Path to project directory for building from source. On Dokploy infra, the directory must be a clean, pushed git repo (auto-converted to git-pull). Omit when using compose_config or git_url.",
         },
         compose_config: {
           type: "string" as const,
