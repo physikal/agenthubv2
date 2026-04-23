@@ -102,9 +102,42 @@ export async function loadGithubAppCreds(): Promise<GithubAppCreds> {
 }
 
 /**
+ * Module-level cache of auth-app instances keyed by installationId.
+ * `@octokit/auth-app` caches the 1-hour installation token within the
+ * `auth` function's closure, refreshing 60s before expiry — but only if
+ * you reuse the same instance across calls. We cache here so credential-
+ * helper requests for the same user don't hit GitHub's rate limit even
+ * under heavy git activity. Invalidated when the App is re-registered
+ * (new appId or privateKey invalidates prior closures by value anyway;
+ * resetInstallationAuthCache drops the entries explicitly).
+ */
+const authCache = new Map<number, ReturnType<typeof createAppAuth>>();
+
+export function resetInstallationAuthCache(): void {
+  authCache.clear();
+}
+
+async function installationAuth(
+  installationId: number,
+): Promise<ReturnType<typeof createAppAuth>> {
+  const cached = authCache.get(installationId);
+  if (cached) return cached;
+  const creds = await loadGithubAppCreds();
+  const auth = createAppAuth({
+    appId: creds.appId,
+    privateKey: creds.privateKey,
+    installationId,
+  });
+  authCache.set(installationId, auth);
+  return auth;
+}
+
+/**
  * Mint a 1-hour installation access token. Delegates JWT signing + caching
- * to @octokit/auth-app. Returns just the token string; callers that need
- * the full response (expiry, permissions snapshot) should use
+ * to @octokit/auth-app, with a module-level cache of `auth` instances so
+ * repeated calls for the same installation reuse its in-closure token
+ * cache. Returns just the token string; callers that need the full
+ * response (expiry, permissions snapshot) should use
  * fetchInstallationMetadata instead.
  *
  * Throws DeployError(502) when GitHub rejects the installation — typically
@@ -112,16 +145,43 @@ export async function loadGithubAppCreds(): Promise<GithubAppCreds> {
  * should mark the stored row accordingly and prompt a re-install.
  */
 export async function mintInstallationToken(installationId: number): Promise<string> {
-  const creds = await loadGithubAppCreds();
-  const auth = createAppAuth({
-    appId: creds.appId,
-    privateKey: creds.privateKey,
-    installationId,
-  });
+  const auth = await installationAuth(installationId);
   try {
     const { token } = await auth({ type: "installation" });
     return token;
   } catch (err) {
+    // Drop the cache entry so a later retry gets a fresh auth instance
+    // (e.g. after the user re-installs).
+    authCache.delete(installationId);
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new DeployError(
+      `GitHub installation ${String(installationId)} unavailable: ${msg}`,
+      502,
+    );
+  }
+}
+
+/**
+ * Same as mintInstallationToken but also returns the token's expiry so
+ * callers (credential-helper route) can short-circuit their own clients'
+ * caches. When auth-app doesn't yield expiresAt we fall back to now+55m
+ * which is slightly below GitHub's 1h guarantee.
+ */
+export async function mintInstallationTokenWithExpiry(
+  installationId: number,
+): Promise<{ token: string; expiresAt: number }> {
+  const auth = await installationAuth(installationId);
+  try {
+    const result = (await auth({ type: "installation" })) as {
+      token: string;
+      expiresAt?: string;
+    };
+    const expiresAt = result.expiresAt
+      ? Date.parse(result.expiresAt)
+      : Date.now() + 55 * 60 * 1000;
+    return { token: result.token, expiresAt };
+  } catch (err) {
+    authCache.delete(installationId);
     const msg = err instanceof Error ? err.message : String(err);
     throw new DeployError(
       `GitHub installation ${String(installationId)} unavailable: ${msg}`,
@@ -242,6 +302,34 @@ export async function mintTokenForUser(userId: string): Promise<
     token,
     installationId: install.installationId,
     accountLogin: install.accountLogin,
+  };
+}
+
+/**
+ * Same as mintTokenForUser but includes the token's expiry. The credential-
+ * helper HTTP route uses the expiry to tell the workspace-side helper when
+ * to treat its transient in-process cache as stale (though a well-behaved
+ * helper just re-fetches every call — the server cache is the ground truth).
+ */
+export async function mintTokenForUserWithExpiry(userId: string): Promise<
+  | {
+      token: string;
+      installationId: number;
+      accountLogin: string;
+      expiresAt: number;
+    }
+  | null
+> {
+  const install = firstActiveInstallationForUser(userId);
+  if (!install) return null;
+  const { token, expiresAt } = await mintInstallationTokenWithExpiry(
+    install.installationId,
+  );
+  return {
+    token,
+    installationId: install.installationId,
+    accountLogin: install.accountLogin,
+    expiresAt,
   };
 }
 

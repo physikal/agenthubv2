@@ -121,6 +121,13 @@ RUN cd /opt/agenthub-agent && npm install --omit=dev --no-audit --no-fund 2>&1 |
 COPY docker/agent-workspace-entrypoint.sh /usr/local/bin/agenthub-entrypoint
 RUN chmod +x /usr/local/bin/agenthub-entrypoint
 
+# Credential helper invoked by ~/.gitconfig (written by the agent daemon
+# on session boot for users with a GitHub App install). Fetches a fresh
+# installation token from the AgentHub server per git operation so raw
+# tokens never touch the workspace filesystem.
+COPY docker/git-credential-agenthub.sh /opt/agenthub-agent/git-credential-agenthub
+RUN chmod 0755 /opt/agenthub-agent/git-credential-agenthub
+
 EXPOSE 7681 9876
 
 # Declared as a volume so operators who use docker-compose without an explicit
