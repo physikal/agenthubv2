@@ -18,6 +18,12 @@ interface VersionInfo {
   // right after `git reset --hard`, well before the rebuild + recreate
   // lands.
   serverStartedAt?: string;
+  // Non-fatal warning from the version endpoint — populated when we
+  // succeeded enough to report the current SHA but couldn't resolve
+  // origin/main to compare against (narrow-clone refspec, offline host,
+  // etc). UI should surface this so users don't get a silent "Up to date"
+  // that might be wrong.
+  versionCheckError?: string;
 }
 
 export function Settings() {
@@ -408,6 +414,14 @@ function VersionPanel() {
               </div>
             )}
           </div>
+
+          {info.versionCheckError && (
+            <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-2">
+              <p className="text-xs text-yellow-400">
+                Update check warning: {info.versionCheckError}
+              </p>
+            </div>
+          )}
 
           {!isUpToDate && info.pending.length > 0 && (
             <div className="border-t border-zinc-800 pt-3">

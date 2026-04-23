@@ -516,9 +516,20 @@ function GithubAppCard({
   };
 
   const handleRegister = () => {
-    // Same reason as handleInstall — cookie has to ride along for the
-    // manifest-callback to authenticate the admin back on return.
-    window.location.href = "/api/admin/github-app/register";
+    // Pass the browser's current origin to the server so the manifest's
+    // webhook + callback URLs match what the user is actually accessing
+    // AgentHub through. Matters for installs where compose has
+    // DOMAIN=localhost but the admin is proxying via a tunnel —
+    // window.location.origin is the tunnel URL, so the manifest uses
+    // the tunnel URL, so GitHub can reach it. Inspired by Dokploy's
+    // add-github-provider.tsx which builds its manifest client-side
+    // the same way.
+    //
+    // Same reason as handleInstall for using window.location — cookie
+    // has to ride along for the manifest-callback to authenticate the
+    // admin back on return.
+    const url = `/api/admin/github-app/register?origin=${encodeURIComponent(window.location.origin)}`;
+    window.location.href = url;
   };
 
   const handleUnregister = async () => {
@@ -592,8 +603,11 @@ function GithubAppCard({
             </p>
             <p className="text-xs text-zinc-500">
               You'll be redirected to GitHub to approve the App manifest.
-              The redirect target and webhook URL must be publicly reachable
-              — localhost installs need a tunnel or a real domain first.
+              The manifest uses <b>the URL in your browser's address bar</b>
+              for its webhook + callback URLs, so access AgentHub via a
+              publicly-reachable address (real domain, Cloudflare Tunnel,
+              ngrok) before clicking. GitHub will reject the registration
+              if it can't reach that URL.
             </p>
             <button
               onClick={handleRegister}

@@ -21,9 +21,9 @@ For almost every workflow the App is the right choice. Keep the PAT form for rep
 
 Only someone with admin role on this AgentHub install does this, and only once per install.
 
-**Prerequisite:** The install must be reachable on a public HTTPS domain. GitHub's servers need to reach `https://<your-domain>/api/admin/github-app/manifest-callback` to complete registration, and `https://<your-domain>/api/integrations/github/webhook` to deliver install/uninstall events. Localhost-only installs **cannot** register.
+**Prerequisite:** GitHub's servers need to reach `/api/admin/github-app/manifest-callback` and `/api/integrations/github/webhook` at the URL you're accessing AgentHub through — so you need a public HTTPS URL in the browser's address bar when you click Register. The manifest picks up whatever origin you're on, so a tunnel (Cloudflare Tunnel, ngrok) pointed at a localhost install is enough; you don't need to reinstall or change `DOMAIN` in compose. A hard-localhost browser URL can't register at all — GitHub will reject the manifest.
 
-1. Log in as admin. Go to **Integrations** → "GitHub App" card → **Register GitHub App**.
+1. Log in as admin. **Access AgentHub via your public URL** (tunnel or real domain — don't register from `https://localhost`). Go to **Integrations** → "GitHub App" card → **Register GitHub App**.
 2. Your browser is redirected to github.com with a pre-filled manifest. The App's name is `AgentHub (<your-domain>)` by default.
 3. Choose the account you want to **own** the App (your personal GitHub account or an org you admin) and click **Create GitHub App**.
 4. GitHub redirects back to AgentHub. You'll see `GitHub App registered` in a green banner and the card will show the App name + ID.
