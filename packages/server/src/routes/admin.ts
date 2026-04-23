@@ -11,6 +11,16 @@ import type { AuthUser } from "../middleware/auth.js";
 // installer's renderEnv (which writes AGENTHUB_REPO_DIR).
 const REPO_DIR = "/repo";
 
+// Captured once at module load so /api/admin/version can return a stable
+// "when did this server process start?" timestamp. The UI uses this to
+// tell apart "SHA in /repo has been reset by the updater" (premature —
+// the old container is still serving) from "server process has actually
+// been recreated with the new image" (the real done signal). Without this,
+// the UI declares victory on git reset, ~1-3 minutes before compose
+// force-recreate lands the new image, and users refresh into a stale
+// container serving old assets.
+const SERVER_STARTED_AT = new Date().toISOString();
+
 function runGit(args: string[]): string {
   return execFileSync("git", args, {
     cwd: REPO_DIR,
@@ -206,6 +216,7 @@ export function adminRoutes(sessionManager: SessionManager) {
         behind,
         ahead,
         pending,
+        serverStartedAt: SERVER_STARTED_AT,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "git failed";

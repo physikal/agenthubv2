@@ -122,11 +122,14 @@ rebuild_changed_images() {
     changed="$(git diff --name-only "$from" "$to" -- docker/ packages/ scripts/ || true)"
   fi
   local rebuild_server=0 rebuild_workspace=0 rebuild_updater=0
-  local server_paths=(docker/Dockerfile.server packages/server packages/web packages/agent pnpm-lock.yaml package.json)
+  # packages/docs/ is in server_paths because Dockerfile.server bakes the
+  # Starlight build into dist/public/docs/ at image build time — a docs-only
+  # commit needs a server rebuild or the new pages never reach users.
+  local server_paths=(docker/Dockerfile.server packages/server packages/web packages/agent packages/docs pnpm-lock.yaml package.json)
   local workspace_paths=(docker/Dockerfile.agent-workspace docker/agent-workspace-entrypoint.sh packages/agent)
   local updater_paths=(docker/Dockerfile.updater)
   if [[ -n "$changed" ]]; then
-    if echo "$changed" | grep -qE '^(docker/Dockerfile\.server|packages/server/|packages/web/|packages/agent/|pnpm-lock\.yaml|package\.json)'; then
+    if echo "$changed" | grep -qE '^(docker/Dockerfile\.server|packages/server/|packages/web/|packages/agent/|packages/docs/|pnpm-lock\.yaml|package\.json)'; then
       rebuild_server=1
     fi
     if echo "$changed" | grep -qE '^(docker/Dockerfile\.agent-workspace|docker/agent-workspace-entrypoint\.sh|packages/agent/)'; then
@@ -258,7 +261,7 @@ cmd_update() {
   # "nothing to do" must mean both fresh, not just git-fresh.
   local images_stale=0
   if image_older_than_repo agenthubv2-server:local \
-       docker/Dockerfile.server packages/server packages/web packages/agent \
+       docker/Dockerfile.server packages/server packages/web packages/agent packages/docs \
        pnpm-lock.yaml package.json \
     || image_older_than_repo agenthubv2-workspace:local \
        docker/Dockerfile.agent-workspace docker/agent-workspace-entrypoint.sh packages/agent \
