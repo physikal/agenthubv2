@@ -30,7 +30,16 @@ export function buildManifest(opts: ManifestOptions): Record<string, unknown> {
       contents: "write",
       metadata: "read",
     },
-    default_events: ["installation", "installation_repositories"],
+    // GitHub rejects manifests that list `installation` / `installation_repositories`
+    // in `default_events` with:
+    //   "Default events unsupported: installation and installation_repositories"
+    //   "Default events are not supported by permissions: ..."
+    // because those events aren't repo-scoped webhook subscriptions — they're
+    // app-scoped lifecycle events that GitHub ALWAYS delivers to the app's
+    // webhook URL regardless of default_events. Since that's all we care
+    // about (see `github-integration.ts` webhook handler), we subscribe to
+    // no repo events.
+    default_events: [],
     // Trigger OAuth on install so we can bind the installation to the
     // AgentHub user who initiated it (defense-in-depth with the state
     // token — admins might finish installs in a different browser).

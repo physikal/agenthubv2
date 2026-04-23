@@ -31,11 +31,8 @@ describe("buildManifest", () => {
     });
   });
 
-  it("subscribes to the installation + installation_repositories events", () => {
-    expect(base["default_events"]).toEqual([
-      "installation",
-      "installation_repositories",
-    ]);
+  it("does not declare any default_events (installation + installation_repositories are auto-delivered when a webhook URL is set; declaring them crashes GitHub's manifest validator)", () => {
+    expect(base["default_events"]).toEqual([]);
   });
 
   it("is private (not listed on the Apps marketplace)", () => {
