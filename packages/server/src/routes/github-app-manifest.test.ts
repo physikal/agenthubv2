@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildManifest } from "./github-app-manifest-builder.js";
+import { buildManifest, validateOrigin } from "./github-app-manifest-builder.js";
 
 describe("buildManifest", () => {
   const base = buildManifest({
@@ -51,6 +51,41 @@ describe("buildManifest", () => {
     const hook = base["hook_attributes"] as Record<string, unknown>;
     expect(hook["url"]).toBe(
       "https://agents.example.com/api/integrations/github/webhook",
+    );
+  });
+});
+
+describe("validateOrigin", () => {
+  it("accepts https URLs", () => {
+    expect(validateOrigin("https://host.tld")).toBe("https://host.tld");
+  });
+
+  it("accepts http URLs (localhost / same-LAN installs)", () => {
+    expect(validateOrigin("http://localhost")).toBe("http://localhost");
+  });
+
+  it("strips path and query so window.location.href is safe to pass", () => {
+    expect(validateOrigin("https://host.tld/foo/bar?x=1")).toBe("https://host.tld");
+  });
+
+  it("rejects javascript: URLs", () => {
+    const result = validateOrigin("javascript:alert(1)");
+    expect(result).toBeInstanceOf(Error);
+  });
+
+  it("rejects file: URLs", () => {
+    const result = validateOrigin("file:///etc/passwd");
+    expect(result).toBeInstanceOf(Error);
+  });
+
+  it("rejects non-URL strings", () => {
+    const result = validateOrigin("not-a-url");
+    expect(result).toBeInstanceOf(Error);
+  });
+
+  it("preserves non-default ports (tunnel URLs often run on :8080 etc)", () => {
+    expect(validateOrigin("https://tun.example.com:8443")).toBe(
+      "https://tun.example.com:8443",
     );
   });
 });

@@ -14,15 +14,19 @@
 
 set -euo pipefail
 
-# Surface ANY premature exit with a line number — historically this
-# script's prereq checks could exit silently when stderr got eaten by a
-# pty race in the curl|bash|exec chain, producing a "just stops at
-# launching installer" bug. Trap fires on any error via set -e OR any
-# explicit non-zero exit, and writes to both stdout and stderr so we
-# still see something even if one fd is misbehaving.
+# Surface ANY premature exit with the failing line number — historically
+# this script's prereq checks could exit silently when stderr got eaten
+# by a pty race in the curl|bash|exec chain, producing a "just stops at
+# launching installer" bug. We capture LINENO via an ERR trap (where
+# $LINENO is the failing line) into _fail_line, then format the message
+# in the EXIT trap (where $LINENO would otherwise be the trap's own
+# declaration line — a subtle bash footgun). Writes to both stdout and
+# stderr so we still see something even if one fd is misbehaving.
+_fail_line=0
+trap '_fail_line=$LINENO' ERR
 trap '_rc=$?; if [[ $_rc -ne 0 ]]; then
-  printf "\n[install.sh] aborted (exit %d) at line %d: %s\n" "$_rc" "$LINENO" "${BASH_COMMAND:-unknown}"
-  printf "[install.sh] aborted (exit %d) at line %d: %s\n" "$_rc" "$LINENO" "${BASH_COMMAND:-unknown}" >&2
+  printf "\n[install.sh] aborted (exit %d) near line %d: %s\n" "$_rc" "$_fail_line" "${BASH_COMMAND:-unknown}"
+  printf "[install.sh] aborted (exit %d) near line %d: %s\n" "$_rc" "$_fail_line" "${BASH_COMMAND:-unknown}" >&2
 fi' EXIT
 
 cd "$(dirname "$0")/.."

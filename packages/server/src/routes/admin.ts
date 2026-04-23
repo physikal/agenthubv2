@@ -30,6 +30,19 @@ function runGit(args: string[]): string {
   }).trim();
 }
 
+// Parse a `git rev-list --count` result. Historically `parseInt(raw) || 0`,
+// which silently conflated a legitimate "0" with parse failure on
+// corrupted output. We now return NaN for unparseable input and let the
+// caller treat that as a user-visible error rather than lying "up to
+// date". The callers that remain in this file immediately fall into a
+// catch branch when they see NaN (via `rev-list` throwing on a malformed
+// range, which is the only practical way to produce it), so this is
+// belt-and-suspenders against a future `rev-list` output change.
+function parseCount(raw: string): number {
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : Number.NaN;
+}
+
 export function adminRoutes(sessionManager: SessionManager) {
   const app = new Hono<{ Variables: { user: AuthUser } }>();
 
@@ -195,32 +208,29 @@ export function adminRoutes(sessionManager: SessionManager) {
       const currentDate = runGit(["log", "-1", "--format=%cI", "HEAD"]);
       const currentSubject = runGit(["log", "-1", "--format=%s", "HEAD"]);
 
-      let latestSha = currentSha;
       let latestShort = currentShort;
       let behind = 0;
-      let ahead = 0;
-      let pending: { sha: string; subject: string }[] = [];
+      let pending: readonly { readonly sha: string; readonly subject: string }[] = [];
       let versionCheckError: string | undefined;
 
       try {
-        latestSha = runGit(["rev-parse", "origin/main"]);
+        const latestSha = runGit(["rev-parse", "origin/main"]);
         latestShort = runGit(["rev-parse", "--short", "origin/main"]);
-        behind = parseInt(runGit(["rev-list", "--count", `${currentSha}..${latestSha}`]), 10) || 0;
-        ahead = parseInt(runGit(["rev-list", "--count", `${latestSha}..${currentSha}`]), 10) || 0;
+        behind = parseCount(runGit(["rev-list", "--count", `${currentSha}..${latestSha}`]));
         if (behind > 0) {
           const log = runGit([
             "log",
             "--format=%H\t%s",
             `${currentSha}..${latestSha}`,
           ]);
-          pending = log
-            .split("\n")
-            .filter(Boolean)
-            .slice(0, 10)
-            .map((line) => {
-              const [sha, ...rest] = line.split("\t");
-              return { sha: (sha ?? "").slice(0, 7), subject: rest.join("\t") };
-            });
+          const acc: { readonly sha: string; readonly subject: string }[] = [];
+          for (const line of log.split("\n")) {
+            if (!line) continue;
+            if (acc.length >= 10) break;
+            const [sha, ...rest] = line.split("\t");
+            acc.push({ sha: (sha ?? "").slice(0, 7), subject: rest.join("\t") });
+          }
+          pending = acc;
         }
       } catch {
         // origin/main still unresolvable after widening + fetch. Could be
@@ -232,10 +242,9 @@ export function adminRoutes(sessionManager: SessionManager) {
       }
 
       return c.json({
-        current: { sha: currentShort, fullSha: currentSha, date: currentDate, subject: currentSubject },
-        latest: { sha: latestShort, fullSha: latestSha },
+        current: { sha: currentShort, date: currentDate, subject: currentSubject },
+        latest: { sha: latestShort },
         behind,
-        ahead,
         pending,
         serverStartedAt: SERVER_STARTED_AT,
         ...(versionCheckError !== undefined && { versionCheckError }),
@@ -329,22 +338,48 @@ export function adminRoutes(sessionManager: SessionManager) {
     }
 
     return streamSSE(c, async (stream) => {
+      // stream.writeSSE returns a Promise that can reject when the
+      // client has disconnected. Firing them as `void` was letting
+      // rejections surface as unhandledPromiseRejection, which on
+      // Node 22's default policy crashes the process. Swallow them
+      // here — if the client is gone, our next push will see the
+      // abort signal anyway.
+      const safeWrite = (ev: { data: string; event: string }): void => {
+        stream.writeSSE(ev).catch(() => {});
+      };
+
+      // Tracks whether we've already settled the outer promise. The
+      // docker-logs process's `exit` event and the client's `abort`
+      // can both fire (e.g. proc exits THEN client closes); without
+      // this flag resolve() would run twice, harmless in theory but
+      // smells off and makes cleanup fragile.
+      let settled = false;
+      const resolveOnce = (resolve: () => void) => (): void => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+
+      const isNoSuchContainerLine = (line: string): boolean =>
+        /^Error response from daemon: No such container/.test(line);
+
       // Short-circuit if the container is already gone. Updater
       // containers run with --rm, so after they exit there's a small
       // window where the EventSource reconnects (or a new subscription
       // comes in) and finds nothing. Without this pre-check we'd spawn
-      // `docker logs -f <gone>`, which writes "Error response from
-      // daemon: No such container: …" to stderr, and we'd push that
-      // noise into the modal's build log before the process exits.
+      // `docker logs -f <gone>`, which writes "No such container" to
+      // stderr and we'd push that noise into the modal's build log.
       const inspectProc = spawn("docker", ["inspect", "--format", "{{.Id}}", container], {
         stdio: ["ignore", "pipe", "pipe"],
       });
       const inspectExit = await new Promise<number>((resolve) => {
-        inspectProc.on("exit", (code) => resolve(code ?? 1));
-        inspectProc.on("error", () => resolve(1));
+        let done = false;
+        const finish = (code: number) => { if (!done) { done = true; resolve(code); } };
+        inspectProc.on("exit", (code) => finish(code ?? 1));
+        inspectProc.on("error", () => finish(1));
       });
       if (inspectExit !== 0) {
-        void stream.writeSSE({ data: "", event: "end" });
+        safeWrite({ data: "", event: "end" });
         return;
       }
 
@@ -352,12 +387,12 @@ export function adminRoutes(sessionManager: SessionManager) {
         stdio: ["ignore", "pipe", "pipe"],
       });
 
-      // docker writes build progress to both streams; merge them into
-      // one event stream. SSE can't carry raw newlines in a single
-      // `data:` field so split to one event per line — the client can
-      // append them directly.
+      // docker writes build progress to both stdout and stderr; merge
+      // them into one event stream. SSE can't carry raw newlines in a
+      // single `data:` field so split to one event per line — the
+      // client can append them directly.
       let buffer = "";
-      const pushChunk = (chunk: Buffer) => {
+      const pushChunk = (chunk: Buffer): void => {
         buffer += chunk.toString("utf8");
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? ""; // keep partial line for next chunk
@@ -366,29 +401,33 @@ export function adminRoutes(sessionManager: SessionManager) {
           // logs can race with a container that --rm's between inspect
           // and logs attach. Drop the resulting error so it doesn't
           // reach the modal.
-          if (/^Error response from daemon: No such container/.test(line)) {
-            continue;
-          }
-          void stream.writeSSE({ data: line, event: "log" });
+          if (isNoSuchContainerLine(line)) continue;
+          safeWrite({ data: line, event: "log" });
         }
       };
       proc.stdout.on("data", pushChunk);
       proc.stderr.on("data", pushChunk);
 
-      // Resolves the outer async function (and closes the stream)
-      // when the docker-logs process exits, for any reason.
+      // Belt-and-suspenders client-disconnect handling. Hono's
+      // stream.onAbort fires via the Response body's AbortController;
+      // the request-level AbortSignal is a second path that fires on
+      // the underlying HTTP socket close. Either one triggers proc
+      // teardown — whichever arrives first wins via settled-once.
       await new Promise<void>((resolve) => {
+        const done = resolveOnce(resolve);
+        const killProc = (): void => {
+          if (!proc.killed) proc.kill("SIGTERM");
+          done();
+        };
         proc.on("exit", () => {
-          if (buffer.length > 0 && !/^Error response from daemon: No such container/.test(buffer)) {
-            void stream.writeSSE({ data: buffer, event: "log" });
+          if (buffer.length > 0 && !isNoSuchContainerLine(buffer)) {
+            safeWrite({ data: buffer, event: "log" });
           }
-          void stream.writeSSE({ data: "", event: "end" });
-          resolve();
+          safeWrite({ data: "", event: "end" });
+          done();
         });
-        stream.onAbort(() => {
-          proc.kill("SIGTERM");
-          resolve();
-        });
+        stream.onAbort(killProc);
+        c.req.raw.signal.addEventListener("abort", killProc, { once: true });
       });
     });
   });

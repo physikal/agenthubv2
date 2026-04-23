@@ -5,13 +5,11 @@ import { eq } from "drizzle-orm";
 
 import { db, schema } from "../db/index.js";
 import type { AuthUser } from "../middleware/auth.js";
-import { DeployError } from "../services/deploy-error.js";
 import {
   upsertGithubAppConfig,
   isGithubAppRegistered,
-  loadGithubAppCreds,
 } from "../services/providers/github-app.js";
-import { buildManifest } from "./github-app-manifest-builder.js";
+import { buildManifest, validateOrigin } from "./github-app-manifest-builder.js";
 
 /**
  * GitHub App manifest flow (admin-only). One-time setup that registers an
@@ -43,25 +41,48 @@ function defaultPublicUrl(): string | null {
   return url ? url.replace(/\/$/, "") : null;
 }
 
-// Pin the origin to a sane HTTPS URL before we hand it to the manifest
-// builder. We don't block localhost — GitHub will reject it on submit and
-// the admin sees the error there, and a same-box `https://localhost`
-// install where the admin is proxying via a tunnel is a legitimate case
-// (the browser-side origin IS the tunnel). We do block anything we can't
-// parse as a URL, because a malformed manifest URL crashes the form post.
-function validateOrigin(raw: string): { ok: string } | { err: string } {
-  let url: URL;
+// CSRF defence for GET /register. Uses Fetch Metadata (Sec-Fetch-Site)
+// when present and falls back to Origin/Referer host-matching against
+// AGENTHUB_PUBLIC_URL for callers that don't set it. Returns null when
+// the request is same-origin, an error string otherwise.
+function rejectCsrfOnRegister(c: {
+  req: { header: (name: string) => string | undefined };
+}): string | null {
+  const siteHeader = c.req.header("Sec-Fetch-Site");
+  if (siteHeader) {
+    // Modern browsers always set this. "same-origin" is what we want;
+    // "same-site" allows subdomains (acceptable — a compromised
+    // subdomain of the AgentHub host can already do worse); "none" is
+    // a direct-typed URL (also fine, no cross-site context).
+    if (siteHeader === "cross-site") {
+      return "Refusing to register a GitHub App from a cross-site request. Click Register from the Integrations page instead of following an external link.";
+    }
+    return null;
+  }
+  // Pre-Fetch-Metadata fallback: require Origin/Referer to match the
+  // install's public URL host. If AGENTHUB_PUBLIC_URL isn't set we can't
+  // enforce the check, so we accept — localhost-dev environments often
+  // run here, and this path is also the curl case which is useful for
+  // debugging.
+  const publicUrl = defaultPublicUrl();
+  if (!publicUrl) return null;
+  const expectedHost = (() => {
+    try { return new URL(publicUrl).host; } catch { return null; }
+  })();
+  if (!expectedHost) return null;
+  const origin = c.req.header("Origin") ?? c.req.header("Referer");
+  if (!origin) {
+    return "Refusing to register a GitHub App without an Origin or Referer header. Modern browsers set these automatically.";
+  }
   try {
-    url = new URL(raw);
+    const originHost = new URL(origin).host;
+    if (originHost !== expectedHost) {
+      return `Refusing to register: request came from "${originHost}" but this install is at "${expectedHost}".`;
+    }
   } catch {
-    return { err: `"${raw}" is not a valid URL — expected https://your-host.example` };
+    return `Refusing to register: malformed Origin/Referer header "${origin}".`;
   }
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    return { err: `"${raw}" must be http(s) — got protocol "${url.protocol}"` };
-  }
-  // Strip trailing slash + any path/query so callers can pass
-  // window.location.href without surprises.
-  return { ok: `${url.protocol}//${url.host}` };
+  return null;
 }
 
 export function githubAppManifestRoutes() {
@@ -90,6 +111,29 @@ export function githubAppManifestRoutes() {
   app.get("/register", async (c) => {
     const user = c.get("user");
 
+    // CSRF defence. This endpoint renders a self-submitting form with a
+    // manifest whose redirect_url + callback_urls + hook_attributes come
+    // from the `origin` query param. Without a same-origin check, an
+    // attacker could lure an admin to `evil.com`, which links to
+    // `/register?origin=https://evil.com`; the browser carries the
+    // admin's Lax cookie, we build a manifest pointing at evil.com, and
+    // if the admin approves the "Create App" page they land on, GitHub
+    // sends the one-time `code` to evil.com's manifest-callback — which
+    // exchanges it for the App's private key + webhook secret + client
+    // secret. The server-side state check doesn't help because the
+    // callback never reaches us.
+    //
+    // Enforced via Sec-Fetch-Site (Fetch Metadata Request Headers) and
+    // an Origin/Referer host match on AGENTHUB_PUBLIC_URL's host. Modern
+    // browsers always set Sec-Fetch-Site; for older clients and curl we
+    // fall back to Origin/Referer. If both are missing, bail.
+    const csrfError = rejectCsrfOnRegister(c);
+    if (csrfError) {
+      return c.redirect(
+        `/integrations?githubAppError=${encodeURIComponent(csrfError)}`,
+      );
+    }
+
     // Prefer the browser-side origin the client passed us. Fall back to
     // AGENTHUB_PUBLIC_URL only for callers without a browser (e.g., a
     // curl debugging session) — the Integrations UI always sends it.
@@ -102,13 +146,34 @@ export function githubAppManifestRoutes() {
         )}`,
       );
     }
-    const validated = validateOrigin(rawOrigin);
-    if ("err" in validated) {
+    const publicUrl = validateOrigin(rawOrigin);
+    if (publicUrl instanceof Error) {
       return c.redirect(
-        `/integrations?githubAppError=${encodeURIComponent(validated.err)}`,
+        `/integrations?githubAppError=${encodeURIComponent(publicUrl.message)}`,
       );
     }
-    const publicUrl = validated.ok;
+
+    // The origin param must also host-match the request origin. Without
+    // this, the CSRF check above could be bypassed by a first-party
+    // attacker who owns a subdomain — they'd pass the Sec-Fetch-Site
+    // same-origin check (if the browser considers them same-site) but
+    // still smuggle in a rogue manifest URL.
+    const requestOrigin = c.req.header("Origin") ?? c.req.header("Referer");
+    if (requestOrigin) {
+      try {
+        const reqHost = new URL(requestOrigin).host;
+        const paramHost = new URL(publicUrl).host;
+        if (reqHost !== paramHost) {
+          return c.redirect(
+            `/integrations?githubAppError=${encodeURIComponent(
+              `origin param host "${paramHost}" doesn't match the request host "${reqHost}" — refusing to register an App with a URL you don't control`,
+            )}`,
+          );
+        }
+      } catch {
+        // malformed Origin/Referer — already rejected by CSRF check above
+      }
+    }
 
     // Purge stale state rows lazily — no cron needed for a low-volume
     // admin-only endpoint.
@@ -218,23 +283,20 @@ export function githubAppManifestRoutes() {
   // side of the registration; admin needs to delete the App at
   // github.com/organizations/X/settings/apps/<slug> to fully tear down.
   // We only purge our knowledge of it so a fresh Register starts clean.
-  app.delete("/", async (c) => {
-    if (!isGithubAppRegistered()) {
+  app.delete("/", (c) => {
+    // The slug is on the SQLite row (non-secret — it's the App's public
+    // URL slug on github.com). Reading it from there saves an Infisical
+    // round trip that `loadGithubAppCreds` would otherwise take just to
+    // echo the slug back to the caller.
+    const row = db.select().from(schema.githubAppConfig).get();
+    if (!row) {
       return c.json({ error: "GitHub App not registered" }, 404);
-    }
-    // Load creds (for the user's reference) before blowing them away.
-    let slug: string | undefined;
-    try {
-      const creds = await loadGithubAppCreds();
-      slug = creds.slug;
-    } catch {
-      // Swallow — we're tearing down anyway.
     }
     db.delete(schema.githubAppConfig).run();
     // Secrets under /system/github-app/* are intentionally left in place;
     // operators concerned about lingering key material should rotate
     // the App on GitHub's side (which generates fresh secrets anyway).
-    return c.json({ unregistered: true, slug });
+    return c.json({ unregistered: true, slug: row.slug });
   });
 
   return app;
@@ -267,8 +329,16 @@ async function exchangeManifestCode(code: string): Promise<ManifestConversion> {
     throw new Error(`GitHub returned ${String(resp.status)}: ${body}`);
   }
   const data = (await resp.json()) as Partial<ManifestConversion>;
-  // Defensive: GitHub returns every field on success, but if any go missing
-  // we'd rather fail cleanly than persist a half-configured row.
+  assertManifestConversion(data);
+  return data;
+}
+
+// Asserts function. Replaces a `return data as ManifestConversion` cast
+// that silently survived any renamed field in ManifestConversion — with
+// this form, a rename breaks type-check, not runtime behavior.
+function assertManifestConversion(
+  data: Partial<ManifestConversion>,
+): asserts data is ManifestConversion {
   for (const key of [
     "id",
     "slug",
@@ -283,7 +353,6 @@ async function exchangeManifestCode(code: string): Promise<ManifestConversion> {
       throw new Error(`GitHub manifest response missing required field: ${key}`);
     }
   }
-  return data as ManifestConversion;
 }
 
 function renderAutoSubmitForm(postUrl: string, manifestJson: string): string {

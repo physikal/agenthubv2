@@ -348,7 +348,13 @@ function renderFields(
       return (
         <>
           <div className="col-span-2 text-xs text-yellow-400/90 bg-yellow-500/5 border border-yellow-500/20 rounded px-3 py-2">
-            Legacy path. Prefer the <strong>GitHub App</strong> card at the top of this page — per-repo scoped, auto-rotating 1-hour tokens, revokes instantly on uninstall. Use this PAT form only if you need repo creation (the App is scoped without administration:write) or if the App isn't registered on this install.
+            <strong>Deprecated — scheduled for removal on 2026-09-01.</strong>{" "}
+            Use the <strong>GitHub App</strong> card at the top of this page instead:
+            per-repo scoped, auto-rotating 1-hour tokens, revokes instantly on uninstall,
+            no password management. The one remaining use case for this PAT form is
+            creating brand-new repos (the App deliberately doesn't request{" "}
+            <code>administration:write</code>). If you need that, open an issue so we
+            can track it before removal.
           </div>
           {input(
             "pat",
@@ -772,33 +778,45 @@ export function Integrations() {
 
   useEffect(() => {
     const url = new URL(window.location.href);
-    const added = url.searchParams.get("githubInstallAdded");
-    const updated = url.searchParams.get("githubInstallUpdated");
-    const installErr = url.searchParams.get("githubInstallError");
-    // Admin manifest-flow callback params — same shape as the user install
-    // ones but point at the app-registration roundtrip, not the per-user
-    // install. Handled on the same page now that the admin card lives here.
-    const registered = url.searchParams.get("githubAppRegistered");
-    const registerErr = url.searchParams.get("githubAppError");
-    if (added === "1") {
-      setGhBanner({ kind: "success", text: "GitHub App installed." });
-      url.searchParams.delete("githubInstallAdded");
-      window.history.replaceState({}, "", url.toString());
-    } else if (updated === "1") {
-      setGhBanner({ kind: "success", text: "GitHub App repos updated." });
-      url.searchParams.delete("githubInstallUpdated");
-      window.history.replaceState({}, "", url.toString());
-    } else if (installErr) {
-      setGhBanner({ kind: "error", text: `GitHub App install failed: ${installErr}` });
-      url.searchParams.delete("githubInstallError");
-      window.history.replaceState({}, "", url.toString());
-    } else if (registered === "1") {
-      setGhBanner({ kind: "success", text: "GitHub App registered." });
-      url.searchParams.delete("githubAppRegistered");
-      window.history.replaceState({}, "", url.toString());
-    } else if (registerErr) {
-      setGhBanner({ kind: "error", text: `GitHub App registration failed: ${registerErr}` });
-      url.searchParams.delete("githubAppError");
+    // Table-driven banner reader. The if/else-if chain this replaces
+    // silently dropped any param after the first match — which would
+    // bite when GitHub redirected with both an install param and a
+    // register param (a re-register racing with an install). Now we
+    // emit the first matching rule's banner and delete ALL matched
+    // params from the URL so they don't stick around on refresh.
+    const BANNER_RULES = [
+      {
+        param: "githubInstallAdded", match: "1",
+        banner: { kind: "success" as const, text: "GitHub App installed." },
+      },
+      {
+        param: "githubInstallUpdated", match: "1",
+        banner: { kind: "success" as const, text: "GitHub App repos updated." },
+      },
+      {
+        param: "githubAppRegistered", match: "1",
+        banner: { kind: "success" as const, text: "GitHub App registered." },
+      },
+      {
+        param: "githubInstallError",
+        mkBanner: (v: string) => ({ kind: "error" as const, text: `GitHub App install failed: ${v}` }),
+      },
+      {
+        param: "githubAppError",
+        mkBanner: (v: string) => ({ kind: "error" as const, text: `GitHub App registration failed: ${v}` }),
+      },
+    ];
+    let firstBanner: { kind: "success" | "error"; text: string } | null = null;
+    for (const rule of BANNER_RULES) {
+      const v = url.searchParams.get(rule.param);
+      if (!v) continue;
+      if ("match" in rule && v !== rule.match) continue;
+      const banner = "mkBanner" in rule ? rule.mkBanner(v) : rule.banner;
+      firstBanner ??= banner;
+      url.searchParams.delete(rule.param);
+    }
+    if (firstBanner) {
+      setGhBanner(firstBanner);
       window.history.replaceState({}, "", url.toString());
     }
   }, []);

@@ -29,7 +29,9 @@ If **Pending commits** is non-empty, the **Update now** button is live.
 
 ### Update now
 
-Clicking **Update now** spawns a one-shot `agenthubv2-updater:local` container that:
+Clicking **Update now** opens a progress modal with four phases — **Fetching latest code** → **Rebuilding images** → **Restarting server** → **Ready** — a live elapsed-time counter, and a scrollable **Build log** pane that streams docker-build output in real time so you can see exactly what stage is running.
+
+Under the hood the server spawns a one-shot `agenthubv2-updater:local` container that:
 
 1. `git pull` inside the repo mount (`/repo` in the server container).
 2. `docker build` any images whose source changed.
@@ -38,7 +40,9 @@ Clicking **Update now** spawns a one-shot `agenthubv2-updater:local` container t
 5. Runs any pending DB migrations.
 6. Exits.
 
-The server reboots during step 4, so the UI briefly disconnects. It reconnects once the new server is healthy; the page auto-reloads.
+The server reboots during step 4, so the stream briefly disconnects. The modal's phase detection combines `/repo` SHA changes with the server process's `serverStartedAt` timestamp, so it only flips to **Ready** once the new image is actually serving. Typical runtime: 5–10s for a no-source-change release, 3–8 min for a server-image rebuild, up to 15 min for a cold double rebuild. The modal has a 20-minute safety timeout.
+
+You can hit **Hide** to dismiss the modal while the update runs — a banner on the Version card re-opens it. When the new server is healthy, a **Reload now** button applies a cache-buster and loads the fresh frontend.
 
 Same code path as `agenthub update` from the host shell — both spawn the same updater image, so fixes land identically no matter which trigger you use.
 

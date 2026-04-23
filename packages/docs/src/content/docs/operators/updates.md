@@ -11,7 +11,9 @@ AgentHub has two ways to trigger an update. They share the same code.
 
 The button is live only when `origin/main` has commits your install doesn't. Pending commits appear above the button so you can see what's coming.
 
-Clicking **Update now** posts to `/api/admin/update`. The server spawns a one-shot `agenthubv2-updater:local` container that runs `agenthub update` inside itself, streaming progress back over an `EventSource`. The UI disconnects briefly during the server recreate, then auto-reloads when health returns.
+Clicking **Update now** opens a modal that walks through four phases — **Fetching latest code**, **Rebuilding images**, **Restarting server**, **Ready** — with a live elapsed-time counter and a scrollable **Build log** pane streaming the updater container's docker-build output in real time. Under the hood the server spawns a one-shot `agenthubv2-updater:local` container that runs `agenthub update` inside itself; the modal's phase detection combines `/repo` SHA changes with the server process's `serverStartedAt` timestamp so it only flips to "Ready" once the new image is actually serving.
+
+You can hide the modal while the update runs — a banner on the Version card re-opens it. The modal has a 20-minute safety timeout; if a real stall is suspected past that, `agenthub logs` on the host is the next step. When the new server is healthy, a **Reload now** button applies a cache-buster and loads the fresh UI.
 
 Any pending DB migrations run as part of this step.
 
@@ -44,7 +46,7 @@ Same code path. See [The agenthub CLI](/docs/operators/cli/).
 
 ## Upgrade timing
 
-A typical `agenthub update` on a no-source-change release takes **5–10 seconds** (just recreating the server container). A release that rebuilds the workspace image is **2–5 minutes** (debian base + node + cli installs).
+A typical `agenthub update` on a no-source-change release takes **5–10 seconds** (just recreating the server container). A release that rebuilds the server image is **3–8 minutes**, and one that rebuilds both server + workspace images from a cold Docker cache can run **up to 15 minutes**. The progress modal's Build log pane makes it obvious which stage you're in.
 
 The **browser disconnects briefly** during step 5 — the UI shows a "reconnecting..." state and polls `/api/health`. When it comes back, the page auto-reloads so the new frontend bundle is served.
 

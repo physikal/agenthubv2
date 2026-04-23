@@ -60,9 +60,21 @@ cmd_version() {
   printf 'AgentHub at %s\n  commit : %s\n  date   : %s\n' "$AGENTHUB_DIR" "$sha" "$date"
 }
 
+# Ensure `origin/main` is actually a tracked remote ref before we try to
+# resolve it. `git clone --depth=1 --branch <X>` (what quick-install.sh
+# uses when AGENTHUB_BRANCH is set) installs a narrow refspec that only
+# tracks branch X — so for installs started from a non-main branch,
+# `origin/main` doesn't exist and `git rev-parse origin/main` throws.
+# Widening is idempotent; fetch is best-effort.
+ensure_origin_main_tracked() {
+  cd "$AGENTHUB_DIR"
+  git remote set-branches --add origin main 2>/dev/null || true
+  git fetch --quiet origin main 2>/dev/null || true
+}
+
 cmd_status() {
   cd "$AGENTHUB_DIR"
-  git fetch --quiet origin main
+  ensure_origin_main_tracked
   local local_sha remote_sha ahead behind
   local_sha="$(git rev-parse HEAD)"
   remote_sha="$(git rev-parse origin/main)"
@@ -249,7 +261,7 @@ cmd_update() {
     fi
   fi
 
-  git fetch --quiet origin main
+  ensure_origin_main_tracked
   local local_sha remote_sha
   local_sha="$(git rev-parse HEAD)"
   remote_sha="$(git rev-parse origin/main)"

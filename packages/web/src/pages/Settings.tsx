@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api.ts";
 import { useAuthStore } from "../stores/auth.ts";
 import {
+  PHASE_RANK,
   UpdateProgressModal,
   type UpdatePhase,
 } from "../components/UpdateProgressModal.tsx";
@@ -10,7 +11,6 @@ interface VersionInfo {
   current: { sha: string; date: string; subject: string };
   latest: { sha: string };
   behind: number;
-  ahead: number;
   pending: { sha: string; subject: string }[];
   // ISO timestamp captured at server-process boot. Bumping this (vs the
   // value cached when the user clicked Update) is how the UI knows the
@@ -157,35 +157,38 @@ export function Settings() {
   );
 }
 
-interface UpdateProgress {
-  readonly phase: UpdatePhase;
+// Shared shape across all update phases. Split into a DU below so the
+// compiler enforces "errorMessage is set ⇔ phase === 'failed'".
+interface UpdateProgressBase {
   readonly baseline: { sha: string; serverStartedAt: string | undefined };
   readonly targetSha: string;
   readonly startedAt: number; // Date.now() when update began
   readonly modalOpen: boolean; // user may "Hide" while update keeps running
-  readonly errorMessage?: string;
   // Name of the updater container spawned by POST /api/admin/update.
   // Used as the key for the SSE log stream and nothing else.
   readonly containerName?: string;
 }
-
-// Monotonic rank — used to reject out-of-order phase transitions so a
-// transient network blip can't bounce us from "restarting" back to
-// "building". `failed` sits above everything so "any → failed" still wins.
-const PHASE_RANK: Record<UpdatePhase, number> = {
-  pulling: 0,
-  building: 1,
-  restarting: 2,
-  done: 3,
-  failed: 99,
-};
+type UpdateProgress =
+  | (UpdateProgressBase & { readonly phase: "pulling" | "building" | "restarting" })
+  | (UpdateProgressBase & { readonly phase: "done" })
+  | (UpdateProgressBase & { readonly phase: "failed"; readonly errorMessage: string });
 
 // 20 min safety timeout. Cold double-rebuild (server + workspace images
 // from scratch on a VM with no Docker layer cache) can run 8-15 min on
-// its own; bumping to 20 gives operators room without falsely reporting
-// a stall. If an update genuinely hangs past 20 min, `agenthub logs` on
-// the host is the right next step.
+// its own; 20 gives operators room without falsely reporting a stall.
 const UPDATE_TIMEOUT_MS = 20 * 60 * 1000;
+
+// Live log buffer cap. Keeps the DOM tree bounded during a long build
+// — the stream keeps flowing server-side, we just ring-buffer client-
+// side.
+const MAX_LOG_LINES = 200;
+
+function stripAnsi(line: string): string {
+  // eslint-disable-next-line no-control-regex
+  return line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+}
+
+type StreamState = "idle" | "connecting" | "live" | "ended" | "error";
 
 function VersionPanel() {
   const [info, setInfo] = useState<VersionInfo | null>(null);
@@ -193,11 +196,17 @@ function VersionPanel() {
   const [checking, setChecking] = useState(false);
   const [opMessage, setOpMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [progress, setProgress] = useState<UpdateProgress | null>(null);
-  // Stable ref for the polling effect to read the latest progress without
-  // re-subscribing on every phase transition (which would clobber the
-  // interval timer and restart the 5-min timeout).
+  // Mirror of `progress` readable from inside the polling interval
+  // without making `progress` a dependency of the polling effect (which
+  // would clobber the interval + 20-min timeout on every phase
+  // transition). Assigned via useEffect rather than inline-in-render
+  // to keep React strict-mode happy.
   const progressRef = useRef<UpdateProgress | null>(null);
-  progressRef.current = progress;
+  useEffect(() => { progressRef.current = progress; }, [progress]);
+  // Log stream state lives here (not inside the modal) so clicking Hide
+  // doesn't kill the EventSource — the modal is a pure render surface.
+  const [logLines, setLogLines] = useState<readonly string[]>([]);
+  const [streamState, setStreamState] = useState<StreamState>("idle");
 
   const fetchVersion = useCallback(async (): Promise<VersionInfo | null> => {
     try {
@@ -219,92 +228,128 @@ function VersionPanel() {
 
   useEffect(() => { void fetchVersion(); }, [fetchVersion]);
 
+  // Monotonic phase reducer — rejects regressions so a transient network
+  // blip can't bounce us from "restarting" back to "building". Extracted
+  // so the polling effect can stay compact and so the logic is unit-
+  // testable without a DOM.
+  const advancePhase = useCallback((nextPhase: UpdatePhase, extra: Partial<UpdateProgress> = {}) => {
+    setProgress((cur) => {
+      if (!cur) return cur;
+      if (PHASE_RANK[nextPhase] < PHASE_RANK[cur.phase]) return cur;
+      if (nextPhase === "failed") {
+        const errorMessage = (extra as { errorMessage?: string }).errorMessage ?? "Update failed";
+        return { ...cur, ...extra, phase: "failed", errorMessage };
+      }
+      if (nextPhase === "done") return { ...cur, ...extra, phase: "done" };
+      return { ...cur, ...extra, phase: nextPhase };
+    });
+  }, []);
+
   // Single polling effect for the lifetime of an update. Poll every 2s and
   // map the outcome onto a monotonic phase machine:
   //
   //   pulling    → building   SHA moved (git reset --hard committed)
   //   building   → restarting fetch failed (compose recreate killed the server)
-  //   restarting → done       fetch succeeded + SHA matches target + serverStartedAt moved
+  //   restarting → done       fetch succeeded with new serverStartedAt
   //
-  // We never regress — a transient fetch failure during "building" would
-  // incorrectly flip to "restarting", but the worst case is a slightly-early
-  // phase transition, not a wrong terminal state. The done gate (both SHA
-  // and serverStartedAt must move) stays strict.
+  // Forgiving done: once phase has reached "restarting" (implies we've
+  // actually observed the server go down), a fresh serverStartedAt is
+  // enough — the SHA check becomes redundant because a baseline with a
+  // stale cached SHA would stall the strict check forever.
   useEffect(() => {
     if (!progress) return;
-    const advance = (next: Partial<UpdateProgress>) => {
-      setProgress((cur) => {
-        if (!cur) return cur;
-        if (next.phase && PHASE_RANK[next.phase] < PHASE_RANK[cur.phase]) return cur;
-        return { ...cur, ...next };
-      });
-    };
 
     const interval = setInterval(() => {
       void (async () => {
-        const cur = progressRef.current;
-        if (!cur) return;
-        if (cur.phase === "done" || cur.phase === "failed") return;
+        const snap = progressRef.current;
+        if (!snap) return;
+        if (snap.phase === "done" || snap.phase === "failed") return;
+
         try {
           const res = await api("/api/admin/version");
           if (!res.ok) return;
           const next = (await res.json()) as VersionInfo;
-          const shaMoved = next.current.sha !== cur.baseline.sha;
+          const shaMoved = next.current.sha !== snap.baseline.sha;
           const restarted =
             !!next.serverStartedAt &&
-            next.serverStartedAt !== cur.baseline.serverStartedAt;
-          // Strict done: both SHA and serverStartedAt have moved. This is
-          // the normal success path.
+            next.serverStartedAt !== snap.baseline.serverStartedAt;
           if (shaMoved && restarted) {
             setInfo(next);
-            advance({ phase: "done" });
+            advancePhase("done");
             return;
           }
-          // Forgiving done: once we've reached "restarting" (meaning we
-          // previously saw fetches fail, indicating the server really did
-          // go down) and the server is now responding with a different
-          // serverStartedAt than our baseline, we're done. The SHA check
-          // becomes optional here to survive edge cases where the browser
-          // captured a stale `info.current.sha` (cached response, the
-          // refspec-widener mid-update, etc) — ending up with a baseline
-          // that matches the target. Left alone, the strict check stalls
-          // the modal forever even though the actual server is happy.
-          if (cur.phase === "restarting" && restarted) {
+          if (snap.phase === "restarting" && restarted) {
             setInfo(next);
-            advance({ phase: "done" });
+            advancePhase("done");
             return;
           }
-          if (shaMoved && cur.phase === "pulling") {
-            advance({ phase: "building" });
+          if (shaMoved && snap.phase === "pulling") {
+            advancePhase("building");
           }
         } catch {
-          // Fetch failed — server is most likely mid-recreate. We only flip
-          // to "restarting" once we've previously seen the SHA move; before
-          // that, a failure is more plausibly a transient blip than the
-          // actual compose recreate (which happens after the long image
-          // build).
-          if (cur.phase === "building") {
-            advance({ phase: "restarting" });
+          // Fetch failed — server is most likely mid-recreate. Only flip
+          // to "restarting" once we've seen "building" (implies SHA
+          // moved): earlier failures are more plausibly transient.
+          if (snap.phase === "building") {
+            advancePhase("restarting");
           }
         }
       })();
     }, 2_000);
 
+    // Anchor the timeout to startedAt so tab-close-and-reopen doesn't
+    // extend the deadline. If the remaining window is already negative
+    // (user reopened a tab where the update ran long), fire immediately.
+    const remaining = Math.max(0, progress.startedAt + UPDATE_TIMEOUT_MS - Date.now());
     const timeout = setTimeout(() => {
-      setProgress((cur) =>
-        cur && cur.phase !== "done"
-          ? {
-              ...cur,
-              phase: "failed",
-              errorMessage:
-                "Update didn't finish within 20 minutes. Check `agenthub logs` or `docker logs $(docker ps -a --filter name=agenthub-updater --format '{{.Names}}' | head -1)` on the host to see where it stalled.",
-            }
-          : cur,
-      );
-    }, UPDATE_TIMEOUT_MS);
+      advancePhase("failed", {
+        errorMessage:
+          "Update didn't finish within 20 minutes. Check `agenthub logs` or `docker logs $(docker ps -a --filter name=agenthub-updater --format '{{.Names}}' | head -1)` on the host to see where it stalled.",
+      });
+    }, remaining);
 
     return () => { clearInterval(interval); clearTimeout(timeout); };
-  }, [progress?.startedAt]);
+  }, [progress?.startedAt, advancePhase]);
+
+  // Live log stream. Scoped to containerName so the connection is
+  // established once per update and torn down on cleanup. `aborted`
+  // flag guards against a race where the browser fires `onerror`
+  // microtask-later, after cleanup — without the flag, stale state
+  // sets leak onto the next update.
+  useEffect(() => {
+    const container = progress?.containerName;
+    if (!container) return;
+    if (progress?.phase === "done" || progress?.phase === "failed") return;
+
+    setStreamState("connecting");
+    let aborted = false;
+    const es = new EventSource(
+      `/api/admin/update/logs?container=${encodeURIComponent(container)}`,
+    );
+    es.addEventListener("log", (e) => {
+      if (aborted) return;
+      setStreamState("live");
+      const line = stripAnsi((e as MessageEvent<string>).data);
+      setLogLines((prev) => {
+        const next = [...prev, line];
+        return next.length > MAX_LOG_LINES ? next.slice(next.length - MAX_LOG_LINES) : next;
+      });
+    });
+    es.addEventListener("end", () => {
+      if (aborted) return;
+      setStreamState("ended");
+      es.close();
+    });
+    es.onerror = () => {
+      if (aborted) return;
+      // Normal close also fires `error` — only treat it as a real
+      // error if we never got a line through. Close explicitly so
+      // EventSource doesn't auto-reconnect to a vanished container.
+      setStreamState((prev) => (prev === "live" ? "ended" : "error"));
+      es.close();
+    };
+    return () => { aborted = true; es.close(); };
+  }, [progress?.containerName, progress?.phase]);
 
   const handleCheck = async () => {
     setChecking(true);
@@ -325,6 +370,8 @@ function VersionPanel() {
   const handleUpdate = async () => {
     if (!info) return;
     setOpMessage(null);
+    setLogLines([]); // Clear any lingering buffer from a prior run.
+    setStreamState("idle");
     setProgress({
       phase: "pulling",
       baseline: { sha: info.current.sha, serverStartedAt: info.serverStartedAt },
@@ -336,15 +383,9 @@ function VersionPanel() {
       const res = await api("/api/admin/update", { method: "POST" });
       if (!res.ok) {
         const body = (await res.json()) as { error?: string };
-        setProgress((cur) =>
-          cur
-            ? {
-                ...cur,
-                phase: "failed",
-                errorMessage: body.error ?? `HTTP ${String(res.status)}`,
-              }
-            : cur,
-        );
+        advancePhase("failed", {
+          errorMessage: body.error ?? `HTTP ${String(res.status)}`,
+        });
       } else {
         const body = (await res.json()) as { containerName?: string };
         const cn = body.containerName;
@@ -353,15 +394,9 @@ function VersionPanel() {
         }
       }
     } catch (e) {
-      setProgress((cur) =>
-        cur
-          ? {
-              ...cur,
-              phase: "failed",
-              errorMessage: e instanceof Error ? e.message : "Update failed",
-            }
-          : cur,
-      );
+      advancePhase("failed", {
+        errorMessage: e instanceof Error ? e.message : "Update failed",
+      });
     }
   };
 
@@ -515,8 +550,9 @@ function VersionPanel() {
           fromSha={progress.baseline.sha}
           toSha={progress.targetSha}
           startedAt={progress.startedAt}
-          {...(progress.containerName !== undefined && { containerName: progress.containerName })}
-          {...(progress.errorMessage !== undefined && { errorMessage: progress.errorMessage })}
+          logLines={logLines}
+          streamState={streamState}
+          {...(progress.phase === "failed" && { errorMessage: progress.errorMessage })}
           onHide={handleHide}
           onReload={handleReload}
         />
