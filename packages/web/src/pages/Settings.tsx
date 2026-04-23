@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api.ts";
 import { useAuthStore } from "../stores/auth.ts";
+import {
+  UpdateProgressModal,
+  type UpdatePhase,
+} from "../components/UpdateProgressModal.tsx";
 
 interface VersionInfo {
   current: { sha: string; date: string; subject: string };
@@ -147,18 +151,39 @@ export function Settings() {
   );
 }
 
+interface UpdateProgress {
+  readonly phase: UpdatePhase;
+  readonly baseline: { sha: string; serverStartedAt: string | undefined };
+  readonly targetSha: string;
+  readonly startedAt: number; // Date.now() when update began
+  readonly modalOpen: boolean; // user may "Hide" while update keeps running
+  readonly errorMessage?: string;
+}
+
+// Monotonic rank — used to reject out-of-order phase transitions so a
+// transient network blip can't bounce us from "restarting" back to
+// "building". `failed` sits above everything so "any → failed" still wins.
+const PHASE_RANK: Record<UpdatePhase, number> = {
+  pulling: 0,
+  building: 1,
+  restarting: 2,
+  done: 3,
+  failed: 99,
+};
+
+const UPDATE_TIMEOUT_MS = 300_000; // 5 min — image rebuilds can run long
+
 function VersionPanel() {
   const [info, setInfo] = useState<VersionInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [updating, setUpdating] = useState(false);
   const [checking, setChecking] = useState(false);
   const [opMessage, setOpMessage] = useState<{ text: string; error: boolean } | null>(null);
-  // Snapshot taken when the user clicks "Update now" — used as the "before"
-  // reference when polling so we can tell old-container responses apart
-  // from new-container responses.
-  const [updateBaseline, setUpdateBaseline] = useState<
-    { sha: string; serverStartedAt: string | undefined } | null
-  >(null);
+  const [progress, setProgress] = useState<UpdateProgress | null>(null);
+  // Stable ref for the polling effect to read the latest progress without
+  // re-subscribing on every phase transition (which would clobber the
+  // interval timer and restart the 5-min timeout).
+  const progressRef = useRef<UpdateProgress | null>(null);
+  progressRef.current = progress;
 
   const fetchVersion = useCallback(async (): Promise<VersionInfo | null> => {
     try {
@@ -180,50 +205,76 @@ function VersionPanel() {
 
   useEffect(() => { void fetchVersion(); }, [fetchVersion]);
 
-  // While an update is in flight, poll every 2s. The `git reset --hard`
-  // step inside the updater flips /repo's SHA within ~15s of clicking
-  // Update, but the server process isn't recreated until `docker build`
-  // + `compose up --force-recreate` finish — typically 1-3 minutes later.
-  // So "done" = (new SHA) AND (server process has actually restarted,
-  // detected via `serverStartedAt` moving). Without the second gate, the
-  // UI used to declare victory on the git reset and send users into a
-  // still-old container serving stale assets.
+  // Single polling effect for the lifetime of an update. Poll every 2s and
+  // map the outcome onto a monotonic phase machine:
+  //
+  //   pulling    → building   SHA moved (git reset --hard committed)
+  //   building   → restarting fetch failed (compose recreate killed the server)
+  //   restarting → done       fetch succeeded + SHA matches target + serverStartedAt moved
+  //
+  // We never regress — a transient fetch failure during "building" would
+  // incorrectly flip to "restarting", but the worst case is a slightly-early
+  // phase transition, not a wrong terminal state. The done gate (both SHA
+  // and serverStartedAt must move) stays strict.
   useEffect(() => {
-    if (!updating || !updateBaseline) return;
+    if (!progress) return;
+    const advance = (next: Partial<UpdateProgress>) => {
+      setProgress((cur) => {
+        if (!cur) return cur;
+        if (next.phase && PHASE_RANK[next.phase] < PHASE_RANK[cur.phase]) return cur;
+        return { ...cur, ...next };
+      });
+    };
+
     const interval = setInterval(() => {
       void (async () => {
+        const cur = progressRef.current;
+        if (!cur) return;
+        if (cur.phase === "done" || cur.phase === "failed") return;
         try {
           const res = await api("/api/admin/version");
           if (!res.ok) return;
           const next = (await res.json()) as VersionInfo;
-          const shaMoved = next.current.sha !== updateBaseline.sha;
+          const shaMoved = next.current.sha !== cur.baseline.sha;
           const restarted =
             !!next.serverStartedAt &&
-            next.serverStartedAt !== updateBaseline.serverStartedAt;
+            next.serverStartedAt !== cur.baseline.serverStartedAt;
           if (shaMoved && restarted) {
             setInfo(next);
-            setUpdating(false);
-            setUpdateBaseline(null);
-            setOpMessage({
-              text: `Updated to ${next.current.sha}. Reload the page to pick up the new UI.`,
-              error: false,
-            });
+            advance({ phase: "done" });
+            return;
           }
-        } catch { /* expected during recreate */ }
+          if (shaMoved && cur.phase === "pulling") {
+            advance({ phase: "building" });
+          }
+        } catch {
+          // Fetch failed — server is most likely mid-recreate. We only flip
+          // to "restarting" once we've previously seen the SHA move; before
+          // that, a failure is more plausibly a transient blip than the
+          // actual compose recreate (which happens after the long image
+          // build).
+          if (cur.phase === "building") {
+            advance({ phase: "restarting" });
+          }
+        }
       })();
     }, 2_000);
-    // Safety: stop polling after 5 minutes regardless (image rebuilds can
-    // run long on slow disks).
+
     const timeout = setTimeout(() => {
-      setUpdating(false);
-      setUpdateBaseline(null);
-      setOpMessage({
-        text: "Update didn't finish within 5 minutes — check `agenthub logs` on the host.",
-        error: true,
-      });
-    }, 300_000);
+      setProgress((cur) =>
+        cur && cur.phase !== "done"
+          ? {
+              ...cur,
+              phase: "failed",
+              errorMessage:
+                "Update didn't finish within 5 minutes. Check `agenthub logs` on the host to see where it stalled.",
+            }
+          : cur,
+      );
+    }, UPDATE_TIMEOUT_MS);
+
     return () => { clearInterval(interval); clearTimeout(timeout); };
-  }, [updating, updateBaseline]);
+  }, [progress?.startedAt]);
 
   const handleCheck = async () => {
     setChecking(true);
@@ -242,33 +293,58 @@ function VersionPanel() {
   };
 
   const handleUpdate = async () => {
-    if (!confirm("Update AgentHub? The server will restart during the update — expect 1-3 minutes of downtime.")) return;
     if (!info) return;
-    setUpdating(true);
-    setUpdateBaseline({
-      sha: info.current.sha,
-      serverStartedAt: info.serverStartedAt,
-    });
     setOpMessage(null);
+    setProgress({
+      phase: "pulling",
+      baseline: { sha: info.current.sha, serverStartedAt: info.serverStartedAt },
+      targetSha: info.latest.sha,
+      startedAt: Date.now(),
+      modalOpen: true,
+    });
     try {
       const res = await api("/api/admin/update", { method: "POST" });
       if (!res.ok) {
         const body = (await res.json()) as { error?: string };
-        setOpMessage({ text: body.error ?? `HTTP ${String(res.status)}`, error: true });
-        setUpdating(false);
-        setUpdateBaseline(null);
-      } else {
-        setOpMessage({
-          text: "Update running — rebuilding image and recreating the server. This can take 1-3 minutes.",
-          error: false,
-        });
+        setProgress((cur) =>
+          cur
+            ? {
+                ...cur,
+                phase: "failed",
+                errorMessage: body.error ?? `HTTP ${String(res.status)}`,
+              }
+            : cur,
+        );
       }
     } catch (e) {
-      setOpMessage({ text: e instanceof Error ? e.message : "Update failed", error: true });
-      setUpdating(false);
-      setUpdateBaseline(null);
+      setProgress((cur) =>
+        cur
+          ? {
+              ...cur,
+              phase: "failed",
+              errorMessage: e instanceof Error ? e.message : "Update failed",
+            }
+          : cur,
+      );
     }
   };
+
+  const handleHide = () => {
+    setProgress((cur) => (cur ? { ...cur, modalOpen: false } : cur));
+  };
+
+  const handleReload = () => {
+    // Append a cache-buster so any intermediate cache (browser, proxy)
+    // can't hand back the stale index.html that still references the old
+    // asset hashes. The server's serveStatic does revalidate via
+    // Last-Modified on a refresh, but proxies can be cranky — the query
+    // param guarantees a fresh request.
+    const url = new URL(window.location.href);
+    url.searchParams.set("_r", String(Date.now()));
+    window.location.href = url.toString();
+  };
+
+  const updating = progress !== null && progress.phase !== "done" && progress.phase !== "failed";
 
   if (loadError) {
     return (
@@ -300,73 +376,105 @@ function VersionPanel() {
     year: "numeric",
   });
 
-  return (
-    <section>
-      <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-4">Version</h3>
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
-        <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${isUpToDate ? "bg-green-400" : "bg-yellow-400"}`} />
-          <span className="text-sm text-zinc-300">
-            {isUpToDate ? "Up to date" : `${String(info.behind)} update${info.behind === 1 ? "" : "s"} available`}
-          </span>
-        </div>
+  const showResumeBanner = progress !== null && !progress.modalOpen;
+  const resumeModal = () =>
+    setProgress((cur) => (cur ? { ...cur, modalOpen: true } : cur));
 
-        <div className="text-sm space-y-1">
-          <div className="flex justify-between">
-            <span className="text-zinc-500">Installed</span>
-            <code className="text-zinc-200">{info.current.sha}</code>
+  return (
+    <>
+      <section>
+        <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-4">Version</h3>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full ${isUpToDate ? "bg-green-400" : "bg-yellow-400"}`} />
+            <span className="text-sm text-zinc-300">
+              {isUpToDate ? "Up to date" : `${String(info.behind)} update${info.behind === 1 ? "" : "s"} available`}
+            </span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-zinc-500">Date</span>
-            <span className="text-zinc-200">{dateLabel}</span>
-          </div>
-          {!isUpToDate && (
+
+          <div className="text-sm space-y-1">
             <div className="flex justify-between">
-              <span className="text-zinc-500">Latest</span>
-              <code className="text-zinc-200">{info.latest.sha}</code>
+              <span className="text-zinc-500">Installed</span>
+              <code className="text-zinc-200">{info.current.sha}</code>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-zinc-500">Date</span>
+              <span className="text-zinc-200">{dateLabel}</span>
+            </div>
+            {!isUpToDate && (
+              <div className="flex justify-between">
+                <span className="text-zinc-500">Latest</span>
+                <code className="text-zinc-200">{info.latest.sha}</code>
+              </div>
+            )}
+          </div>
+
+          {!isUpToDate && info.pending.length > 0 && (
+            <div className="border-t border-zinc-800 pt-3">
+              <p className="text-xs text-zinc-500 mb-2">Pending commits</p>
+              <ul className="space-y-1">
+                {info.pending.map((c) => (
+                  <li key={c.sha} className="text-xs flex gap-2">
+                    <code className="text-zinc-500 shrink-0">{c.sha}</code>
+                    <span className="text-zinc-300 truncate">{c.subject}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
-        </div>
 
-        {!isUpToDate && info.pending.length > 0 && (
-          <div className="border-t border-zinc-800 pt-3">
-            <p className="text-xs text-zinc-500 mb-2">Pending commits</p>
-            <ul className="space-y-1">
-              {info.pending.map((c) => (
-                <li key={c.sha} className="text-xs flex gap-2">
-                  <code className="text-zinc-500 shrink-0">{c.sha}</code>
-                  <span className="text-zinc-300 truncate">{c.subject}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div className="flex gap-2 pt-2">
-          <button
-            onClick={() => void handleCheck()}
-            disabled={updating || checking}
-            className="px-3 py-1.5 text-xs text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-800 disabled:opacity-40 transition-colors"
-          >
-            {checking ? "Checking..." : "Check for updates"}
-          </button>
-          {!isUpToDate && (
+          <div className="flex gap-2 pt-2">
             <button
-              onClick={() => void handleUpdate()}
-              disabled={updating}
-              className="px-3 py-1.5 text-xs font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-500 disabled:opacity-50 transition-colors"
+              onClick={() => void handleCheck()}
+              disabled={updating || checking}
+              className="px-3 py-1.5 text-xs text-zinc-300 border border-zinc-700 rounded-lg hover:bg-zinc-800 disabled:opacity-40 transition-colors"
             >
-              {updating ? "Updating..." : "Update now"}
+              {checking ? "Checking..." : "Check for updates"}
+            </button>
+            {!isUpToDate && (
+              <button
+                onClick={() => void handleUpdate()}
+                disabled={updating}
+                className="px-3 py-1.5 text-xs font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-500 disabled:opacity-50 transition-colors"
+              >
+                {updating ? "Updating..." : "Update now"}
+              </button>
+            )}
+          </div>
+
+          {showResumeBanner && progress && (
+            <button
+              onClick={resumeModal}
+              className="w-full text-left text-xs bg-purple-500/10 border border-purple-500/30 rounded-lg px-3 py-2 hover:bg-purple-500/20 transition-colors"
+            >
+              <span className="text-purple-300">
+                {progress.phase === "done"
+                  ? "Update finished — click to reload."
+                  : progress.phase === "failed"
+                    ? "Update failed — click to see details."
+                    : "Update running in background — click to watch."}
+              </span>
             </button>
           )}
-        </div>
 
-        {opMessage && (
-          <p className={`text-xs ${opMessage.error ? "text-red-400" : "text-green-400"}`}>
-            {opMessage.text}
-          </p>
-        )}
-      </div>
-    </section>
+          {opMessage && (
+            <p className={`text-xs ${opMessage.error ? "text-red-400" : "text-green-400"}`}>
+              {opMessage.text}
+            </p>
+          )}
+        </div>
+      </section>
+
+      {progress && progress.modalOpen && (
+        <UpdateProgressModal
+          phase={progress.phase}
+          fromSha={progress.baseline.sha}
+          toSha={progress.targetSha}
+          {...(progress.errorMessage !== undefined && { errorMessage: progress.errorMessage })}
+          onHide={handleHide}
+          onReload={handleReload}
+        />
+      )}
+    </>
   );
 }
