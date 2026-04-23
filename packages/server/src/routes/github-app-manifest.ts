@@ -45,6 +45,43 @@ function requirePublicUrl(): string {
   return url.replace(/\/$/, "");
 }
 
+// GitHub's app-manifest endpoint rejects any `hook_attributes.url` /
+// `redirect_url` / `callback_urls` that aren't resolvable over the public
+// Internet, emitting errors like
+//   "Hook url is not supported because it isn't reachable over the public
+//    Internet (localhost)"
+// We catch this BEFORE bouncing the admin through github.com so they don't
+// fill out the manifest just to crash at the end. The list is deliberately
+// narrow — anything that isn't obviously non-public (private IPs, .local
+// TLDs) still goes to GitHub since GitHub is authoritative.
+function rejectIfNotPubliclyReachable(publicUrl: string): string | null {
+  let host: string;
+  try {
+    host = new URL(publicUrl).hostname.toLowerCase();
+  } catch {
+    return `AGENTHUB_PUBLIC_URL="${publicUrl}" is not a valid URL — set DOMAIN in compose/.env to your public hostname.`;
+  }
+  if (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host === "0.0.0.0" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local")
+  ) {
+    return (
+      `This install is at "${host}", which GitHub can't reach. ` +
+      `Registering a GitHub App requires a public HTTPS domain ` +
+      `(GitHub's servers need to POST to the manifest-callback and webhook URLs). ` +
+      `Either put this install behind a real domain / tunnel ` +
+      `(Cloudflare Tunnel, ngrok) and re-install with DOMAIN=<that-hostname>, ` +
+      `or skip the App and use a per-user Personal Access Token on the ` +
+      `Integrations page.`
+    );
+  }
+  return null;
+}
+
 export function githubAppManifestRoutes() {
   const app = new Hono<{ Variables: { user: AuthUser } }>();
 
@@ -78,6 +115,16 @@ export function githubAppManifestRoutes() {
         return c.json({ error: err.message }, err.status as 500);
       }
       throw err;
+    }
+
+    const unreachable = rejectIfNotPubliclyReachable(publicUrl);
+    if (unreachable) {
+      // Redirect back to the Integrations page with a readable banner
+      // rather than dumping JSON — the admin clicked a button expecting
+      // a UI, not a curl response.
+      return c.redirect(
+        `/integrations?githubAppError=${encodeURIComponent(unreachable)}`,
+      );
     }
 
     // Purge stale state rows lazily — no cron needed for a low-volume
