@@ -8,6 +8,8 @@
  *   AGENT_TOKEN  — Per-session agent token
  */
 
+import { introspectSource } from "./source-introspect.js";
+
 // --- Config ---
 
 const PORTAL_URL = process.env["PORTAL_URL"] ?? "";
@@ -57,7 +59,7 @@ interface JsonRpcResponse {
 const TOOLS = [
   {
     name: "deploy",
-    description: "Deploy an app to the user's hosting node. Idempotent — calling `deploy` with the same `name` updates the existing deployment in place (reuses port, domain, DNS). Exactly one source must be specified:\n- `source_path`: project directory to build and run. On docker/DigitalOcean infra, the source is SCP'd to the hosting node and built with `docker compose up -d --build`. On Dokploy infra, source_path is auto-converted to a git-pull — the directory MUST be a clean, pushed git repo (Dokploy clones `origin` at the current branch). Push to GitHub first with `gh repo create --source=. --push` if it isn't.\n- `compose_config`: raw docker-compose.yml for pre-built images (n8n, Grafana, etc.). Works on all providers.\n- `git_url`: HTTPS Git URL for a pre-pushed repo. Dokploy infra only.",
+    description: "Deploy an app. Idempotent — same `name` updates in place.\n\nTwo-step flow:\n1. Call with `source_path` but NO `target`. The tool introspects the source (Dockerfile? compose? static site? git state?) and returns a `choose_target` response listing viable deploy targets with short descriptions. Surface these to the user.\n2. Call again with the chosen `target` (e.g. `local`, `dokploy:<infra_name>`, `do-apps:<infra_name>`, `gh-pages:<infra_name>`).\n\nSource modes (pick one):\n- `source_path`: project directory. On docker/DigitalOcean infra, SCP'd + built remotely. On Dokploy infra, the directory must be a clean, pushed git repo (auto-converted to a git-pull). On local-docker, copied from this workspace into the AgentHub host and built there.\n- `compose_config`: raw docker-compose.yml for pre-built images (n8n, Grafana, etc.).\n- `git_url`: HTTPS Git URL. Dokploy only.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -105,7 +107,11 @@ const TOOLS = [
         },
         infra_name: {
           type: "string" as const,
-          description: "Name of the hosting infrastructure config to deploy to (e.g. 'proxmox-home', 'do-staging'). If omitted, uses the first ready config.",
+          description: "Name of the hosting infrastructure config to deploy to (e.g. 'proxmox-home', 'do-staging'). If omitted, uses the first ready config. Prefer `target` for explicit routing.",
+        },
+        target: {
+          type: "string" as const,
+          description: "Explicit deploy target returned by the choose_target response. Values: `local` (local-docker on this AgentHub host), `dokploy:<infra_name>`, `do-apps:<infra_name>`, `gh-pages:<infra_name>`. When omitted, the tool returns `choose_target` instead of deploying.",
         },
         dns_name: {
           type: "string" as const,
@@ -177,6 +183,60 @@ async function handleToolCall(
 ): Promise<{ content: { type: string; text: string }[] }> {
   switch (name) {
     case "deploy": {
+      const sourcePath =
+        (args["source_path"] as string | undefined) ?? process.cwd();
+      const target = args["target"] as string | undefined;
+
+      // Step 1: no `target` → introspect + ask the server what's viable.
+      if (!target) {
+        const srcIntrospect =
+          args["source_path"] || args["compose_config"] || args["git_url"]
+            ? introspectSource(sourcePath)
+            : null;
+        const analysis = srcIntrospect ?? {
+          path: sourcePath,
+          hasDockerfile: false,
+          hasCompose: Boolean(args["compose_config"]),
+          composePath: null,
+          isStaticSite: false,
+          hasPackageJson: false,
+          gitState: null,
+        };
+        const probe = await apiCall("POST", "/targets", {
+          source_analysis: analysis,
+        });
+        if (!probe.ok) {
+          const err = probe.data as { error?: string };
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Could not list targets: ${err.error ?? "Unknown error"}`,
+              },
+            ],
+          };
+        }
+        const payload = probe.data as {
+          source_analysis: unknown;
+          viable_targets: Array<{
+            id: string;
+            label: string;
+            description: string;
+            requires?: string[];
+          }>;
+        };
+        const chooseTarget = {
+          status: "choose_target",
+          source_analysis: analysis,
+          viable_targets: payload.viable_targets,
+          hint: "Rerun `deploy` with the `target` arg set to one of viable_targets[].id. No automatic default — pick the one you want.",
+        };
+        return {
+          content: [{ type: "text", text: JSON.stringify(chooseTarget, null, 2) }],
+        };
+      }
+
+      // Step 2: `target` is set — build the request body and deploy.
       const body: Record<string, unknown> = {
         name: args["name"],
         domain: args["domain"],
@@ -189,12 +249,33 @@ async function handleToolCall(
       } else if (args["compose_config"]) {
         body["composeConfig"] = args["compose_config"];
       } else {
-        body["sourcePath"] = (args["source_path"] as string | undefined) ?? process.cwd();
+        body["sourcePath"] = sourcePath;
       }
       if (args["compose_path"]) body["composePath"] = args["compose_path"];
       if (args["env_vars"] && typeof args["env_vars"] === "object") {
         body["envVars"] = args["env_vars"];
       }
+
+      // Translate target → infraName. `local` uses the zero-setup
+      // local-docker row the server seeded for the user. Other prefixes
+      // carry the user-configured infra name after the colon.
+      if (target === "local") {
+        body["infraName"] = "Local Docker";
+      } else {
+        const colon = target.indexOf(":");
+        if (colon === -1) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Unknown target "${target}". Expected \`local\` or \`<kind>:<infra_name>\`.`,
+              },
+            ],
+          };
+        }
+        body["infraName"] = target.slice(colon + 1);
+      }
+
       if (args["infra_name"]) body["infraName"] = args["infra_name"];
       if (args["dns_name"]) body["dnsName"] = args["dns_name"];
       const result = await apiCall("POST", "", body);
@@ -209,7 +290,7 @@ async function handleToolCall(
       const data = result.data as { id: string; url: string | null };
       const msg = data.url
         ? `${verb} started. ID: ${data.id}\nURL: ${data.url} (will be live once build completes)`
-        : `${verb} started. ID: ${data.id} (internal only)`;
+        : `${verb} started. ID: ${data.id} — poll list_deployments for the URL once the build completes.`;
       return { content: [{ type: "text", text: msg }] };
     }
 
