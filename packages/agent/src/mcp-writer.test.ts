@@ -157,6 +157,23 @@ describe("registerAgentDeployMcp", () => {
     expect(cfg.mcpServers["agentdeploy"]).toBeDefined();
   });
 
+  it("refuses to write when portalUrl or agentToken is empty", () => {
+    const logs: string[] = [];
+    registerAgentDeployMcp({
+      mcpBinary: "/opt/agenthub-agent/mcp-deploy.js",
+      portalUrl: "",
+      agentToken: "",
+      coderHome: home,
+      log: (line) => logs.push(line),
+    });
+    // No files should exist under the fake home.
+    const { existsSync } = require("node:fs") as typeof import("node:fs");
+    expect(existsSync(CLAUDE_PATH(home))).toBe(false);
+    expect(existsSync(OPENCODE_PATH(home))).toBe(false);
+    expect(existsSync(DROID_PATH(home))).toBe(false);
+    expect(logs.some((l) => /skipped.*PORTAL_URL/.test(l))).toBe(true);
+  });
+
   it("continues writing other CLIs if one fails", () => {
     // Simulate an unwritable target for Claude by making the file's parent
     // read-only after creating a stale path. Skip on platforms where we
