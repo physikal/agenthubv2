@@ -1,28 +1,47 @@
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
 import { resolveInfraConfig } from "../secrets/helpers.js";
+import { mintTokenForUser } from "./github-app.js";
 
 /**
  * GitHub auth integration — NOT a hosting provider (agents don't "deploy
- * to GitHub" as a runtime target). The integration stores the user's PAT
- * so other providers (DO App Platform, GitHub Pages) can:
- *   - create a repo on demand
- *   - push local source to that repo
- *   - read repo metadata
+ * to GitHub" as a runtime target). Two sources of creds, unified:
  *
- * Token scope: fine-grained PAT with
- *   `administration:write` + `contents:write` + `pages:write`
- * restricted to a single org/user. Stored in Infisical via the
- * existing splitSecrets path (/users/{userId}/integrations/github).
+ *   - GitHub App installation (preferred): 1-hour installation token minted
+ *     from the platform App registered by an admin. Per-repo scoped,
+ *     auto-rotating, instant revoke on uninstall.
+ *   - Legacy PAT (fallback): user-provided Personal Access Token stored in
+ *     Infisical. Long-lived, user-managed scope.
+ *
+ * Both present `Authorization: Bearer <token>` to api.github.com, so
+ * downstream HTTP helpers don't need to know which source they're using.
+ * The `source` field lets callers that do App-incompatible operations
+ * (e.g. repo creation, which needs administration:write we don't request
+ * for the App) branch with a friendlier error.
  */
 
 export interface GitHubCreds {
+  /** The bearer token, whether a PAT or a short-lived App installation token. */
   pat: string;
   /** Default owner for new repos (user login or org). */
   owner: string;
+  /** Where `pat` came from — drives capability decisions in callers. */
+  source: "github-app" | "pat";
 }
 
 export async function loadGitHubCreds(userId: string): Promise<GitHubCreds | null> {
+  // App installation wins when present. Network call (mints a fresh token),
+  // so surface its own errors to the caller rather than swallowing — if
+  // the App's in a bad state, we'd rather know than silently PAT-fallback.
+  const appToken = await mintTokenForUser(userId);
+  if (appToken) {
+    return {
+      pat: appToken.token,
+      owner: appToken.accountLogin,
+      source: "github-app",
+    };
+  }
+
   const row = db
     .select()
     .from(schema.infrastructureConfigs)
@@ -43,7 +62,7 @@ export async function loadGitHubCreds(userId: string): Promise<GitHubCreds | nul
   )) as { pat?: string; owner?: string };
 
   if (!merged.pat || !merged.owner) return null;
-  return { pat: merged.pat, owner: merged.owner };
+  return { pat: merged.pat, owner: merged.owner, source: "pat" };
 }
 
 async function gh<T>(
