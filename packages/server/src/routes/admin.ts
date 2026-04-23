@@ -329,6 +329,25 @@ export function adminRoutes(sessionManager: SessionManager) {
     }
 
     return streamSSE(c, async (stream) => {
+      // Short-circuit if the container is already gone. Updater
+      // containers run with --rm, so after they exit there's a small
+      // window where the EventSource reconnects (or a new subscription
+      // comes in) and finds nothing. Without this pre-check we'd spawn
+      // `docker logs -f <gone>`, which writes "Error response from
+      // daemon: No such container: …" to stderr, and we'd push that
+      // noise into the modal's build log before the process exits.
+      const inspectProc = spawn("docker", ["inspect", "--format", "{{.Id}}", container], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const inspectExit = await new Promise<number>((resolve) => {
+        inspectProc.on("exit", (code) => resolve(code ?? 1));
+        inspectProc.on("error", () => resolve(1));
+      });
+      if (inspectExit !== 0) {
+        void stream.writeSSE({ data: "", event: "end" });
+        return;
+      }
+
       const proc = spawn("docker", ["logs", "-f", container], {
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -343,6 +362,13 @@ export function adminRoutes(sessionManager: SessionManager) {
         const lines = buffer.split("\n");
         buffer = lines.pop() ?? ""; // keep partial line for next chunk
         for (const line of lines) {
+          // Defense-in-depth: even after the inspect pre-check, docker
+          // logs can race with a container that --rm's between inspect
+          // and logs attach. Drop the resulting error so it doesn't
+          // reach the modal.
+          if (/^Error response from daemon: No such container/.test(line)) {
+            continue;
+          }
           void stream.writeSSE({ data: line, event: "log" });
         }
       };
@@ -353,7 +379,7 @@ export function adminRoutes(sessionManager: SessionManager) {
       // when the docker-logs process exits, for any reason.
       await new Promise<void>((resolve) => {
         proc.on("exit", () => {
-          if (buffer.length > 0) {
+          if (buffer.length > 0 && !/^Error response from daemon: No such container/.test(buffer)) {
             void stream.writeSSE({ data: buffer, event: "log" });
           }
           void stream.writeSSE({ data: "", event: "end" });
