@@ -27,7 +27,7 @@ export interface ProvisionResult {
 }
 
 export interface HostingProvider {
-  readonly name: "docker" | "digitalocean" | "dokploy";
+  readonly name: "docker" | "digitalocean" | "dokploy" | "local-docker";
 
   /** Shallow validation of the config the user submitted. No network calls. */
   validate(config: Record<string, unknown>): ProviderConfigCheck;
