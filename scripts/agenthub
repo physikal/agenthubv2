@@ -152,15 +152,15 @@ rebuild_changed_images() {
   fi
   if [[ "$rebuild_server" -eq 1 ]]; then
     msg "rebuilding agenthubv2-server:local"
-    $SUDO docker build -q -f "$AGENTHUB_DIR/docker/Dockerfile.server" -t agenthubv2-server:local "$AGENTHUB_DIR"
+    $SUDO docker build -f "$AGENTHUB_DIR/docker/Dockerfile.server" -t agenthubv2-server:local "$AGENTHUB_DIR"
   fi
   if [[ "$rebuild_workspace" -eq 1 ]]; then
     msg "rebuilding agenthubv2-workspace:local"
-    $SUDO docker build -q -f "$AGENTHUB_DIR/docker/Dockerfile.agent-workspace" -t agenthubv2-workspace:local "$AGENTHUB_DIR"
+    $SUDO docker build -f "$AGENTHUB_DIR/docker/Dockerfile.agent-workspace" -t agenthubv2-workspace:local "$AGENTHUB_DIR"
   fi
   if [[ "$rebuild_updater" -eq 1 ]]; then
     msg "rebuilding agenthubv2-updater:local"
-    $SUDO docker build -q -f "$AGENTHUB_DIR/docker/Dockerfile.updater" -t agenthubv2-updater:local "$AGENTHUB_DIR"
+    $SUDO docker build -f "$AGENTHUB_DIR/docker/Dockerfile.updater" -t agenthubv2-updater:local "$AGENTHUB_DIR"
   fi
 }
 
