@@ -233,6 +233,13 @@ export function adminRoutes(sessionManager: SessionManager) {
     const jobId = randomUUID();
     const containerName = `agenthub-updater-${jobId.slice(0, 8)}`;
 
+    // Pass through AGENTHUB_OWNER so the updater's EXIT trap restores the
+    // repo's pre-run uid:gid after root-side git writes. Without this the
+    // updater container leaves root-owned objects under .git/ that break
+    // the operator's next non-sudo `git` call. Empty = updater falls back
+    // to package.json stat (upgrades from older installs).
+    const owner = process.env["AGENTHUB_OWNER"] ?? "";
+
     try {
       spawn(
         "docker",
@@ -244,6 +251,7 @@ export function adminRoutes(sessionManager: SessionManager) {
           "-v", `${repoDir}:/repo:rw`,
           "-v", "/var/run/docker.sock:/var/run/docker.sock",
           "-e", "AGENTHUB_DIR=/repo",
+          "-e", `AGENTHUB_OWNER=${owner}`,
           "agenthubv2-updater:local",
           "update",
         ],

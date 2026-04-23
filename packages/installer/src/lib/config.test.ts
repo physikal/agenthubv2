@@ -77,6 +77,19 @@ describe("renderEnv", () => {
     const env = renderEnv(cfg);
     expect(env).toContain("AGENTHUB_PUBLIC_HOST=192.168.1.42");
   });
+
+  it("emits AGENTHUB_OWNER blank by default", () => {
+    const cfg = emptyConfig();
+    const env = renderEnv(cfg);
+    expect(env).toContain("AGENTHUB_OWNER=");
+  });
+
+  it("carries an explicit ownerUidGid through to the env file", () => {
+    const cfg = emptyConfig();
+    cfg.ownerUidGid = "1000:1000";
+    const env = renderEnv(cfg);
+    expect(env).toContain("AGENTHUB_OWNER=1000:1000");
+  });
 });
 
 describe("applyEnvOverrides", () => {
@@ -92,6 +105,7 @@ describe("applyEnvOverrides", () => {
       AGENTHUB_DOKPLOY_PROJECT_ID: "proj",
       AGENTHUB_DOKPLOY_ENVIRONMENT_ID: "env",
       AGENTHUB_PUBLIC_HOST: "10.0.0.5",
+      AGENTHUB_OWNER: "1000:1000",
     });
     expect(out.mode).toBe("dokploy-remote");
     expect(out.domain).toBe("agents.acme.io");
@@ -100,6 +114,7 @@ describe("applyEnvOverrides", () => {
     expect(out.dokployUrl).toBe("https://dokploy.acme.io");
     expect(out.dokployEnvironmentId).toBe("env");
     expect(out.publicHost).toBe("10.0.0.5");
+    expect(out.ownerUidGid).toBe("1000:1000");
   });
 
   it("leaves unrelated fields alone", () => {

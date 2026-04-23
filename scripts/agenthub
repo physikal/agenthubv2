@@ -22,17 +22,21 @@ ok()   { printf '%s[ok]%s %s\n'        "$c_grn"  "$c_reset" "$*"; }
 warn() { printf '%s[warn]%s %s\n'      "$c_yel"  "$c_reset" "$*" >&2; }
 die()  { printf '%s[error]%s %s\n'     "$c_red"  "$c_reset" "$*" >&2; exit 1; }
 
-# Load AGENTHUB_DIR from (in order) env → /etc/agenthub/config → error.
-# Env-first so the web-UI update container can pass AGENTHUB_DIR=/repo
-# without shipping /etc/agenthub/config into the image.
+# Load AGENTHUB_DIR + AGENTHUB_OWNER from env → /etc/agenthub/config.
+# Env wins (the updater container passes values via -e without mounting
+# /etc/agenthub). Config is the source of truth on the host shell.
 CONFIG_FILE="${AGENTHUB_CONFIG:-/etc/agenthub/config}"
+if [[ -r "$CONFIG_FILE" ]]; then
+  _env_DIR="${AGENTHUB_DIR:-}"
+  _env_OWNER="${AGENTHUB_OWNER:-}"
+  # shellcheck disable=SC1090
+  . "$CONFIG_FILE"
+  [[ -n "$_env_DIR"   ]] && AGENTHUB_DIR="$_env_DIR"
+  [[ -n "$_env_OWNER" ]] && AGENTHUB_OWNER="$_env_OWNER"
+  unset _env_DIR _env_OWNER
+fi
 if [[ -z "${AGENTHUB_DIR:-}" ]]; then
-  if [[ -r "$CONFIG_FILE" ]]; then
-    # shellcheck disable=SC1090
-    . "$CONFIG_FILE"
-  else
-    die "AGENTHUB_DIR not set and $CONFIG_FILE not found. Reinstall, or export AGENTHUB_DIR=/path/to/agenthubv2."
-  fi
+  die "AGENTHUB_DIR not set and $CONFIG_FILE not found. Reinstall, or export AGENTHUB_DIR=/path/to/agenthubv2."
 fi
 : "${AGENTHUB_DIR:?AGENTHUB_DIR not set}"
 [[ -d "$AGENTHUB_DIR/.git" ]] || die "$AGENTHUB_DIR is not a git repo — did the install change location?"
@@ -175,18 +179,31 @@ cmd_update() {
   cd "$AGENTHUB_DIR"
 
   # When the updater runs inside the agenthubv2-updater container, every
-  # git + filesystem write in this script happens as container-root (uid 0),
-  # which on the host bind mount means root-owned files the operator's
-  # shell user can't touch without sudo. Capture the repo's pre-run owner
-  # (package.json is always present and was written by the install user)
-  # and restore ownership on exit so the host user keeps clean git access.
+  # git + filesystem write happens as container-root (uid 0), which on the
+  # host bind mount means root-owned files the operator's shell user can't
+  # touch without sudo. Restore ownership on exit.
+  #
+  # Resolution order for target owner:
+  #   1. $AGENTHUB_OWNER — recorded at install time in /etc/agenthub/config
+  #      (or passed via -e to the updater container). Authoritative, survives
+  #      historical drift where package.json itself is already root-owned.
+  #   2. stat package.json — fallback for upgrades from older installs that
+  #      predate the AGENTHUB_OWNER var. Ignored when drifted to 0:0 so we
+  #      don't perpetuate an already-broken state.
   local repo_owner=""
-  if [[ "$(id -u)" -eq 0 ]] && [[ -f "$AGENTHUB_DIR/package.json" ]]; then
-    repo_owner="$(stat -c '%u:%g' "$AGENTHUB_DIR/package.json" 2>/dev/null || true)"
+  if [[ "$(id -u)" -eq 0 ]]; then
+    repo_owner="${AGENTHUB_OWNER:-}"
+    if [[ -z "$repo_owner" ]] && [[ -f "$AGENTHUB_DIR/package.json" ]]; then
+      local stat_owner
+      stat_owner="$(stat -c '%u:%g' "$AGENTHUB_DIR/package.json" 2>/dev/null || true)"
+      [[ -n "$stat_owner" && "$stat_owner" != "0:0" ]] && repo_owner="$stat_owner"
+    fi
     if [[ -n "$repo_owner" && "$repo_owner" != "0:0" ]]; then
       # Restore ownership on every exit path, including errors.
       # shellcheck disable=SC2064
       trap "chown -R '$repo_owner' '$AGENTHUB_DIR' 2>/dev/null || true" EXIT
+    else
+      warn "can't determine install owner — repo may drift to root ownership. Set AGENTHUB_OWNER=<uid>:<gid> in /etc/agenthub/config and re-run."
     fi
   fi
 
