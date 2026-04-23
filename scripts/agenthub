@@ -83,16 +83,25 @@ cmd_status() {
   compose ps --format "table {{.Service}}\t{{.State}}\t{{.Status}}"
 }
 
-# True if the local image is older than the latest commit touching any of
-# the given paths relative to $AGENTHUB_DIR. Returns false when the image
-# doesn't exist locally — a missing :local tag usually means the install is
-# pinned to a registry image (AGENTHUB_SERVER_IMAGE=ghcr.io/...), so we
-# don't mass-rebuild just because the file is absent.
+# True if the local image is stale relative to the repo: either older than
+# the latest commit touching any of the given paths, or missing entirely
+# on an install that expects a :local build. When compose/.env pins a
+# registry image (AGENTHUB_SERVER_IMAGE=ghcr.io/...), missing :local tags
+# are expected and the function returns false so we don't mass-rebuild.
 image_older_than_repo() {
   local image="$1"; shift
   local created
   created="$($SUDO docker image inspect --format '{{.Created}}' "$image" 2>/dev/null || true)"
-  [[ -z "$created" ]] && return 1
+  if [[ -z "$created" ]]; then
+    # Missing image is only "stale" when this is a :local-flavored install.
+    # Detect by searching .env for any agenthubv2-*:local tag — covers both
+    # the images compose pins directly (server, workspace) and the updater
+    # image, which only admin.ts references by its fixed :local tag. On
+    # registry-pinned installs no :local tag appears in .env and we leave
+    # missing images alone.
+    grep -qE '=agenthubv2-[a-z-]+:local' "$ENV_FILE" 2>/dev/null
+    return
+  fi
   local image_ts git_ts
   image_ts="$(date -d "$created" +%s 2>/dev/null || echo 0)"
   git_ts="$( (cd "$AGENTHUB_DIR" && git log -1 --format=%ct -- "$@") 2>/dev/null || echo 0 )"
