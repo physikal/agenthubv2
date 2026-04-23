@@ -9,6 +9,16 @@ export interface AuthUser {
   role: string;
 }
 
+/**
+ * Session context attached by `agentAuthMiddleware`. Available to routes via
+ * `c.get("agentSession")`. Lets local-docker deploys `docker cp` source
+ * out of the caller's workspace container.
+ */
+export interface AgentSessionContext {
+  sessionId: string;
+  workspaceId: string | null;
+}
+
 export const authMiddleware = createMiddleware<{
   Variables: { user: AuthUser };
 }>(async (c, next) => {
@@ -64,7 +74,7 @@ export const adminMiddleware = createMiddleware<{
  *     to one session; cross-session impersonation is impossible.
  */
 export const agentAuthMiddleware = createMiddleware<{
-  Variables: { user: AuthUser };
+  Variables: { user: AuthUser; agentSession: AgentSessionContext };
 }>(async (c, next) => {
   const authHeader = c.req.header("Authorization");
   if (!authHeader?.startsWith("AgentToken ")) {
@@ -78,6 +88,8 @@ export const agentAuthMiddleware = createMiddleware<{
 
   const rows = db
     .select({
+      sessionId: schema.sessions.id,
+      workspaceId: schema.sessions.workspaceId,
       userId: schema.sessions.userId,
       username: schema.users.username,
       role: schema.users.role,
@@ -93,6 +105,10 @@ export const agentAuthMiddleware = createMiddleware<{
   }
 
   c.set("user", { id: sess.userId, username: sess.username, role: sess.role });
+  c.set("agentSession", {
+    sessionId: sess.sessionId,
+    workspaceId: sess.workspaceId,
+  });
   await next();
 });
 

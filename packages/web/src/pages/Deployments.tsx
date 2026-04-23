@@ -11,9 +11,29 @@ interface Deployment {
   statusDetail: string | null;
   sourcePath: string | null;
   infraName: string;
+  provider: string | null;
   username?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+function providerBadge(provider: string | null): { label: string; className: string } {
+  switch (provider) {
+    case "local-docker":
+      return { label: "Local Docker", className: "bg-blue-500/15 text-blue-300" };
+    case "dokploy":
+      return { label: "Dokploy", className: "bg-purple-500/15 text-purple-300" };
+    case "digitalocean":
+      return { label: "DO Droplet", className: "bg-sky-500/15 text-sky-300" };
+    case "digitalocean-apps":
+      return { label: "DO Apps", className: "bg-cyan-500/15 text-cyan-300" };
+    case "github-pages":
+      return { label: "GH Pages", className: "bg-zinc-500/15 text-zinc-200" };
+    case "docker":
+      return { label: "Docker (SSH)", className: "bg-emerald-500/15 text-emerald-300" };
+    default:
+      return { label: provider ?? "unknown", className: "bg-zinc-600/20 text-zinc-400" };
+  }
 }
 
 function timeAgo(dateStr: string): string {
@@ -222,7 +242,12 @@ export function Deployments() {
                     </>
                   )}
                   <span>·</span>
-                  <span className="text-zinc-400">{d.infraName}</span>
+                  <span
+                    className={`px-2 py-0.5 rounded-md text-[11px] font-medium ${providerBadge(d.provider).className}`}
+                    title={d.infraName}
+                  >
+                    {providerBadge(d.provider).label}
+                  </span>
                   {d.sourcePath && (
                     <>
                       <span>·</span>
