@@ -83,27 +83,57 @@ cmd_status() {
   compose ps --format "table {{.Service}}\t{{.State}}\t{{.Status}}"
 }
 
-# Rebuild only the images whose Dockerfile has actually changed between $1..$2.
-# Avoids the ~3min server rebuild when all that moved was a doc comma.
+# True if the local image is older than the latest commit touching any of
+# the given paths relative to $AGENTHUB_DIR. Returns false when the image
+# doesn't exist locally — a missing :local tag usually means the install is
+# pinned to a registry image (AGENTHUB_SERVER_IMAGE=ghcr.io/...), so we
+# don't mass-rebuild just because the file is absent.
+image_older_than_repo() {
+  local image="$1"; shift
+  local created
+  created="$($SUDO docker image inspect --format '{{.Created}}' "$image" 2>/dev/null || true)"
+  [[ -z "$created" ]] && return 1
+  local image_ts git_ts
+  image_ts="$(date -d "$created" +%s 2>/dev/null || echo 0)"
+  git_ts="$( (cd "$AGENTHUB_DIR" && git log -1 --format=%ct -- "$@") 2>/dev/null || echo 0 )"
+  [[ "$image_ts" -gt 0 && "$git_ts" -gt 0 && "$git_ts" -gt "$image_ts" ]]
+}
+
+# Rebuild every image whose build context has moved — either via a new
+# commit range ($from..$to) or because the image itself is older than the
+# latest commit touching its Dockerfile/context. The staleness trigger
+# catches the "pre-#18 CLI re-exec'd after git reset, post-#18 CLI saw
+# HEAD and bailed before rebuilding" migration path and any comparable
+# image-vs-repo drift. Returns the count of images rebuilt.
 rebuild_changed_images() {
   local from="$1" to="$2"
   cd "$AGENTHUB_DIR"
-  local changed
-  changed="$(git diff --name-only "$from" "$to" -- docker/ packages/ scripts/ || true)"
+  local changed=""
+  if [[ -n "$from" && -n "$to" && "$from" != "$to" ]]; then
+    changed="$(git diff --name-only "$from" "$to" -- docker/ packages/ scripts/ || true)"
+  fi
   local rebuild_server=0 rebuild_workspace=0 rebuild_updater=0
-  if echo "$changed" | grep -qE '^(docker/Dockerfile\.server|packages/server/|packages/web/|packages/agent/|pnpm-lock\.yaml|package\.json)'; then
-    rebuild_server=1
+  local server_paths=(docker/Dockerfile.server packages/server packages/web packages/agent pnpm-lock.yaml package.json)
+  local workspace_paths=(docker/Dockerfile.agent-workspace docker/agent-workspace-entrypoint.sh packages/agent)
+  local updater_paths=(docker/Dockerfile.updater)
+  if [[ -n "$changed" ]]; then
+    if echo "$changed" | grep -qE '^(docker/Dockerfile\.server|packages/server/|packages/web/|packages/agent/|pnpm-lock\.yaml|package\.json)'; then
+      rebuild_server=1
+    fi
+    if echo "$changed" | grep -qE '^(docker/Dockerfile\.agent-workspace|docker/agent-workspace-entrypoint\.sh|packages/agent/)'; then
+      rebuild_workspace=1
+    fi
+    # The updater image no longer bakes scripts/agenthub (it bind-mounts
+    # /repo at run time), so CLI-only changes don't require an updater
+    # rebuild. Only rebuild when the Dockerfile itself moves.
+    if echo "$changed" | grep -qE '^docker/Dockerfile\.updater$'; then
+      rebuild_updater=1
+    fi
   fi
-  if echo "$changed" | grep -qE '^(docker/Dockerfile\.agent-workspace|docker/agent-workspace-entrypoint\.sh|packages/agent/)'; then
-    rebuild_workspace=1
-  fi
-  # The updater image no longer bakes scripts/agenthub (it bind-mounts
-  # /repo at run time), so CLI-only changes don't require an updater
-  # rebuild. Only rebuild when the Dockerfile itself moves (new packages,
-  # base-image bump, etc.).
-  if echo "$changed" | grep -qE '^docker/Dockerfile\.updater$'; then
-    rebuild_updater=1
-  fi
+  [[ $rebuild_server    -eq 0 ]] && image_older_than_repo agenthubv2-server:local    "${server_paths[@]}"    && rebuild_server=1
+  [[ $rebuild_workspace -eq 0 ]] && image_older_than_repo agenthubv2-workspace:local "${workspace_paths[@]}" && rebuild_workspace=1
+  [[ $rebuild_updater   -eq 0 ]] && image_older_than_repo agenthubv2-updater:local   "${updater_paths[@]}"   && rebuild_updater=1
+
   if [[ "$rebuild_server" -eq 0 && "$rebuild_workspace" -eq 0 && "$rebuild_updater" -eq 0 ]]; then
     msg "no image-relevant changes — skipping rebuild"
     return
@@ -212,13 +242,33 @@ cmd_update() {
   local_sha="$(git rev-parse HEAD)"
   remote_sha="$(git rev-parse origin/main)"
 
-  if [[ "$local_sha" == "$remote_sha" ]]; then
+  # Images drift from the repo in two cases: (a) a prior update failed
+  # mid-flight, or (b) a pre-#18 CLI self-update re-exec'd into the new
+  # single-pass CLI, which saw HEAD and bailed before rebuilding. Catch
+  # both by checking image-vs-repo timestamps alongside the sha diff —
+  # "nothing to do" must mean both fresh, not just git-fresh.
+  local images_stale=0
+  if image_older_than_repo agenthubv2-server:local \
+       docker/Dockerfile.server packages/server packages/web packages/agent \
+       pnpm-lock.yaml package.json \
+    || image_older_than_repo agenthubv2-workspace:local \
+       docker/Dockerfile.agent-workspace docker/agent-workspace-entrypoint.sh packages/agent \
+    || image_older_than_repo agenthubv2-updater:local \
+       docker/Dockerfile.updater; then
+    images_stale=1
+  fi
+
+  if [[ "$local_sha" == "$remote_sha" && "$images_stale" -eq 0 ]]; then
     ok "already at origin/main (${local_sha:0:7}) — nothing to do"
     return 0
   fi
 
-  msg "update available: $(git rev-parse --short HEAD) → $(git rev-parse --short origin/main)"
-  git --no-pager log --oneline "$local_sha..$remote_sha" | head -10 | sed 's/^/  /'
+  if [[ "$local_sha" != "$remote_sha" ]]; then
+    msg "update available: $(git rev-parse --short HEAD) → $(git rev-parse --short origin/main)"
+    git --no-pager log --oneline "$local_sha..$remote_sha" | head -10 | sed 's/^/  /'
+  else
+    msg "repo at HEAD but local images drifted — rebuilding to catch up"
+  fi
 
   if [[ "$check_only" -eq 1 ]]; then
     msg "--check: not applying"
