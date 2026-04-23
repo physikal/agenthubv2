@@ -164,6 +164,9 @@ interface UpdateProgress {
   readonly startedAt: number; // Date.now() when update began
   readonly modalOpen: boolean; // user may "Hide" while update keeps running
   readonly errorMessage?: string;
+  // Name of the updater container spawned by POST /api/admin/update.
+  // Used as the key for the SSE log stream and nothing else.
+  readonly containerName?: string;
 }
 
 // Monotonic rank — used to reject out-of-order phase transitions so a
@@ -326,6 +329,12 @@ function VersionPanel() {
               }
             : cur,
         );
+      } else {
+        const body = (await res.json()) as { containerName?: string };
+        const cn = body.containerName;
+        if (cn) {
+          setProgress((cur) => (cur ? { ...cur, containerName: cn } : cur));
+        }
       }
     } catch (e) {
       setProgress((cur) =>
@@ -490,6 +499,7 @@ function VersionPanel() {
           fromSha={progress.baseline.sha}
           toSha={progress.targetSha}
           startedAt={progress.startedAt}
+          {...(progress.containerName !== undefined && { containerName: progress.containerName })}
           {...(progress.errorMessage !== undefined && { errorMessage: progress.errorMessage })}
           onHide={handleHide}
           onReload={handleReload}

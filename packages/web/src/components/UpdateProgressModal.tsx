@@ -14,7 +14,7 @@
 //   restarting → done       when /api/admin/version succeeds again with
 //                           a new serverStartedAt AND the target SHA
 //   any        → failed     after the caller's timeout (5 min in Settings)
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 export type UpdatePhase =
@@ -29,9 +29,25 @@ interface Props {
   readonly fromSha: string;
   readonly toSha: string;
   readonly startedAt: number; // Date.now() captured when the update was kicked off
+  readonly containerName?: string; // agenthub-updater-<id>, used for log stream
   readonly errorMessage?: string;
   readonly onHide: () => void;
   readonly onReload: () => void;
+}
+
+// Cap so a multi-minute build doesn't turn the modal into an endlessly-
+// growing DOM tree. The stream keeps flowing server-side; we just ring-
+// buffer on the client.
+const MAX_LOG_LINES = 200;
+
+// Strip ANSI escape codes so colored docker-build output renders as plain
+// text rather than leaking literal escape sequences into the modal. We
+// don't try to render the colors — a build log in a <pre> is readable
+// enough without them, and an ANSI parser pulls in more weight than the
+// UX gain is worth.
+function stripAnsi(line: string): string {
+  // eslint-disable-next-line no-control-regex
+  return line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
 }
 
 interface Step {
@@ -84,6 +100,7 @@ export function UpdateProgressModal({
   fromSha,
   toSha,
   startedAt,
+  containerName,
   errorMessage,
   onHide,
   onReload,
@@ -109,6 +126,58 @@ export function UpdateProgressModal({
   }, [isTerminal]);
   const elapsed = now - startedAt;
 
+  // Live log stream from /api/admin/update/logs. Connection is best-
+  // effort — it'll die when compose recreates the server, and that's
+  // fine (phase state machine in Settings.tsx handles completion
+  // detection independently). When it dies we just stop appending
+  // lines and show a "stream ended" footer; the modal still works.
+  const [logLines, setLogLines] = useState<readonly string[]>([]);
+  const [streamState, setStreamState] = useState<"connecting" | "live" | "ended" | "error">("connecting");
+  const logEndRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!containerName || isTerminal) return;
+    const es = new EventSource(
+      `/api/admin/update/logs?container=${encodeURIComponent(containerName)}`,
+    );
+    const appendLine = (raw: string) => {
+      const line = stripAnsi(raw);
+      setLogLines((prev) => {
+        const next = [...prev, line];
+        return next.length > MAX_LOG_LINES ? next.slice(next.length - MAX_LOG_LINES) : next;
+      });
+    };
+    es.addEventListener("log", (e) => {
+      setStreamState("live");
+      appendLine((e as MessageEvent<string>).data);
+    });
+    es.addEventListener("end", () => {
+      setStreamState("ended");
+      es.close();
+    });
+    es.onerror = () => {
+      // Browsers fire `error` on normal close too; we only flag it as a
+      // real error if we never received any data. Once we've been live
+      // and then the connection drops (e.g., during server recreate),
+      // we treat it as an "ended" state and rely on phase detection.
+      setStreamState((prev) => (prev === "live" ? "ended" : "error"));
+    };
+    return () => { es.close(); };
+  }, [containerName, isTerminal]);
+
+  // Auto-scroll to bottom whenever new lines land, but only while the
+  // user hasn't scrolled up manually. Detect that via `scrollHeight ≈
+  // scrollTop + clientHeight` on the parent.
+  useEffect(() => {
+    const el = logEndRef.current;
+    if (!el) return;
+    const parent = el.parentElement;
+    if (!parent) return;
+    const nearBottom =
+      parent.scrollHeight - parent.scrollTop - parent.clientHeight < 40;
+    if (nearBottom) el.scrollIntoView({ block: "end" });
+  }, [logLines]);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
@@ -116,7 +185,7 @@ export function UpdateProgressModal({
       aria-modal="true"
       aria-labelledby="update-progress-title"
     >
-      <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4 shadow-2xl">
+      <div className="w-full max-w-xl bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between gap-3">
           <h2 id="update-progress-title" className="text-lg font-semibold text-zinc-100">
             {title}
@@ -157,6 +226,28 @@ export function UpdateProgressModal({
             );
           })}
         </ol>
+
+        {containerName && (logLines.length > 0 || streamState === "connecting") && (
+          <details className="group" open>
+            <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-300 select-none">
+              Build log
+              <span className="ml-2 text-zinc-600 font-mono">
+                {streamState === "connecting" && "(connecting...)"}
+                {streamState === "live" && `(${String(logLines.length)} lines · live)`}
+                {streamState === "ended" && `(${String(logLines.length)} lines · stream ended)`}
+                {streamState === "error" && "(stream unavailable)"}
+              </span>
+            </summary>
+            <div className="mt-2 max-h-48 overflow-y-auto bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5">
+              <pre className="text-[11px] leading-snug text-zinc-400 font-mono whitespace-pre-wrap break-all">
+                {logLines.length === 0
+                  ? <span className="text-zinc-600">waiting for output…</span>
+                  : logLines.join("\n")}
+              </pre>
+              <div ref={logEndRef} />
+            </div>
+          </details>
+        )}
 
         {isFailed && errorMessage && (
           <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2">

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { compareSync, hashSync } from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
@@ -303,6 +304,67 @@ export function adminRoutes(sessionManager: SessionManager) {
       },
       202,
     );
+  });
+
+  // GET /api/admin/update/logs?container=<name> — SSE-stream stdout+stderr
+  // from the named updater container so the Settings modal can tail the
+  // build in real time. Without this, a 5-10 min rebuild looks identical
+  // to a hung process and users bail early.
+  //
+  // The stream dies when the updater container exits (normal completion)
+  // OR when the agenthub-server gets force-recreated (compose kills this
+  // process mid-stream). The client already handles both via its phase
+  // state machine — the stream is a progress-visibility layer, not the
+  // source of truth for "did the update succeed".
+  app.get("/update/logs", (c) => {
+    const container = c.req.query("container");
+    if (!container) {
+      return c.json({ error: "container query param required" }, 400);
+    }
+    // Defense-in-depth: only allow the exact shape the POST /update
+    // endpoint generates. Prevents shell-injection / arbitrary container
+    // log reads (e.g., infisical containing secrets).
+    if (!/^agenthub-updater-[a-f0-9]{8}$/.test(container)) {
+      return c.json({ error: "invalid container name" }, 400);
+    }
+
+    return streamSSE(c, async (stream) => {
+      const proc = spawn("docker", ["logs", "-f", container], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+
+      // docker writes build progress to both streams; merge them into
+      // one event stream. SSE can't carry raw newlines in a single
+      // `data:` field so split to one event per line — the client can
+      // append them directly.
+      let buffer = "";
+      const pushChunk = (chunk: Buffer) => {
+        buffer += chunk.toString("utf8");
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? ""; // keep partial line for next chunk
+        for (const line of lines) {
+          void stream.writeSSE({ data: line, event: "log" });
+        }
+      };
+      proc.stdout.on("data", pushChunk);
+      proc.stderr.on("data", pushChunk);
+
+      // Resolves the outer async function (and closes the stream)
+      // when the docker-logs process exits, for any reason.
+      await new Promise<void>((resolve) => {
+        proc.on("exit", () => {
+          if (buffer.length > 0) {
+            void stream.writeSSE({ data: buffer, event: "log" });
+          }
+          void stream.writeSSE({ data: "", event: "end" });
+          resolve();
+        });
+        stream.onAbort(() => {
+          proc.kill("SIGTERM");
+          resolve();
+        });
+      });
+    });
   });
 
   // --- Infisical console credentials ---
