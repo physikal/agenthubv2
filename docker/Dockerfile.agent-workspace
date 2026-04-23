@@ -121,9 +121,17 @@ RUN cd /opt/agenthub-agent && npm install --omit=dev --no-audit --no-fund 2>&1 |
 COPY docker/agent-workspace-entrypoint.sh /usr/local/bin/agenthub-entrypoint
 RUN chmod +x /usr/local/bin/agenthub-entrypoint
 
+# Shared token-mint script. Both the git credential helper and the gh
+# wrapper below source this to fetch a short-lived GitHub App
+# installation token from the AgentHub server. Extracted from two
+# copy-pasted copies so a change to the token endpoint or error
+# handling is a one-file edit.
+COPY docker/agenthub-mint-github-token.sh /opt/agenthub-agent/agenthub-mint-github-token
+RUN chmod 0755 /opt/agenthub-agent/agenthub-mint-github-token
+
 # Credential helper invoked by ~/.gitconfig (written by the agent daemon
 # on session boot for users with a GitHub App install). Fetches a fresh
-# installation token from the AgentHub server per git operation so raw
+# installation token via the mint script per git operation so raw
 # tokens never touch the workspace filesystem.
 COPY docker/git-credential-agenthub.sh /opt/agenthub-agent/git-credential-agenthub
 RUN chmod 0755 /opt/agenthub-agent/git-credential-agenthub

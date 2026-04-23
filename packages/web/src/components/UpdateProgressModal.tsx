@@ -1,19 +1,18 @@
 // Progress modal for the Settings → "Update now" flow.
 //
-// The update pipeline is opaque from the browser — the updater runs in a
-// detached container, writes to docker's default log, and the only
-// observable signals are `git rev-parse HEAD` and the server process's
-// own `serverStartedAt`. This component maps those signals onto the four
-// phases users actually care about so "what's happening right now?" is
-// visible instead of a 3-minute guessing game.
+// Pure render component — all polling, SSE subscription, and state
+// management lives in VersionPanel (Settings.tsx). That split matters
+// because the log stream has to keep running while the user has the
+// modal hidden; if the EventSource lived here, toggling Hide would
+// tear it down and the "is it still alive?" answer would be gone.
 //
-// Phase transitions (monotonic, never regress):
+// Phase transitions (monotonic, never regress, enforced by PHASE_RANK):
 //   pulling    → building   when the /repo SHA moves (git reset --hard)
 //   building   → restarting when /api/admin/version starts failing
 //                           (compose up --force-recreate killed the server)
 //   restarting → done       when /api/admin/version succeeds again with
-//                           a new serverStartedAt AND the target SHA
-//   any        → failed     after the caller's timeout (5 min in Settings)
+//                           a new serverStartedAt
+//   any        → failed     after the caller's 20-min timeout
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
@@ -24,31 +23,17 @@ export type UpdatePhase =
   | "done"
   | "failed";
 
-interface Props {
-  readonly phase: UpdatePhase;
-  readonly fromSha: string;
-  readonly toSha: string;
-  readonly startedAt: number; // Date.now() captured when the update was kicked off
-  readonly containerName?: string; // agenthub-updater-<id>, used for log stream
-  readonly errorMessage?: string;
-  readonly onHide: () => void;
-  readonly onReload: () => void;
-}
-
-// Cap so a multi-minute build doesn't turn the modal into an endlessly-
-// growing DOM tree. The stream keeps flowing server-side; we just ring-
-// buffer on the client.
-const MAX_LOG_LINES = 200;
-
-// Strip ANSI escape codes so colored docker-build output renders as plain
-// text rather than leaking literal escape sequences into the modal. We
-// don't try to render the colors — a build log in a <pre> is readable
-// enough without them, and an ANSI parser pulls in more weight than the
-// UX gain is worth.
-function stripAnsi(line: string): string {
-  // eslint-disable-next-line no-control-regex
-  return line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
-}
+// Monotonic rank — used by the polling reducer to reject out-of-order
+// phase transitions so a transient network blip can't regress from
+// "restarting" back to "building". `failed` is the highest so any
+// phase → failed transition is always allowed.
+export const PHASE_RANK: Record<UpdatePhase, number> = {
+  pulling: 0,
+  building: 1,
+  restarting: 2,
+  done: 3,
+  failed: 99,
+};
 
 interface Step {
   readonly id: Exclude<UpdatePhase, "failed">;
@@ -56,38 +41,27 @@ interface Step {
   readonly hint?: string;
 }
 
-const STEPS: readonly Step[] = [
+export const STEPS: readonly Step[] = [
   { id: "pulling", label: "Fetching latest code", hint: "git fetch + reset to origin/main" },
   { id: "building", label: "Rebuilding images", hint: "docker build — typically 3-8 min, up to 15 on cold cache or slow disk" },
   { id: "restarting", label: "Restarting server", hint: "compose up --force-recreate" },
   { id: "done", label: "Ready" },
 ];
 
-function formatElapsed(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return minutes > 0 ? `${String(minutes)}m ${String(seconds).padStart(2, "0")}s` : `${String(seconds)}s`;
-}
+export type StepStatus = "done" | "current" | "pending" | "failed";
 
-const PHASE_RANK: Record<UpdatePhase, number> = {
-  pulling: 0,
-  building: 1,
-  restarting: 2,
-  done: 3,
-  failed: -1,
-};
-
-type StepStatus = "done" | "current" | "pending" | "failed";
-
-function stepStatus(step: Step["id"], phase: UpdatePhase): StepStatus {
-  if (phase === "failed") {
-    // We can't tell which step failed without more bookkeeping — mark
-    // nothing as failed in the checklist and let the error message below
-    // carry the detail. Keep what had completed as ✓.
-    return "pending";
-  }
+// When the overall phase is "failed", we mark the most-advanced non-
+// terminal step as failed (with a red ✗) rather than leaving the whole
+// checklist grey. Previously everything reset to "pending" on failure,
+// which made the modal look like nothing had run at all.
+export function stepStatus(step: Step["id"], phase: UpdatePhase): StepStatus {
   if (phase === "done") return "done";
+  if (phase === "failed") {
+    // Failure without a recorded sub-phase is rare (the reducer always
+    // tracks through pulling → building → restarting). If it happens,
+    // mark the first step as failed so the user sees where we got.
+    return step === "pulling" ? "failed" : "pending";
+  }
   const phaseRank = PHASE_RANK[phase];
   const stepRank = PHASE_RANK[step];
   if (phaseRank > stepRank) return "done";
@@ -95,12 +69,34 @@ function stepStatus(step: Step["id"], phase: UpdatePhase): StepStatus {
   return "pending";
 }
 
+interface Props {
+  readonly phase: UpdatePhase;
+  readonly fromSha: string;
+  readonly toSha: string;
+  readonly startedAt: number; // Date.now() captured when the update was kicked off
+  readonly logLines: readonly string[];
+  readonly streamState: "connecting" | "live" | "ended" | "error" | "idle";
+  readonly errorMessage?: string;
+  readonly onHide: () => void;
+  readonly onReload: () => void;
+}
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0
+    ? `${String(minutes)}m ${String(seconds).padStart(2, "0")}s`
+    : `${String(seconds)}s`;
+}
+
 export function UpdateProgressModal({
   phase,
   fromSha,
   toSha,
   startedAt,
-  containerName,
+  logLines,
+  streamState,
   errorMessage,
   onHide,
   onReload,
@@ -115,8 +111,8 @@ export function UpdateProgressModal({
       ? "Update failed"
       : "Updating AgentHub";
 
-  // Tick the elapsed counter every second while the update is running so
-  // users can see it's still making progress. Freezes on terminal states
+  // Tick the elapsed counter every second while the update is running
+  // so users see it's still making progress. Freezes on terminal states
   // so the final duration stays visible.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -126,52 +122,10 @@ export function UpdateProgressModal({
   }, [isTerminal]);
   const elapsed = now - startedAt;
 
-  // Live log stream from /api/admin/update/logs. Connection is best-
-  // effort — it'll die when compose recreates the server, and that's
-  // fine (phase state machine in Settings.tsx handles completion
-  // detection independently). When it dies we just stop appending
-  // lines and show a "stream ended" footer; the modal still works.
-  const [logLines, setLogLines] = useState<readonly string[]>([]);
-  const [streamState, setStreamState] = useState<"connecting" | "live" | "ended" | "error">("connecting");
+  // Auto-scroll the log pane to the bottom when new lines land — but
+  // only if the user hasn't scrolled up manually, so reading mid-build
+  // doesn't yank them back.
   const logEndRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!containerName || isTerminal) return;
-    const es = new EventSource(
-      `/api/admin/update/logs?container=${encodeURIComponent(containerName)}`,
-    );
-    const appendLine = (raw: string) => {
-      const line = stripAnsi(raw);
-      setLogLines((prev) => {
-        const next = [...prev, line];
-        return next.length > MAX_LOG_LINES ? next.slice(next.length - MAX_LOG_LINES) : next;
-      });
-    };
-    es.addEventListener("log", (e) => {
-      setStreamState("live");
-      appendLine((e as MessageEvent<string>).data);
-    });
-    es.addEventListener("end", () => {
-      setStreamState("ended");
-      es.close();
-    });
-    es.onerror = () => {
-      // Browsers fire `error` on normal close too; we only flag it as a
-      // real error if we never received any data. Once we've been live
-      // and then the connection drops (e.g., during server recreate),
-      // we treat it as an "ended" state and rely on phase detection.
-      // Close explicitly so EventSource doesn't auto-reconnect — without
-      // this it'd hot-loop trying to re-subscribe to a logs endpoint
-      // that'll immediately error because the updater container is gone.
-      setStreamState((prev) => (prev === "live" ? "ended" : "error"));
-      es.close();
-    };
-    return () => { es.close(); };
-  }, [containerName, isTerminal]);
-
-  // Auto-scroll to bottom whenever new lines land, but only while the
-  // user hasn't scrolled up manually. Detect that via `scrollHeight ≈
-  // scrollTop + clientHeight` on the parent.
   useEffect(() => {
     const el = logEndRef.current;
     if (!el) return;
@@ -181,6 +135,8 @@ export function UpdateProgressModal({
       parent.scrollHeight - parent.scrollTop - parent.clientHeight < 40;
     if (nearBottom) el.scrollIntoView({ block: "end" });
   }, [logLines]);
+
+  const showLogPane = streamState !== "idle" && (logLines.length > 0 || streamState === "connecting");
 
   return (
     <div
@@ -217,7 +173,9 @@ export function UpdateProgressModal({
                         ? "text-zinc-500"
                         : status === "current"
                           ? "text-zinc-100 font-medium"
-                          : "text-zinc-300"
+                          : status === "failed"
+                            ? "text-red-300 font-medium"
+                            : "text-zinc-300"
                     }
                   >
                     {step.label}
@@ -231,7 +189,7 @@ export function UpdateProgressModal({
           })}
         </ol>
 
-        {containerName && (logLines.length > 0 || streamState === "connecting") && (
+        {showLogPane && (
           <details className="group" open>
             <summary className="cursor-pointer text-xs text-zinc-500 hover:text-zinc-300 select-none">
               Build log
