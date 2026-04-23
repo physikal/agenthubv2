@@ -7,6 +7,7 @@ import { db, schema } from "../../db/index.js";
 import type { InfrastructureConfig } from "../../db/schema.js";
 import type { AgentSessionContext } from "../../middleware/auth.js";
 import { DeployError } from "../deploy-error.js";
+import { firstPublishedTcpPort, parseComposePs } from "./local-deploy-ports.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -111,6 +112,19 @@ function updateStatus(deployId: string, patch: Partial<typeof schema.deployments
     .run();
 }
 
+async function inspectPublishedPort(project: string): Promise<number | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "docker",
+      ["compose", "-p", project, "ps", "--format", "json"],
+      { timeout: 10_000 },
+    );
+    return firstPublishedTcpPort(parseComposePs(stdout));
+  } catch {
+    return null;
+  }
+}
+
 export async function localDockerDeploy(
   _infra: InfrastructureConfig,
   input: LocalDeployInput,
@@ -209,19 +223,34 @@ export async function localDockerDeploy(
         { cwd: tmpDir, timeout: 600_000 },
       );
 
+      // Source-of-truth for the URL is what Docker actually bound, not the
+      // host port we pre-picked. composeConfig callers may write random
+      // (`ports: - "80"`), IP-bound (`127.0.0.1:80:80`), or range port
+      // specs — all produce different actual bindings than nextLocalPort()
+      // guessed. Asking docker skips the compose parsing acrobatics and
+      // still works when the project has multiple services. null =
+      // internal-only (no TCP publish); store url=null so the UI can hide
+      // the clickable link.
+      const actualPort = await inspectPublishedPort(proj);
       // Compose emits empty strings for unset vars, so fall through on both
       // null/undefined and "". 127.0.0.1 only works when the caller is on
       // the same box — document that operators should set AGENTHUB_PUBLIC_HOST.
       const host = process.env["AGENTHUB_PUBLIC_HOST"] || "127.0.0.1";
-      const url = `http://${host}:${String(hostPort)}`;
+      const url = actualPort ? `http://${host}:${String(actualPort)}` : null;
 
       updateStatus(deployId, {
         status: "running",
-        statusDetail: null,
+        statusDetail: url
+          ? null
+          : "running, but no TCP port is published — add a `ports:` entry to your compose to expose it",
         url,
         composeConfig: input.composeConfig ?? null,
       });
-      console.log(`[deploy] ${input.name} running on ${url}`);
+      console.log(
+        url
+          ? `[deploy] ${input.name} running on ${url}`
+          : `[deploy] ${input.name} running (no published port)`,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[deploy] local ${input.name} failed: ${message}`);
