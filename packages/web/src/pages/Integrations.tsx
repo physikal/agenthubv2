@@ -308,8 +308,7 @@ function renderFields(
       return (
         <>
           {input("hostIp", "Host IP or hostname", "1.2.3.4", "text", 2)}
-          {input("sshUser", "SSH user (optional)", "root")}
-          {input("", "", "", "text")}
+          {input("sshUser", "SSH user (optional)", "root", "text", 2)}
           {textarea("sshPrivateKey", "SSH Private Key", "-----BEGIN OPENSSH PRIVATE KEY-----")}
         </>
       );
