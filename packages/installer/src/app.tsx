@@ -98,7 +98,6 @@ export const App: React.FC = () => {
         <SelectInput
           items={[
             { label: "Local Docker (default, simplest)", value: "docker" },
-            { label: "Bundled Dokploy (local, via overlay compose file)", value: "dokploy-local" },
             { label: "Remote Dokploy (URL + API token)", value: "dokploy-remote" },
           ]}
           onSelect={(item) => {

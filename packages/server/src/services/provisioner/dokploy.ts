@@ -1,7 +1,6 @@
 import { dump as yamlDump } from "js-yaml";
 import type {
   ProvisionerDriver,
-  ProvisionerMode,
   WorkspaceCreateRequest,
   WorkspaceRef,
   WorkspaceStatus,
@@ -19,8 +18,6 @@ export interface DokployDriverOptions {
   projectId: string;
   /** Dokploy environment ID (Dokploy's "env" within a project). */
   environmentId: string;
-  /** Whether this is a bundled local instance or a user-pointed remote. */
-  mode: Extract<ProvisionerMode, "dokploy-local" | "dokploy-remote">;
 }
 
 interface DokployCompose {
@@ -32,20 +29,15 @@ interface DokployCompose {
 
 /**
  * Talks to Dokploy's HTTP API to create a compose app per workspace.
- *
- * The "local" and "remote" modes are the same driver with different base URLs:
- * local points at the bundled Dokploy service on the same Docker network,
- * remote points at the user's existing Dokploy instance. API surface identical.
  */
 export class DokployDriver implements ProvisionerDriver {
-  readonly mode: Extract<ProvisionerMode, "dokploy-local" | "dokploy-remote">;
+  readonly mode = "dokploy-remote" as const;
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
   private readonly projectId: string;
   private readonly environmentId: string;
 
   constructor(opts: DokployDriverOptions) {
-    this.mode = opts.mode;
     this.baseUrl = opts.baseUrl.replace(/\/$/, "");
     this.projectId = opts.projectId;
     this.environmentId = opts.environmentId;

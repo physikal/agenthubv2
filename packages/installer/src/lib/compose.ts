@@ -36,7 +36,6 @@ export function writeEnvFile(cfg: InstallConfig, targetDir: string): string {
 export interface ComposeUpOptions {
   composeDir: string;
   envFile: string;
-  withDokployOverlay: boolean;
   onLine?: (line: string) => void;
 }
 
@@ -92,9 +91,6 @@ function runCompose(
     "-f",
     join(opts.composeDir, "docker-compose.yml"),
   ];
-  if (opts.withDokployOverlay) {
-    files.push("-f", join(opts.composeDir, "docker-compose.dokploy.yml"));
-  }
 
   return new Promise((resolvePromise, reject) => {
     const proc = spawn(

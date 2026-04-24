@@ -11,7 +11,7 @@
 │                              │     │                                                               │
 │                              │     ├── SQLite: users, sessions, deployments, infra records        │
 │                              │     ├── Infisical SDK ─▶ infisical (:8080) ─▶ postgres + redis     │
-│                              │     └── ProvisionerDriver (one of: docker | dokploy-local | -remote)│
+│                              │     └── ProvisionerDriver (one of: docker | dokploy-remote)        │
 │                              │            │                                                        │
 │                              │            ▼                                                        │
 │                              │   one workspace container per active session                        │
@@ -46,7 +46,7 @@ Both layers support Docker and Dokploy, but they're separate code paths with sep
 ```ts
 // packages/server/src/services/provisioner/types.ts
 interface ProvisionerDriver {
-  readonly mode: "docker" | "dokploy-local" | "dokploy-remote";
+  readonly mode: "docker" | "dokploy-remote";
 
   create(req: WorkspaceCreateRequest): Promise<WorkspaceRef>;
   start(ref: WorkspaceRef): Promise<void>;
@@ -90,7 +90,7 @@ Adding a new inner provider: implement the interface, register it in `services/p
 
 - `DockerDriver.assertNoHostSocket()` refuses to start if the socket is mounted UNLESS `AGENTHUB_ALLOW_SOCKET_MOUNT=true` is explicitly set in env.
 - The installer sets that flag automatically for `docker` mode in `compose/docker-compose.yml`.
-- Users who want zero-socket-mount security pick `dokploy-local` or `dokploy-remote` where Dokploy owns the daemon and AgentHub talks API.
+- Users who want zero-socket-mount security pick `dokploy-remote` — Dokploy owns the daemon and AgentHub talks to it over HTTP.
 
 ## Storage model
 

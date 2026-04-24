@@ -1,6 +1,6 @@
 import { randomHex, randomPassword } from "./secrets.js";
 
-export type ProvisionerMode = "docker" | "dokploy-local" | "dokploy-remote";
+export type ProvisionerMode = "docker" | "dokploy-remote";
 
 export interface InstallConfig {
   mode: ProvisionerMode;
@@ -44,9 +44,6 @@ export interface InstallConfig {
   dokployProjectId: string;
   dokployEnvironmentId: string;
 
-  // Dokploy-local overlay only.
-  dokployDbPassword: string;
-
   // Image tags (defaults work for npx install).
   serverImage: string;
   workspaceImage: string;
@@ -73,7 +70,6 @@ export function emptyConfig(): InstallConfig {
     dokployApiToken: "",
     dokployProjectId: "",
     dokployEnvironmentId: "",
-    dokployDbPassword: randomPassword(32),
     serverImage: "ghcr.io/physikal/agenthubv2-server:latest",
     workspaceImage: "ghcr.io/physikal/agenthubv2-workspace:latest",
   };
@@ -113,7 +109,6 @@ export function renderEnv(cfg: InstallConfig): string {
     `DOKPLOY_API_TOKEN=${cfg.dokployApiToken}`,
     `DOKPLOY_PROJECT_ID=${cfg.dokployProjectId}`,
     `DOKPLOY_ENVIRONMENT_ID=${cfg.dokployEnvironmentId}`,
-    `DOKPLOY_DB_PASSWORD=${cfg.dokployDbPassword}`,
     "",
     `AGENTHUB_SERVER_IMAGE=${cfg.serverImage}`,
     `WORKSPACE_IMAGE=${cfg.workspaceImage}`,

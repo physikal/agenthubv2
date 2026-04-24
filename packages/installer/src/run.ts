@@ -36,13 +36,11 @@ export async function runInstall(
   const envFile = writeEnvFile(final, composeDir);
   onLog(`wrote ${envFile}`);
 
-  const withDokploy = final.mode === "dokploy-local";
-
   onLog("pulling images…");
-  await composePull({ composeDir, envFile, withDokployOverlay: withDokploy, onLine: onLog });
+  await composePull({ composeDir, envFile, onLine: onLog });
 
   onLog("starting services…");
-  await composeUp({ composeDir, envFile, withDokployOverlay: withDokploy, onLine: onLog });
+  await composeUp({ composeDir, envFile, onLine: onLog });
 
   // Bootstrap Infisical first-run setup: create admin, org, project, machine
   // identity, and write INFISICAL_PROJECT_ID/CLIENT_ID/CLIENT_SECRET back to
@@ -78,7 +76,6 @@ export async function runInstall(
   await recreateService({
     composeDir,
     envFile,
-    withDokployOverlay: withDokploy,
     service: "agenthub-server",
     onLine: onLog,
   });

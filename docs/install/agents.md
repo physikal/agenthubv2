@@ -51,7 +51,7 @@ See [installer-flow.md](installer-flow.md) for the full step → env-var mapping
 
 | Var | Values | Notes |
 |---|---|---|
-| `AGENTHUB_MODE` | `docker` \| `dokploy-local` \| `dokploy-remote` | Workspace provisioner mode. |
+| `AGENTHUB_MODE` | `docker` \| `dokploy-remote` | Workspace provisioner mode. |
 | `AGENTHUB_DOMAIN` | hostname or `localhost` | Where AgentHub is reachable. `localhost` gives HTTP-only; any other value triggers Let's Encrypt. |
 | `AGENTHUB_ADMIN_PASSWORD` | any string, min 8 chars | AgentHub admin password. If omitted, a random one is generated and printed. |
 

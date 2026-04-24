@@ -1,4 +1,4 @@
-# AgentHub v2 — base docker-compose bundle
+# AgentHub v2 — docker-compose bundle
 #
 # What this brings up:
 #   traefik              - reverse proxy, TLS termination (Let's Encrypt if
@@ -8,15 +8,11 @@
 #   infisical            - secret store UI + API
 #   agenthub-server      - the platform itself
 #
-# Optional overlays (compose --file ...):
-#   docker-compose.dokploy.yml   - adds bundled Dokploy for local mode
-#
 # Required environment (see .env.example):
 #   DOMAIN, TLS_EMAIL, AGENTHUB_ADMIN_EMAIL, PROVISIONER_MODE,
 #   INFISICAL_PROJECT_ID, INFISICAL_CLIENT_ID, INFISICAL_CLIENT_SECRET
 #
-# The installer (packages/installer) generates a .env and picks the right
-# overlay when it's Dokploy-local mode.
+# The installer (packages/installer) generates a .env.
 
 name: agenthub
 
@@ -138,7 +134,7 @@ services:
       # reaches the browser.
       AGENTHUB_PUBLIC_HOST: ${AGENTHUB_PUBLIC_HOST:-${DOMAIN}}
 
-      # Provisioner selection (docker | dokploy-local | dokploy-remote)
+      # Provisioner selection (docker | dokploy-remote)
       PROVISIONER_MODE: ${PROVISIONER_MODE:-docker}
       DOCKER_HOST: ${DOCKER_HOST:-}
       AGENTHUB_DOCKER_NETWORK: agenthub
@@ -186,9 +182,9 @@ services:
       AGENTHUB_OWNER: ${AGENTHUB_OWNER:-}
     volumes:
       - agenthub-data:/data
-      # Required for PROVISIONER_MODE=docker. If you're running dokploy-local
-      # or dokploy-remote, you can remove this mount — the server doesn't
-      # touch Docker directly in those modes.
+      # Required for PROVISIONER_MODE=docker. If you're running dokploy-remote,
+      # you can remove this mount — the server doesn't touch Docker directly
+      # in that mode.
       - /var/run/docker.sock:/var/run/docker.sock
       # Read-write mount of the install's git checkout so the server can
       # read version info (GET /api/admin/version) and trigger updates
