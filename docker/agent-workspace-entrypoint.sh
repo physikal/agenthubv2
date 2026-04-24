@@ -51,12 +51,18 @@ EOF
 # Start ttyd as coder with dtach for session persistence. `-W` enables write
 # access (ttyd defaults to read-only). The -t options allow titleChange and
 # disable ttyd's reconnect timeout.
-sudo -u coder /usr/local/bin/ttyd \
+#
+# The subshell `cd /home/coder` makes the terminal open in the user's
+# workspace root instead of `/` (the entrypoint's default cwd). cwd is
+# latched into the dtach-spawned bash at session creation, so reattaches
+# keep whatever directory the user cd'd to. Parent shell's cwd is not
+# touched, so the agent daemon below still execs from the original cwd.
+( cd /home/coder && exec sudo -u coder /usr/local/bin/ttyd \
   -W \
   -p "${TTYD_PORT}" \
   -t 'titleFixed=AgentHub' \
   -t 'disableReconnect=false' \
-  /usr/bin/dtach -A /tmp/agenthub.dtach -r none bash -l \
+  /usr/bin/dtach -A /tmp/agenthub.dtach -r none bash -l ) \
   > /var/log/ttyd.log 2>&1 &
 TTYD_PID=$!
 
