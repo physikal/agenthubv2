@@ -78,7 +78,22 @@ app.use("/api/*", async (c, next) => {
 
 // --- /api/auth (login/logout public; /me + /change-password auth-protected inside authRoutes) ---
 app.route("/api/auth", authRoutes());
-app.get("/api/health", (c) => c.json({ status: "ok" }));
+
+// Baked into the server image at `docker build` time via ARG GIT_SHA
+// → ENV AGENTHUB_GIT_SHA (see docker/Dockerfile.server). The update
+// script (scripts/agenthub probe_front_door) polls this endpoint to
+// confirm the newly-built container is actually serving traffic
+// post-recreate, closing the silent-failure gap that stranded VM 915
+// on a ghost dangling image in April 2026.
+const SERVER_GIT_SHA = process.env["AGENTHUB_GIT_SHA"] ?? "unknown";
+const SERVER_STARTED_AT = new Date().toISOString();
+app.get("/api/health", (c) =>
+  c.json({
+    status: "ok",
+    sha: SERVER_GIT_SHA,
+    startedAt: SERVER_STARTED_AT,
+  }),
+);
 
 // --- Agent-authenticated routes (MCP server inside workspace — before cookie auth) ---
 const agentDeployApp = new Hono();

@@ -95,29 +95,42 @@ cmd_status() {
   compose ps --format "table {{.Service}}\t{{.State}}\t{{.Status}}"
 }
 
-# True if the local image is stale relative to the repo: either older than
-# the latest commit touching any of the given paths, or missing entirely
-# on an install that expects a :local build. When compose/.env pins a
-# registry image (AGENTHUB_SERVER_IMAGE=ghcr.io/...), missing :local tags
-# are expected and the function returns false so we don't mass-rebuild.
-image_older_than_repo() {
+# True if the local image has drifted from the repo: either a commit has
+# landed since the image was built that touched one of the given paths,
+# or the image is missing on an install that expects a :local build.
+# Reads the `org.agenthub.git-sha` label (baked in at `docker build`
+# time from `git rev-parse HEAD`) and diffs against current HEAD. This
+# replaces an earlier mtime/committer-time heuristic that was fragile
+# across timezones and `git reset` (the file-mtime reset after a pull
+# produced false-negatives like the one that stranded VM 915 on a
+# ghost container image in April 2026). When compose/.env pins a
+# registry image (AGENTHUB_SERVER_IMAGE=ghcr.io/...), missing :local
+# tags are expected and the function returns false.
+image_drift_for_paths() {
   local image="$1"; shift
-  local created
-  created="$($SUDO docker image inspect --format '{{.Created}}' "$image" 2>/dev/null || true)"
-  if [[ -z "$created" ]]; then
-    # Missing image is only "stale" when this is a :local-flavored install.
-    # Detect by searching .env for any agenthubv2-*:local tag — covers both
-    # the images compose pins directly (server, workspace) and the updater
-    # image, which only admin.ts references by its fixed :local tag. On
-    # registry-pinned installs no :local tag appears in .env and we leave
-    # missing images alone.
+  local image_sha
+  image_sha="$($SUDO docker image inspect \
+    --format '{{index .Config.Labels "org.agenthub.git-sha"}}' \
+    "$image" 2>/dev/null || true)"
+  if [[ -z "$image_sha" ]]; then
+    # Image missing entirely. Only "stale" on a :local-flavored install;
+    # on registry installs the :local tag is expected to be absent.
     grep -qE '=agenthubv2-[a-z-]+:local' "$ENV_FILE" 2>/dev/null
     return
   fi
-  local image_ts git_ts
-  image_ts="$(date -d "$created" +%s 2>/dev/null || echo 0)"
-  git_ts="$( (cd "$AGENTHUB_DIR" && git log -1 --format=%ct -- "$@") 2>/dev/null || echo 0 )"
-  [[ "$image_ts" -gt 0 && "$git_ts" -gt 0 && "$git_ts" -gt "$image_ts" ]]
+  if [[ "$image_sha" == "unknown" || "$image_sha" == "<no value>" ]]; then
+    # Pre-hardening image built before the GIT_SHA label existed.
+    # Rebuild once to start tracking labels.
+    return 0
+  fi
+  # History could have been rewritten (force-push, different fork) such
+  # that the recorded SHA is no longer reachable. Be safe and rebuild.
+  if ! (cd "$AGENTHUB_DIR" && git cat-file -e "$image_sha^{commit}" 2>/dev/null); then
+    return 0
+  fi
+  local changed
+  changed="$( (cd "$AGENTHUB_DIR" && git diff --name-only "$image_sha" HEAD -- "$@" 2>/dev/null) || true)"
+  [[ -n "$changed" ]]
 }
 
 # Rebuild every image whose build context has moved — either via a new
@@ -154,41 +167,94 @@ rebuild_changed_images() {
       rebuild_updater=1
     fi
   fi
-  [[ $rebuild_server    -eq 0 ]] && image_older_than_repo agenthubv2-server:local    "${server_paths[@]}"    && rebuild_server=1
-  [[ $rebuild_workspace -eq 0 ]] && image_older_than_repo agenthubv2-workspace:local "${workspace_paths[@]}" && rebuild_workspace=1
-  [[ $rebuild_updater   -eq 0 ]] && image_older_than_repo agenthubv2-updater:local   "${updater_paths[@]}"   && rebuild_updater=1
+  [[ $rebuild_server    -eq 0 ]] && image_drift_for_paths agenthubv2-server:local    "${server_paths[@]}"    && rebuild_server=1
+  [[ $rebuild_workspace -eq 0 ]] && image_drift_for_paths agenthubv2-workspace:local "${workspace_paths[@]}" && rebuild_workspace=1
+  [[ $rebuild_updater   -eq 0 ]] && image_drift_for_paths agenthubv2-updater:local   "${updater_paths[@]}"   && rebuild_updater=1
 
   if [[ "$rebuild_server" -eq 0 && "$rebuild_workspace" -eq 0 && "$rebuild_updater" -eq 0 ]]; then
     msg "no image-relevant changes — skipping rebuild"
     return
   fi
+  # Baked into the image via ARG GIT_SHA / LABEL org.agenthub.git-sha.
+  # image_drift_for_paths reads the label on next update to decide rebuild.
+  local git_sha
+  git_sha="$( (cd "$AGENTHUB_DIR" && git rev-parse HEAD) 2>/dev/null || echo unknown )"
   if [[ "$rebuild_server" -eq 1 ]]; then
     msg "rebuilding agenthubv2-server:local"
-    $SUDO docker build -f "$AGENTHUB_DIR/docker/Dockerfile.server" -t agenthubv2-server:local "$AGENTHUB_DIR"
+    $SUDO docker build --build-arg "GIT_SHA=$git_sha" -f "$AGENTHUB_DIR/docker/Dockerfile.server" -t agenthubv2-server:local "$AGENTHUB_DIR"
   fi
   if [[ "$rebuild_workspace" -eq 1 ]]; then
     msg "rebuilding agenthubv2-workspace:local"
-    $SUDO docker build -f "$AGENTHUB_DIR/docker/Dockerfile.agent-workspace" -t agenthubv2-workspace:local "$AGENTHUB_DIR"
+    $SUDO docker build --build-arg "GIT_SHA=$git_sha" -f "$AGENTHUB_DIR/docker/Dockerfile.agent-workspace" -t agenthubv2-workspace:local "$AGENTHUB_DIR"
   fi
   if [[ "$rebuild_updater" -eq 1 ]]; then
     msg "rebuilding agenthubv2-updater:local"
-    $SUDO docker build -f "$AGENTHUB_DIR/docker/Dockerfile.updater" -t agenthubv2-updater:local "$AGENTHUB_DIR"
+    $SUDO docker build --build-arg "GIT_SHA=$git_sha" -f "$AGENTHUB_DIR/docker/Dockerfile.updater" -t agenthubv2-updater:local "$AGENTHUB_DIR"
   fi
 }
 
+# After `compose up -d --force-recreate`, confirm the running server
+# container is actually on the newly-built :local image. Catches the
+# silent-failure class where compose returns 0 without recreating (e.g.
+# container left on a now-dangling image from a prior build) — the
+# exact bug that left VM 915 serving a stale React bundle for days in
+# April 2026.
+#
+# On registry-pinned installs there is no :local tag to compare; we
+# accept "container exists" as verification and move on.
+verify_server_image() {
+  local container_id
+  container_id="$(compose ps -q agenthub-server 2>/dev/null | head -1)"
+  if [[ -z "$container_id" ]]; then
+    die "agenthub-server container not found after recreate — check 'compose ps' output above"
+  fi
+  local container_image tag_image
+  container_image="$($SUDO docker inspect "$container_id" \
+    --format '{{.Image}}' 2>/dev/null || true)"
+  tag_image="$($SUDO docker image inspect agenthubv2-server:local \
+    --format '{{.Id}}' 2>/dev/null || true)"
+  if [[ -z "$container_image" ]]; then
+    die "couldn't read server container image ID — recreate may have failed"
+  fi
+  if [[ -z "$tag_image" ]]; then
+    ok "server container running (registry-pinned install — no :local verify)"
+    return 0
+  fi
+  if [[ "$container_image" != "$tag_image" ]]; then
+    die "server container is on image ${container_image:7:12} but :local tag points at ${tag_image:7:12} — force-recreate didn't take. Investigate: docker compose -f $COMPOSE_FILE up -d --force-recreate agenthub-server"
+  fi
+  ok "server container image matches :local tag"
+}
+
+# Poll the front door until it reports the expected SHA, confirming the
+# new image is actually handling traffic end-to-end. Images that predate
+# the AGENTHUB_GIT_SHA env var report "unknown", in which case we fall
+# back to a plain 200-OK check (one-time upgrade path).
 probe_front_door() {
-  local domain
-  domain="$(grep -E '^DOMAIN=' "$ENV_FILE" | cut -d= -f2)"
+  local domain expected
+  domain="$(grep -E '^DOMAIN=' "$ENV_FILE" | cut -d= -f2-)"
   [[ -z "$domain" ]] && return 0
-  local deadline=$((SECONDS + 30))
+  expected="$( (cd "$AGENTHUB_DIR" && git rev-parse HEAD) 2>/dev/null || echo "")"
+  local deadline=$((SECONDS + 60))
+  local body served=""
   while [[ "$SECONDS" -lt "$deadline" ]]; do
-    if curl -ksf -m 5 --resolve "${domain}:443:127.0.0.1" "https://${domain}/api/health" >/dev/null 2>&1; then
-      ok "front-door probe green: https://${domain}/api/health"
-      return 0
+    body="$(curl -ksf -m 5 --resolve "${domain}:443:127.0.0.1" \
+      "https://${domain}/api/health" 2>/dev/null || true)"
+    if [[ -n "$body" ]]; then
+      served="$(echo "$body" | grep -oE '"sha":"[^"]+"' | head -1 | cut -d'"' -f4)"
+      # Legacy image: no SHA field or literal "unknown". 200 is the best signal.
+      if [[ -z "$served" || "$served" == "unknown" || -z "$expected" ]]; then
+        ok "front-door probe green: https://${domain}/api/health"
+        return 0
+      fi
+      if [[ "$served" == "$expected" ]]; then
+        ok "front-door serving expected SHA: ${expected:0:7}"
+        return 0
+      fi
     fi
     sleep 2
   done
-  warn "front-door probe did not turn green within 30s — inspect: docker logs agenthub-traefik-1"
+  warn "front-door did not converge to ${expected:0:7} within 60s (last served: ${served:-<no response>}). Inspect: docker logs agenthub-agenthub-server-1"
   return 1
 }
 
@@ -269,15 +335,15 @@ cmd_update() {
   # Images drift from the repo in two cases: (a) a prior update failed
   # mid-flight, or (b) a pre-#18 CLI self-update re-exec'd into the new
   # single-pass CLI, which saw HEAD and bailed before rebuilding. Catch
-  # both by checking image-vs-repo timestamps alongside the sha diff —
+  # both by checking the image's baked GIT_SHA label against HEAD —
   # "nothing to do" must mean both fresh, not just git-fresh.
   local images_stale=0
-  if image_older_than_repo agenthubv2-server:local \
+  if image_drift_for_paths agenthubv2-server:local \
        docker/Dockerfile.server packages/server packages/web packages/agent packages/docs \
        pnpm-lock.yaml package.json \
-    || image_older_than_repo agenthubv2-workspace:local \
+    || image_drift_for_paths agenthubv2-workspace:local \
        docker/Dockerfile.agent-workspace docker/agent-workspace-entrypoint.sh packages/agent \
-    || image_older_than_repo agenthubv2-updater:local \
+    || image_drift_for_paths agenthubv2-updater:local \
        docker/Dockerfile.updater; then
     images_stale=1
   fi
@@ -317,11 +383,18 @@ cmd_update() {
   #   2. `--force-recreate agenthub-server` guarantees the new image we
   #      just rebuilt is actually used — compose otherwise keeps the
   #      running container when only the underlying image changed.
+  #
+  # We no longer swallow compose's stdout: when the recreate silently
+  # no-ops (the April 2026 VM 915 stale-bundle class of bug) the only
+  # signal was in the text compose prints about which containers it
+  # left alone. verify_server_image below is the authoritative check,
+  # but visible output helps when it dies.
   msg "applying compose changes"
-  compose up -d >/dev/null
+  compose up -d
   msg "recreating server with new image"
-  compose up -d --force-recreate agenthub-server >/dev/null
+  compose up -d --force-recreate agenthub-server
 
+  verify_server_image
   probe_front_door
 
   # Install the new CLI last — everything above ran under the
