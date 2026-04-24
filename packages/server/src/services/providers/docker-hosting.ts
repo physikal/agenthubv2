@@ -8,6 +8,15 @@ import type {
 
 const execFileAsync = promisify(execFile);
 
+// IPv4 / hostname / bracketed-IPv6 charset. The stored value later flows into
+// `ssh ${sshUser}@${ip} ...`; restricting to this set means no shell
+// metacharacter or whitespace can survive into an ssh argv position.
+const HOST_RE = /^[A-Za-z0-9.:[\]_-]{1,253}$/;
+// POSIX-ish username. Kept permissive (case-insensitive, allows digits/dash/
+// underscore) but disallows anything that could be mis-parsed by ssh as an
+// option flag (leading `-`) or shell metacharacter.
+const SSH_USER_RE = /^[A-Za-z_][A-Za-z0-9_-]{0,31}$/;
+
 /**
  * BYO-Docker host. User supplies:
  *   { hostIp: "1.2.3.4", sshUser?: "root", sshPrivateKey: "-----BEGIN ..." }
@@ -23,8 +32,19 @@ export class DockerHostingProvider implements HostingProvider {
 
   validate(config: Record<string, unknown>): ProviderConfigCheck {
     const issues: string[] = [];
-    if (typeof config["hostIp"] !== "string" || !config["hostIp"]) {
+    const hostIp = config["hostIp"];
+    if (typeof hostIp !== "string" || !hostIp) {
       issues.push("hostIp is required");
+    } else if (!HOST_RE.test(hostIp)) {
+      issues.push(
+        "hostIp must be an IPv4, IPv6, or hostname (letters, digits, '.', ':', '-', '_', '[]')",
+      );
+    }
+    const sshUser = config["sshUser"];
+    if (typeof sshUser === "string" && sshUser && !SSH_USER_RE.test(sshUser)) {
+      issues.push(
+        "sshUser must be a POSIX-style username (letters, digits, '-', '_'; starts with letter or '_')",
+      );
     }
     if (typeof config["sshPrivateKey"] !== "string" || !config["sshPrivateKey"]) {
       issues.push("sshPrivateKey is required");

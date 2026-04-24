@@ -127,30 +127,46 @@ export function agentGithubRoutes() {
         ? plainUrl
         : `https://x-access-token:${creds.pat}@github.com/${repo.fullName}.git`;
     const commitMsg = body.commitMessage ?? "Initial commit";
+    // Pass commit message + remote URLs through `docker exec -e` env vars
+    // instead of interpolating them into the bash -c script. Bash expands
+    // "$VAR" by literal substitution — it does NOT re-parse the expansion
+    // for $(...) / backticks, so an attacker-controlled commit message
+    // can't turn into command substitution. `body.path` is regex-validated
+    // upstream; inlining it is safe.
     const steps = [
       `cd ${JSON.stringify(body.path)}`,
       "git init -b main 2>/dev/null || true",
       "git config user.email 'agenthub@users.noreply.github.com'",
       "git config user.name 'AgentHub'",
       "git add -A",
-      // No-op if nothing to commit.
-      `git diff --cached --quiet || git commit -m ${JSON.stringify(commitMsg)}`,
+      'git diff --cached --quiet || git commit -m "$COMMIT_MSG"',
       "git remote remove origin 2>/dev/null || true",
-      `git remote add origin ${JSON.stringify(remoteUrl)}`,
+      'git remote add origin "$REMOTE_URL"',
       "git branch -M main",
       "git push -u origin main",
     ];
     if (creds.source === "pat") {
       // Strip the PAT-bearing remote so it doesn't persist on disk.
-      steps.push(`git remote set-url origin ${JSON.stringify(plainUrl)}`);
+      steps.push('git remote set-url origin "$PLAIN_URL"');
     }
     const script = steps.join(" && ");
+
+    const dockerArgs = ["exec", "-e", "COMMIT_MSG", "-e", "REMOTE_URL"];
+    if (creds.source === "pat") dockerArgs.push("-e", "PLAIN_URL");
+    dockerArgs.push(containerName, "bash", "-lc", script);
+
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      COMMIT_MSG: commitMsg,
+      REMOTE_URL: remoteUrl,
+    };
+    if (creds.source === "pat") childEnv["PLAIN_URL"] = plainUrl;
 
     try {
       const { stdout, stderr } = await execFileAsync(
         "docker",
-        ["exec", containerName, "bash", "-lc", script],
-        { timeout: 60_000 },
+        dockerArgs,
+        { env: childEnv, timeout: 60_000 },
       );
       return c.json({
         repo: repo.fullName,
