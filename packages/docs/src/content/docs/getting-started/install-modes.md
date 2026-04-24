@@ -5,15 +5,14 @@ description: Three install modes, one installer, and what "provisioner" means.
 
 AgentHub is delivered as a Docker Compose bundle plus an Ink (React-for-terminals) installer. You pick one **provisioner mode** at install time — that choice controls how AgentHub creates workspace containers for each session.
 
-## The three modes
+## The two modes
 
 | Mode | What it does | When to pick it |
 |---|---|---|
 | `docker` | Workspaces run as containers on the local Docker daemon. The server talks to `/var/run/docker.sock` directly. | Default. Self-hosting on one box and you want it to just work. |
-| `dokploy-local` | Bundles Dokploy alongside AgentHub. Workspaces are Dokploy services. | You already like Dokploy's UI and want it in the box. |
 | `dokploy-remote` | Points AgentHub at a pre-existing Dokploy instance. | You already run Dokploy in production and want AgentHub to reuse it. |
 
-`docker` mode is simplest and is what most users should pick. It does mount `/var/run/docker.sock` into the server container, which is a real security surface. If you need a zero-socket posture, pick a `dokploy-*` mode — Dokploy owns the daemon access and AgentHub talks to it over HTTP.
+`docker` mode is simplest and is what most users should pick. It does mount `/var/run/docker.sock` into the server container, which is a real security surface. If you need a zero-socket posture, pick `dokploy-remote` — Dokploy owns the daemon access and AgentHub talks to it over HTTP.
 
 ## The installer
 
@@ -26,7 +25,7 @@ AgentHub is delivered as a Docker Compose bundle plus an Ink (React-for-terminal
 
 The TUI asks you (with defaults) for:
 
-- Provisioner mode (the three above)
+- Provisioner mode (the two above)
 - Domain (`localhost` or your hostname)
 - TLS email (required for non-localhost domains — used by Let's Encrypt)
 - Admin password (leave blank to auto-generate)

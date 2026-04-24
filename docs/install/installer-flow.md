@@ -73,7 +73,6 @@ Exit codes bubble up from `./scripts/install.sh`: 0 ok, 2 missing required env v
                          │  be provisioned?          │
                          │                           │
                          │  ▶ Local Docker (default) │
-                         │    Bundled Dokploy        │
                          │    Remote Dokploy         │
                          └──────────────┬────────────┘
                                         ▼

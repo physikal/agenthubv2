@@ -35,7 +35,7 @@ Click the row. You can update the non-secret fields inline. To change a secret, 
 
 Confusingly, AgentHub has *two* provisioners:
 
-- **Outer provisioner** — how AgentHub creates the workspace container for each session. Set at install time by `PROVISIONER_MODE` (docker / dokploy-local / dokploy-remote). You don't configure this via the Integrations page.
+- **Outer provisioner** — how AgentHub creates the workspace container for each session. Set at install time by `PROVISIONER_MODE` (docker / dokploy-remote). You don't configure this via the Integrations page.
 - **Inner hosting providers** — how an agent inside a workspace deploys *its* apps. Set per-user via the Integrations page (DigitalOcean, Docker host, Dokploy).
 
 The two layers are independent. You can run AgentHub with `PROVISIONER_MODE=docker` (workspaces on the local Docker daemon) and have your agent deploy apps to a DigitalOcean droplet in the same install.

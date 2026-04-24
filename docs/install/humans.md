@@ -62,7 +62,6 @@ The TUI walks you through:
 1. **Prerequisite check.** Verifies Docker, Compose, and ports.
 2. **Provisioner choice.** Pick one:
    - **Local Docker** (default) — workspace containers run on the same host. Simplest.
-   - **Bundled Dokploy** — spins up Dokploy alongside AgentHub. Use this if you want Dokploy's UI for workspace orchestration.
    - **Remote Dokploy** — point AgentHub at an existing Dokploy instance. Needs its URL + API token + project ID + environment ID.
 3. **Domain.** `localhost` or a real hostname.
 4. **TLS email.** Only asked for non-localhost domains. Used by Let's Encrypt for cert expiry notices.

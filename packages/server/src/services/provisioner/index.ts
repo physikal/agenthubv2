@@ -24,10 +24,8 @@ export function createProvisioner(): ProvisionerDriver {
       return new DockerDriver(opts);
     }
 
-    case "dokploy-local":
     case "dokploy-remote":
       return new DokployDriver({
-        mode,
         baseUrl: requireEnv("DOKPLOY_URL"),
         apiToken: requireEnv("DOKPLOY_API_TOKEN"),
         projectId: requireEnv("DOKPLOY_PROJECT_ID"),
@@ -36,7 +34,7 @@ export function createProvisioner(): ProvisionerDriver {
 
     default:
       throw new Error(
-        `Unknown PROVISIONER_MODE: ${rawMode}. Expected docker | dokploy-local | dokploy-remote`,
+        `Unknown PROVISIONER_MODE: ${rawMode}. Expected docker | dokploy-remote`,
       );
   }
 }

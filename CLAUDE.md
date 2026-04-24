@@ -14,11 +14,11 @@ Monorepo packages:
 ## Quick reference
 - **Database**: SQLite at `/data/agenthub.db` (Drizzle ORM)
 - **Secrets**: Infisical (bundled service, bootstrapped by the installer; SDK = `@infisical/sdk`; console on :8443)
-- **Provisioner modes**: `docker` | `dokploy-local` | `dokploy-remote` (env var `PROVISIONER_MODE`)
+- **Provisioner modes**: `docker` | `dokploy-remote` (env var `PROVISIONER_MODE`)
 - **Agent image**: `docker/Dockerfile.agent-workspace`
 - **Server image**: `docker/Dockerfile.server` (includes `git` for the Version endpoint)
 - **Updater image**: `docker/Dockerfile.updater` (alpine + git + docker-cli, used by web UI "Update now")
-- **Compose bundle**: `compose/docker-compose.yml` (+ `docker-compose.dokploy.yml` overlay)
+- **Compose bundle**: `compose/docker-compose.yml`
 - **Operator CLI**: `/usr/local/bin/agenthub` (installed by `scripts/install.sh`, source at `scripts/agenthub`). Subcommands: `update` / `status` / `logs` / `restart` / `version`.
 - **Repo mount**: the server container has the install's git checkout at `/repo` (rw) so `/api/admin/version` can shell to git and `/api/admin/update` can spawn the updater container.
 
@@ -46,14 +46,14 @@ pnpm --filter @agenthub/server exec vitest run -t "test name substring"
 ### Two independent provisioner layers (most load-bearing concept)
 The codebase has **two** swappable driver abstractions that are easy to confuse:
 
-1. **Outer — how AgentHub provisions a workspace container per session.** Lives in `packages/server/src/services/provisioner/*`. Picked at install time via `PROVISIONER_MODE` (`docker` | `dokploy-local` | `dokploy-remote`). Interface: `ProvisionerDriver` (`create`/`start`/`stop`/`destroy`/`status`/`waitForIp`/`listAll`).
+1. **Outer — how AgentHub provisions a workspace container per session.** Lives in `packages/server/src/services/provisioner/*`. Picked at install time via `PROVISIONER_MODE` (`docker` | `dokploy-remote`). Interface: `ProvisionerDriver` (`create`/`start`/`stop`/`destroy`/`status`/`waitForIp`/`listAll`).
 2. **Inner — how an agent inside a workspace deploys its own apps.** Lives in `packages/server/src/services/providers/*` + the `agentdeploy` MCP (`packages/agent/src/mcp-deploy.ts`). Picked per-user via `infrastructure_configs` rows. Interface: `HostingProvider` (`validate`/`verify`/`provision`/`destroy`).
 
 Both layers support Docker and Dokploy, but they are **separate code paths with separate drivers**. One install can run outer=`docker` and inner=`digitalocean` simultaneously. When adding hosting support, figure out which layer you're in before touching either directory. Full walkthrough in `docs/architecture.md`.
 
 ### Other decisions
 - **Provisioner driver abstraction** (`packages/server/src/services/provisioner/`) — swappable at install time. Adding a new driver means implementing one interface. See `docs/architecture.md`.
-- **Docker driver mounts `/var/run/docker.sock`** — gated by `AGENTHUB_ALLOW_SOCKET_MOUNT=true`. The installer wires this automatically for `docker` mode. Users who need zero-socket-mount pick a `dokploy-*` mode where Dokploy owns the daemon.
+- **Docker driver mounts `/var/run/docker.sock`** — gated by `AGENTHUB_ALLOW_SOCKET_MOUNT=true`. The installer wires this automatically for `docker` mode. Users who need zero-socket-mount pick `dokploy-remote` where Dokploy owns the daemon.
 - **Infisical for all provider secrets** — Cloudflare tokens, B2 keys, DO tokens live in Infisical at `/users/{userId}/...` paths, not SQLite JSON. SQLite stores only metadata/references. Bootstrap is automated via `npx @infisical/cli bootstrap` (see `packages/installer/src/lib/infisical-bootstrap.ts`).
 - **Cookie auth** (not JWT) — carries WebSocket upgrade automatically.
 - **ttyd + dtach** for terminal persistence (`packages/server/src/ws/terminal-proxy.ts` has the ASCII type-byte framing).

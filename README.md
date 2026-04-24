@@ -79,10 +79,9 @@ Inside each workspace, `agentdeploy` MCP lets the agent deploy *its* apps to: Do
 | Mode | What it is | When to pick |
 |---|---|---|
 | `docker` | AgentHub runs workspace containers on the local Docker daemon. Default. | You're self-hosting on one box and just want it to work. |
-| `dokploy-local` | Bundles Dokploy alongside AgentHub. | You want Dokploy's UI to manage workspace apps. |
 | `dokploy-remote` | Points at a pre-existing Dokploy instance. | You already run Dokploy. |
 
-`docker` mode mounts `/var/run/docker.sock` into the server container (gated by `AGENTHUB_ALLOW_SOCKET_MOUNT=true` — set automatically by the installer). If you need zero-socket-mount security, use a `dokploy-*` mode where Dokploy owns the daemon access.
+`docker` mode mounts `/var/run/docker.sock` into the server container (gated by `AGENTHUB_ALLOW_SOCKET_MOUNT=true` — set automatically by the installer). If you need zero-socket-mount security, use `dokploy-remote` so Dokploy owns the daemon access and AgentHub talks to it over HTTP.
 
 ## Tech stack
 

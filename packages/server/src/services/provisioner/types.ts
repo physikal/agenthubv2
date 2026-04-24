@@ -1,4 +1,4 @@
-export type ProvisionerMode = "docker" | "dokploy-local" | "dokploy-remote";
+export type ProvisionerMode = "docker" | "dokploy-remote";
 
 export interface WorkspaceCreateRequest {
   /** Stable ID we generate (used in names, labels, volume paths). */
