@@ -100,7 +100,7 @@ Inside each workspace, `agentdeploy` MCP lets the agent deploy *its* apps to: Do
 pnpm install
 pnpm dev        # web + server + agent in dev mode
 pnpm typecheck  # must pass before commit
-pnpm test       # vitest unit suite (19 tests)
+pnpm test       # vitest unit suite
 pnpm build      # production dist
 ```
 

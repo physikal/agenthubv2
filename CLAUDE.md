@@ -31,7 +31,7 @@ pnpm install
 pnpm dev          # all packages in parallel (web + server + agent)
 pnpm typecheck    # must pass before commit
 pnpm lint         # per-package lint (runs where defined)
-pnpm test         # vitest (19 unit tests, installer + server)
+pnpm test         # vitest unit suite (installer + server + agent)
 pnpm build        # production build
 ```
 
@@ -92,7 +92,7 @@ See `compose/.env.example` for the full list with comments.
 
 Unit tests (vitest): `pnpm test`. Only pure-function tests today; add more under `**/*.test.ts` in installer + server.
 
-Full E2E (requires a fresh Debian 12 Docker host): use `scripts/e2e-full.js` — 21-check script covering health, auth, Infisical round-trip (Cloudflare + B2), session creation, workspace agent, and backup plumbing. Self-cleaning: unwinds every fixture it creates before exit. Invocation:
+Full E2E (requires a fresh Debian 12 Docker host): use `scripts/e2e-full.js` — covers health, auth, Infisical round-trip (Cloudflare + B2), session creation, workspace agent, and backup plumbing. Self-cleaning: unwinds every fixture it creates before exit. Invocation:
 ```bash
 docker cp scripts/e2e-full.js agenthub-agenthub-server-1:/tmp/e2e.js
 docker exec -e ADMIN_PASSWORD=<pw> agenthub-agenthub-server-1 node /tmp/e2e.js

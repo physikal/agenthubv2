@@ -5,17 +5,22 @@ description: One page for every external service AgentHub talks to — Cloudflar
 
 **Integrations** is a single page that collects every external service AgentHub (and the agents inside its workspaces) can talk to. Each integration has a typed form: you fill it in, secrets go to Infisical, metadata goes to SQLite, and the relevant feature starts working.
 
-## The five integration types
+## The integration types
 
 | Provider | What it enables | Secret(s) held | Non-secret metadata |
 |---|---|---|---|
 | **Cloudflare** | DNS automation for `agentdeploy` — agents can point `foo.yourdomain.com` at a deployed droplet without you touching the dashboard. | `apiToken` | `zoneId`, zone name |
 | **DigitalOcean** | Inner-layer hosting provider. Agents can provision droplets + Docker + Traefik from inside a workspace. | `apiToken` | `region`, `sshKeyId`, ssh key fingerprint |
+| **DigitalOcean App Platform** | Inner-layer hosting provider for DO's managed App Platform — agents deploy apps without managing droplets. | `apiToken` (needs `app:*` scopes) | `region` (optional) |
 | **Docker host** | Inner-layer hosting provider targeting an arbitrary Docker daemon over SSH (your own server). | `sshPrivateKey` | `hostIp`, `sshUser` |
 | **Dokploy** | Inner-layer hosting provider against a running Dokploy instance. | `apiToken` | `baseUrl`, `projectId`, `environmentId` |
 | **Backblaze B2** | Backblaze bucket for `/home/coder` backups. | `keyId`, `appKey` | `bucket`, `subdir` (optional) |
 
-The Cloudflare, DO, Docker, and Dokploy entries are what the [`agentdeploy` MCP](/docs/agentdeploy/overview/) uses when an agent inside a workspace wants to deploy. B2 is used by the [Backups](/docs/web-ui/backups/) page.
+The Cloudflare, DO, DO Apps, Docker, and Dokploy entries are what the [`agentdeploy` MCP](/docs/agentdeploy/overview/) uses when an agent inside a workspace wants to deploy. B2 is used by the [Backups](/docs/web-ui/backups/) page.
+
+### GitHub App (admin-only)
+
+The Integrations page also hosts the **GitHub App** card at the top — a single install-wide integration admins configure once so every user can grant per-repo access without managing PATs. It's distinct from the per-user rows above: see the [GitHub App docs](/docs/integrations/github-app/) for the full setup.
 
 ## How a save works
 
