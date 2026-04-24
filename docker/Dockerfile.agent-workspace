@@ -25,6 +25,11 @@ RUN pnpm --filter @agenthub/agent build
 # ---------- Stage 2: workspace runtime ----------
 FROM debian:12-slim
 
+# Baked in by the build scripts so scripts/agenthub can detect image
+# drift via the label instead of mtime/committer-date heuristics.
+ARG GIT_SHA=unknown
+LABEL org.agenthub.git-sha=$GIT_SHA
+
 ENV DEBIAN_FRONTEND=noninteractive \
     NODE_VERSION=22 \
     TTYD_VERSION=1.7.7

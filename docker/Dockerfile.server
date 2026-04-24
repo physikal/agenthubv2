@@ -45,6 +45,17 @@ COPY packages/docs/ packages/docs/
 RUN cd packages/docs && npx astro build
 
 FROM base AS production
+# Baked in by the build scripts (scripts/install.sh, scripts/agenthub
+# rebuild_changed_images) from `git rev-parse HEAD` at build time.
+# The label lets scripts/agenthub detect image-vs-repo drift without
+# relying on fragile mtime/committer-date comparisons. The ENV lets
+# the running server report its own SHA via /api/health, which the
+# update script polls post-recreate to confirm the new image is
+# actually serving traffic.
+ARG GIT_SHA=unknown
+LABEL org.agenthub.git-sha=$GIT_SHA
+ENV AGENTHUB_GIT_SHA=$GIT_SHA
+
 # docker-ce-cli lets /api/admin/update spawn the updater container via
 # `docker run` using the host socket that compose already mounts. Without
 # it, the Update button 500s with `spawn docker ENOENT`. Pulled from the

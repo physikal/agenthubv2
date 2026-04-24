@@ -65,21 +65,27 @@ WORKSPACE_IMAGE="${AGENTHUB_WORKSPACE_IMAGE:-agenthubv2-workspace:local}"
 export AGENTHUB_SERVER_IMAGE="$SERVER_IMAGE"
 export AGENTHUB_WORKSPACE_IMAGE="$WORKSPACE_IMAGE"
 
+# Baked into each image as org.agenthub.git-sha label + (for server)
+# AGENTHUB_GIT_SHA env var. scripts/agenthub reads the label to detect
+# image drift and the /api/health endpoint reports the env var so
+# post-update probes can confirm the running container is on the new image.
+GIT_SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+
 if [[ "$SERVER_IMAGE" == "agenthubv2-server:local" ]]; then
   echo "=== docker build server (agenthubv2-server:local) ==="
-  docker build -f docker/Dockerfile.server -t "$SERVER_IMAGE" . | tail -3
+  docker build --build-arg "GIT_SHA=$GIT_SHA" -f docker/Dockerfile.server -t "$SERVER_IMAGE" . | tail -3
 fi
 
 if [[ "$WORKSPACE_IMAGE" == "agenthubv2-workspace:local" ]]; then
   echo "=== docker build workspace (agenthubv2-workspace:local) ==="
-  docker build -f docker/Dockerfile.agent-workspace -t "$WORKSPACE_IMAGE" . | tail -3
+  docker build --build-arg "GIT_SHA=$GIT_SHA" -f docker/Dockerfile.agent-workspace -t "$WORKSPACE_IMAGE" . | tail -3
 fi
 
 # Updater image is tiny (alpine + git + docker-cli) — always build locally,
 # no registry push. The web-UI "Update" button runs this image as a one-shot
 # to invoke the same agenthub CLI the operator uses from the host.
 echo "=== docker build updater (agenthubv2-updater:local) ==="
-docker build -q -f docker/Dockerfile.updater -t agenthubv2-updater:local . | tail -3
+docker build -q --build-arg "GIT_SHA=$GIT_SHA" -f docker/Dockerfile.updater -t agenthubv2-updater:local . | tail -3
 
 # --- Install the `agenthub` CLI onto PATH + state file ---------------------
 # Gives the operator a single command for update/status/logs/restart after

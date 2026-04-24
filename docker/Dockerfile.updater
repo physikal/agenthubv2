@@ -18,6 +18,11 @@
 #   docker build -f docker/Dockerfile.updater -t agenthubv2-updater:local .
 FROM alpine:3.20
 
+# Baked in by the build scripts so scripts/agenthub can detect image
+# drift via the label instead of mtime/committer-date heuristics.
+ARG GIT_SHA=unknown
+LABEL org.agenthub.git-sha=$GIT_SHA
+
 RUN apk add --no-cache \
       bash \
       git \
