@@ -31,16 +31,24 @@ If you prefer Claude Code's interface but want the MiniMax M2.7 model, run:
 claude-minimax
 ```
 
-The shim is literally:
+#### One-time setup
 
-```bash
-#!/bin/bash
-exec claude --model minimax/MiniMax-M2.7 --dangerously-skip-permissions "$@"
-```
+Save your MiniMax key in AgentHub:
 
-It forwards any extra args to `claude`, so `claude-minimax -p "review this file"` works exactly like `claude -p ...` with the model flag pre-applied.
+1. Open the **Integrations** page in the web UI
+2. Click **Add integration** → **MiniMax**
+3. Paste your `apiKey` (and optionally a custom `baseUrl`)
+4. Save
 
-`--dangerously-skip-permissions` is passed because MiniMax routing in Claude Code doesn't participate in the usual permission loop — the shim opts out. Understand what that means: **any tool the agent calls runs without asking you first**. If you want the permission UI, run plain `claude --model minimax/MiniMax-M2.7` instead.
+The server injects `MINIMAX_API_KEY` (and `MINIMAX_BASE_URL` if you customised it) into every new session's environment. Existing sessions don't pick up newly-saved keys — start a fresh session.
+
+Without the key the shim fails fast with a pointer back to this flow. Calling vanilla `claude` against a `minimax/...` model wouldn't do what you want — Claude Code routes by `ANTHROPIC_BASE_URL`, not by model prefix.
+
+#### Under the hood
+
+The shim sets `ANTHROPIC_BASE_URL` to MiniMax's Anthropic-compatible endpoint, attaches your key as `ANTHROPIC_AUTH_TOKEN`, and exec's `claude --model MiniMax-M2.7 --dangerously-skip-permissions "$@"`. Extra args forward through, so `claude-minimax -p "review this file"` works exactly like the equivalent `claude` invocation.
+
+`--dangerously-skip-permissions` is on because MiniMax routing doesn't participate in Claude Code's usual permission loop — **any tool the agent calls runs without asking you first.** If you want the permission UI, run `claude --model MiniMax-M2.7` directly (no `claude-minimax`) once your key is set.
 
 ## When to pick each
 

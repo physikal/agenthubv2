@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import WebSocket from "ws";
 import { db, schema } from "../db/index.js";
 import type { Session, SessionStatus } from "../db/schema.js";
@@ -8,6 +8,67 @@ import type {
   WorkspaceRef,
 } from "./provisioner/types.js";
 import { firstActiveInstallationForUser } from "./providers/github-app.js";
+import { resolveInfraConfig } from "./secrets/helpers.js";
+
+// Pinned to literal types so drizzle's inArray accepts them as values for
+// the provider column (SQLiteText with an enum data type).
+const AI_PROVIDERS: readonly ("ai-anthropic" | "ai-minimax" | "ai-openai")[] = [
+  "ai-anthropic",
+  "ai-minimax",
+  "ai-openai",
+];
+const MINIMAX_DEFAULT_BASE_URL = "https://api.minimax.io/anthropic";
+
+// Look up the user's stored AI provider keys (per-user infrastructure_configs
+// rows whose provider is one of AI_PROVIDERS) and resolve their secrets from
+// Infisical. Returns env vars ready to merge into the workspace container's
+// environment so the bundled CLIs (claude, claude-minimax, mmx) authenticate
+// without prompting the user every session.
+async function buildAiProviderEnv(userId: string): Promise<Record<string, string>> {
+  const env: Record<string, string> = {};
+  let rows;
+  try {
+    rows = db
+      .select()
+      .from(schema.infrastructureConfigs)
+      .where(
+        and(
+          eq(schema.infrastructureConfigs.userId, userId),
+          inArray(schema.infrastructureConfigs.provider, AI_PROVIDERS),
+        ),
+      )
+      .all();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[session] AI provider lookup failed for user ${userId}: ${msg}`);
+    return env;
+  }
+  for (const row of rows) {
+    let cfg: Record<string, unknown>;
+    try {
+      const metadata = JSON.parse(row.config) as Record<string, unknown>;
+      cfg = await resolveInfraConfig(userId, row.id, metadata);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[session] failed to resolve AI provider ${row.provider} (${row.id}): ${msg}`);
+      continue;
+    }
+    const apiKey = typeof cfg["apiKey"] === "string" ? cfg["apiKey"] : "";
+    if (!apiKey) continue;
+    if (row.provider === "ai-anthropic") {
+      env["ANTHROPIC_API_KEY"] = apiKey;
+    } else if (row.provider === "ai-minimax") {
+      env["MINIMAX_API_KEY"] = apiKey;
+      env["MINIMAX_BASE_URL"] =
+        typeof cfg["baseUrl"] === "string" && cfg["baseUrl"]
+          ? cfg["baseUrl"]
+          : MINIMAX_DEFAULT_BASE_URL;
+    } else if (row.provider === "ai-openai") {
+      env["OPENAI_API_KEY"] = apiKey;
+    }
+  }
+  return env;
+}
 
 /**
  * Ping the agent every 30s to detect idle NAT/firewall drops that kill the
@@ -243,6 +304,17 @@ export class SessionManager {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[session ${session.id}] skipping GitHub credential setup: ${msg}`);
+      }
+
+      // Inject the user's stored AI provider keys (Anthropic, MiniMax, OpenAI)
+      // so workspace shims authenticate without re-prompting every session.
+      // Failures here warn and continue — a missing key just means the user
+      // sees the CLI's own auth prompt on first invocation, same as before.
+      try {
+        Object.assign(env, await buildAiProviderEnv(userId));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[session ${session.id}] AI provider env injection failed: ${msg}`);
       }
 
       const ref = await this.provisioner.create({

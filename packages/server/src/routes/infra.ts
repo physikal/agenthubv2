@@ -26,6 +26,7 @@ const MASKED_FIELDS = new Set([
   "apiToken",
   "sshPrivateKey",
   "b2AppKey",
+  "apiKey",
 ]);
 type Provider = (typeof schema.infrastructureConfigs.$inferSelect)["provider"];
 const KNOWN_PROVIDERS: Provider[] = [
@@ -36,6 +37,9 @@ const KNOWN_PROVIDERS: Provider[] = [
   "cloudflare",
   "b2",
   "github",
+  "ai-anthropic",
+  "ai-minimax",
+  "ai-openai",
 ];
 const FULLY_IMPLEMENTED: Provider[] = [
   "cloudflare",
@@ -45,6 +49,9 @@ const FULLY_IMPLEMENTED: Provider[] = [
   "dokploy",
   "b2",
   "github",
+  "ai-anthropic",
+  "ai-minimax",
+  "ai-openai",
 ];
 
 function maskConfig(configJson: string): Record<string, unknown> {
@@ -87,6 +94,14 @@ function validateConfigForProvider(
     }
     if (!config["owner"]) issues.push("owner required (GitHub user or org)");
     return { ok: issues.length === 0, issues };
+  }
+  // AI providers: just an apiKey, plus an optional baseUrl for self-hosted
+  // or third-party Anthropic-compatible endpoints (MiniMax routes through
+  // its own /anthropic endpoint, OpenAI-compatible proxies could too).
+  if (provider === "ai-anthropic" || provider === "ai-minimax" || provider === "ai-openai") {
+    return config["apiKey"]
+      ? { ok: true, issues: [] }
+      : { ok: false, issues: ["apiKey required"] };
   }
   // Compute providers: defer to the HostingProvider's own validate() so we
   // don't duplicate the per-provider field list here.

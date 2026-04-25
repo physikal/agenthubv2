@@ -4,7 +4,11 @@ import { db, schema } from "../db/index.js";
 import type { AuthUser } from "../middleware/auth.js";
 import { adminMiddleware } from "../middleware/auth.js";
 
-const MASKED_KEYS = new Set(["anthropic_api_key", "claude_credentials", "minimax_api_key"]);
+// Reserved for future server-wide masked settings. AI provider API keys
+// (Anthropic, MiniMax, OpenAI) live as per-user infrastructure_configs
+// rows now, not in this global table — see /api/infra and the
+// "AI Providers" tab on the Integrations page.
+const MASKED_KEYS = new Set<string>();
 
 function maskValue(key: string, value: string): string {
   if (MASKED_KEYS.has(key) && value.length > 4) {

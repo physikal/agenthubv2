@@ -13,6 +13,11 @@ const SECRET_FIELDS: Record<string, readonly string[]> = {
   b2: ["b2AppKey"],
   github: ["pat"],
   "github-pages": [],
+  // AI provider keys: only the API key is secret; baseUrl (if any) is
+  // routing metadata and stays in SQLite for display.
+  "ai-anthropic": ["apiKey"],
+  "ai-minimax": ["apiKey"],
+  "ai-openai": ["apiKey"],
 };
 
 /**
