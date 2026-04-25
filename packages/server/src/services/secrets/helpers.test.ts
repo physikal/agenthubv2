@@ -38,6 +38,23 @@ describe("splitSecrets", () => {
     expect(secrets).toEqual({});
     expect(metadata).toEqual({ apiToken: "abc", other: "x" });
   });
+
+  it("AI providers split apiKey to secrets, keep baseUrl in metadata", () => {
+    const { metadata, secrets } = splitSecrets("ai-minimax", {
+      apiKey: "mm_secret",
+      baseUrl: "https://api.minimax.io/anthropic",
+    });
+    expect(secrets).toEqual({ apiKey: "mm_secret" });
+    expect(metadata).toEqual({ baseUrl: "https://api.minimax.io/anthropic" });
+  });
+
+  it("ai-anthropic and ai-openai split apiKey only", () => {
+    for (const provider of ["ai-anthropic", "ai-openai"] as const) {
+      const { metadata, secrets } = splitSecrets(provider, { apiKey: "k" });
+      expect(secrets).toEqual({ apiKey: "k" });
+      expect(metadata).toEqual({});
+    }
+  });
 });
 
 describe("infraSecretPath", () => {

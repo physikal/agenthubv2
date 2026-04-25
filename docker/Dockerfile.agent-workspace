@@ -72,10 +72,12 @@ RUN npm install -g \
       mmx-cli \
     && npm cache clean --force
 
-# claude-minimax shim — runs Claude Code with the MiniMax model preset.
-RUN printf '#!/bin/bash\nexec claude --model minimax/MiniMax-M2.7 --dangerously-skip-permissions "$@"\n' \
-      > /usr/local/bin/claude-minimax \
-    && chmod +x /usr/local/bin/claude-minimax
+# claude-minimax shim — runs Claude Code routed through MiniMax's
+# Anthropic-compatible endpoint. Reads MINIMAX_API_KEY (+ optional
+# MINIMAX_BASE_URL) at runtime; both are injected by SessionManager
+# from the user's Integrations → AI Providers → MiniMax row.
+COPY docker/claude-minimax-wrapper.sh /usr/local/bin/claude-minimax
+RUN chmod 0755 /usr/local/bin/claude-minimax
 
 # `preview` CLI — reads AGENTHUB_SESSION_ID / AGENTHUB_URL (injected by the
 # server at container create time) and emits the proxy URL.
