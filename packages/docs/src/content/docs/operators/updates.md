@@ -28,12 +28,14 @@ Same code path. See [The agenthub CLI](/docs/operators/cli/).
 ## What each update actually does
 
 1. **Git pull** inside the install's checkout (`/repo` mount in the server container).
-2. **Self-update the CLI** if `scripts/agenthub` changed. Re-exec to land it.
-3. **`docker compose up -d`** to apply compose-file changes without recreating containers.
-4. **`docker build`** any Dockerfile whose source or dependencies changed.
+2. **Detect image drift.** Each `:local` Docker image carries an `org.agenthub.git-sha` label baked at build time. The CLI diffs that label against `HEAD` for each image's input paths — any commit between them that touches those paths flags the image stale.
+3. **`docker build --build-arg GIT_SHA=$(git rev-parse HEAD)`** for any image whose context moved. The new build inherits the new label so the next update knows what's fresh.
+4. **`docker compose up -d`** to apply compose-file changes without recreating containers.
 5. **`docker compose up -d --force-recreate agenthub-server`** to swap in the new server image.
-6. **DB migrations** run on server boot (Drizzle handles this — it's fast, idempotent, and fails loudly).
-7. **Health probe** on `/api/health` for up to 60 seconds.
+6. **`verify_server_image`** asserts the running container's image ID actually matches `agenthubv2-server:local`. If compose silently no-ops the recreate (a real failure mode pre-PR-#57), this step dies loudly with a pointer back to the recreate command.
+7. **DB migrations** run on server boot (Drizzle handles this — it's fast, idempotent, and fails loudly).
+8. **Health probe** polls `/api/health` for up to 60 seconds and only returns green when the served `sha` field matches `git rev-parse HEAD`. End-to-end proof the new image is handling traffic.
+9. **Self-update the CLI** if `scripts/agenthub` changed — installed *last*, no re-exec, since the rebuild + recreate ran fine under the previously-installed CLI.
 
 ## What can go wrong
 
@@ -42,6 +44,8 @@ Same code path. See [The agenthub CLI](/docs/operators/cli/).
 | `git pull` fails with merge conflict | You edited files in the install dir | `git stash` or `git reset --hard origin/main` — your data is in volumes, not files |
 | Docker build fails | Transient network; disk space; image-base pull error | Re-run — most failures are transient. Check disk with `df -h`. |
 | Server won't come healthy | Env var dropped during compose up | Check `agenthub logs agenthub-server` — migrations or SecretStore errors show here |
+| `verify_server_image` dies with "force-recreate didn't take" | Compose left the container on a now-dangling image | Rerun `agenthub update` — it'll force-recreate again. If it persists, `docker compose -f compose/docker-compose.yml up -d --force-recreate agenthub-server` directly |
+| Probe times out reporting an old `sha` | Image rebuilt but recreate hung — server is mid-restart | Watch `docker compose ps`; usually clears in <30s after the timeout warning |
 | "Update now" button doesn't appear | You're not an admin | Ask an admin |
 
 ## Upgrade timing

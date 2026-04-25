@@ -1,11 +1,13 @@
 ---
 title: Integrations
-description: One page for every external service AgentHub talks to — Cloudflare, DigitalOcean, Docker hosts, Dokploy, Backblaze B2.
+description: One page for every external service AgentHub talks to — Cloudflare, DigitalOcean, Docker hosts, Dokploy, Backblaze B2, AI provider keys.
 ---
 
 **Integrations** is a single page that collects every external service AgentHub (and the agents inside its workspaces) can talk to. Each integration has a typed form: you fill it in, secrets go to Infisical, metadata goes to SQLite, and the relevant feature starts working.
 
 ## The integration types
+
+### Hosting & infra
 
 | Provider | What it enables | Secret(s) held | Non-secret metadata |
 |---|---|---|---|
@@ -17,6 +19,16 @@ description: One page for every external service AgentHub talks to — Cloudflar
 | **Backblaze B2** | Backblaze bucket for `/home/coder` backups. | `keyId`, `appKey` | `bucket`, `subdir` (optional) |
 
 The Cloudflare, DO, DO Apps, Docker, and Dokploy entries are what the [`agentdeploy` MCP](/docs/agentdeploy/overview/) uses when an agent inside a workspace wants to deploy. B2 is used by the [Backups](/docs/web-ui/backups/) page.
+
+### AI providers
+
+| Provider | What it enables | Secret(s) held | Non-secret metadata |
+|---|---|---|---|
+| **Anthropic API** | Pre-authenticates `claude` in every new session — Claude Code reads `ANTHROPIC_API_KEY` from env, no OAuth flow. | `apiKey` | — |
+| **MiniMax** | Powers the `claude-minimax` shim. Routes Claude Code through MiniMax's Anthropic-compatible endpoint. | `apiKey` | `baseUrl` (optional, defaults to `https://api.minimax.io/anthropic`) |
+| **OpenAI** | Available as `OPENAI_API_KEY` for any CLI in the workspace that wants it. Not consumed by built-in CLIs today. | `apiKey` | — |
+
+Saving an AI provider row injects the corresponding env var (`ANTHROPIC_API_KEY` / `MINIMAX_API_KEY` + `MINIMAX_BASE_URL` / `OPENAI_API_KEY`) into every **new** session your user creates. Existing sessions don't pick up newly-saved keys — start a new session.
 
 ### GitHub App (admin-only)
 

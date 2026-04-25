@@ -7,6 +7,14 @@ description: Anthropic's official coding-agent CLI, pre-installed in every Agent
 
 ## First-time sign-in
 
+You can authenticate two ways. Pick whichever fits your workflow:
+
+### Option 1 — API key from Integrations (zero-prompt)
+
+Save your Anthropic API key on the [Integrations page](/docs/web-ui/integrations/) → **AI Providers** → **Anthropic API**. AgentHub injects `ANTHROPIC_API_KEY` into every new session, and Claude Code uses it automatically — no OAuth flow, no prompts. Existing sessions don't pick up newly-saved keys; start a new session after saving.
+
+### Option 2 — OAuth in the workspace
+
 ```bash
 claude
 ```
@@ -19,6 +27,8 @@ and enter the code: XYZ-ABC
 ```
 
 Open the URL in your browser, sign in with your Anthropic account, authorize the CLI, and Claude Code saves a token in `~/.claude/` inside the workspace. Because `~/.claude` sits on your persistent home volume, **you only do this once per user**, not per session.
+
+Both methods work; the API-key route is faster the first time and survives volume rebuilds because the key lives in Infisical, not on the workspace filesystem. The OAuth route is what the official Claude documentation describes and tracks usage against your Claude.ai account.
 
 ## Basic usage
 
