@@ -48,4 +48,4 @@ All four CLIs inherit the workspace's environment. Notable pre-set env vars:
 - `AGENT_TOKEN` — per-session bearer token used by the `agentdeploy` MCP to authenticate back to the server (already wired up — you don't need to pass it yourself)
 - `PORTAL_URL` — server-facing URL used by the agent daemon
 
-No API keys for external model providers are pre-set. You sign into each CLI separately the first time you run it.
+Model-provider keys are **opt-in**. Save one on the [Integrations page](/docs/web-ui/integrations/) under "AI Providers" and AgentHub injects the matching env var (`ANTHROPIC_API_KEY`, `MINIMAX_API_KEY`+`MINIMAX_BASE_URL`, `OPENAI_API_KEY`) into every new session — vanilla `claude` and `claude-minimax` pick those up automatically. If you don't save a key, the CLIs still work; they just prompt you to sign in the first time you run them. Existing sessions don't see newly-saved keys — start a new session after saving.
