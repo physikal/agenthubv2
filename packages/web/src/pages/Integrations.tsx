@@ -9,7 +9,10 @@ type Provider =
   | "docker"
   | "dokploy"
   | "b2"
-  | "github";
+  | "github"
+  | "ai-anthropic"
+  | "ai-minimax"
+  | "ai-openai";
 
 const PROVIDER_LABEL: Record<Provider, string> = {
   cloudflare: "Cloudflare DNS",
@@ -19,6 +22,9 @@ const PROVIDER_LABEL: Record<Provider, string> = {
   dokploy: "Dokploy",
   b2: "Backblaze B2",
   github: "GitHub",
+  "ai-anthropic": "Anthropic API",
+  "ai-minimax": "MiniMax",
+  "ai-openai": "OpenAI",
 };
 
 // Compute providers have a hosting node to provision/destroy. DO Apps +
@@ -365,6 +371,31 @@ function renderFields(
           {input("owner", "Owner (user or org)", "your-github-login", "text", 2)}
         </>
       );
+    case "ai-anthropic":
+      return (
+        <>
+          {input("apiKey", "API Key", "sk-ant-...", "password", 2)}
+        </>
+      );
+    case "ai-minimax":
+      return (
+        <>
+          {input("apiKey", "API Key", "your MiniMax API key", "password", 2)}
+          {input(
+            "baseUrl",
+            "Base URL (optional)",
+            "https://api.minimax.io/anthropic — defaults to this",
+            "text",
+            2,
+          )}
+        </>
+      );
+    case "ai-openai":
+      return (
+        <>
+          {input("apiKey", "API Key", "sk-...", "password", 2)}
+        </>
+      );
   }
 }
 
@@ -436,13 +467,22 @@ function AddConfigForm({ onCreated }: { onCreated: () => void }) {
             }}
             className="w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded-lg text-sm focus:border-purple-500 focus:outline-none"
           >
-            <option value="cloudflare">Cloudflare DNS</option>
-            <option value="digitalocean">DigitalOcean (Droplets)</option>
-            <option value="digitalocean-apps">DigitalOcean App Platform</option>
-            <option value="docker">Docker host</option>
-            <option value="dokploy">Dokploy</option>
-            <option value="github">GitHub</option>
-            <option value="b2">Backblaze B2 (backups)</option>
+            <optgroup label="Compute">
+              <option value="docker">Docker host</option>
+              <option value="digitalocean">DigitalOcean (Droplets)</option>
+              <option value="digitalocean-apps">DigitalOcean App Platform</option>
+              <option value="dokploy">Dokploy</option>
+            </optgroup>
+            <optgroup label="DNS / VCS / Storage">
+              <option value="cloudflare">Cloudflare DNS</option>
+              <option value="github">GitHub</option>
+              <option value="b2">Backblaze B2 (backups)</option>
+            </optgroup>
+            <optgroup label="AI Providers">
+              <option value="ai-anthropic">Anthropic API</option>
+              <option value="ai-minimax">MiniMax</option>
+              <option value="ai-openai">OpenAI</option>
+            </optgroup>
           </select>
         </div>
       </div>
