@@ -144,6 +144,13 @@ export function renderEnv(cfg: InstallConfig): string {
     `INFISICAL_ADMIN_PASSWORD=${cfg.infisicalAdminPassword}`,
     "",
     `AGENTHUB_ADMIN_PASSWORD=${cfg.adminPassword}`,
+    ...(Object.keys(cfg.tlsDnsEnvVars).length > 0
+      ? [
+          "",
+          "# DNS-01 provider env vars (referenced by traefik.override.yml)",
+          ...Object.entries(cfg.tlsDnsEnvVars).map(([k, v]) => `${k}=${v}`),
+        ]
+      : []),
     "",
   ].join("\n");
 }

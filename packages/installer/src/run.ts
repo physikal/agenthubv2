@@ -123,10 +123,19 @@ async function writeTraefikOverride(
     }
     return;
   }
+  // DNS env-var values in the override file are ${VAR} placeholders so
+  // docker compose substitutes from .env at run time. Secrets stay in .env
+  // (mode 0600), the override is non-secret YAML.
+  const dnsEnvVars: Record<string, string> = {};
+  for (const name of Object.keys(cfg.tlsDnsEnvVars)) {
+    dnsEnvVars[name] = `\${${name}}`;
+  }
   const yaml = renderTraefikOverride({
     mode: resolved,
     domain: cfg.domain,
     tlsEmail: cfg.tlsEmail,
+    dnsProvider: cfg.tlsDnsProvider,
+    dnsEnvVars,
   });
   if (!yaml) return;
   writeFileSync(overridePath, yaml, { mode: 0o644 });

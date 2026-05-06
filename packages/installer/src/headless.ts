@@ -8,6 +8,7 @@ import { runInstall } from "./run.js";
 import { randomPassword } from "./lib/secrets.js";
 import { resolveTlsMode, type ResolvedTlsMode } from "./lib/tls/resolve-mode.js";
 import { probeServingCert } from "./lib/tls/probe-cert.js";
+import { preflightDns01 } from "./lib/tls/preflight.js";
 
 /**
  * Non-interactive install. Reads every answer from env vars (AGENTHUB_MODE,
@@ -116,11 +117,30 @@ export async function runHeadless(): Promise<void> {
     process.exit(2);
   }
 
+  // DNS-01 pre-flight (Cloudflare token check). Catches the most common
+  // failure mode at the env-var layer instead of the 90s ACME-timeout layer.
+  // Skippable via AGENTHUB_SKIP_PREFLIGHT=1 for users who know better than
+  // the check (e.g. testing offline or a non-Cloudflare provider).
+  const resolvedMode = resolveTlsMode(cfg.tlsMode, cfg.domain, process.env);
+  if (resolvedMode === "dns-01" && !process.env["AGENTHUB_SKIP_PREFLIGHT"]) {
+    console.log("running DNS-01 pre-flight…");
+    const pf = await preflightDns01(cfg.tlsDnsProvider, cfg.domain, cfg.tlsDnsEnvVars);
+    if (!pf.ok) {
+      console.error(`DNS-01 pre-flight failed: ${pf.reason}`);
+      console.error("Fix the above and re-run, or set AGENTHUB_SKIP_PREFLIGHT=1 to bypass.");
+      process.exit(2);
+    }
+    if (pf.skipped) {
+      console.log(`pre-flight skipped (no built-in check for provider '${cfg.tlsDnsProvider}')`);
+    } else {
+      console.log("pre-flight ok");
+    }
+  }
+
   try {
     const art = await runInstall(cfg, (line) => console.log(line));
-    const resolved = resolveTlsMode(cfg.tlsMode, cfg.domain, process.env);
     console.log("verifying front-door routing via Traefik…");
-    await probeFrontDoor(cfg.domain, resolved);
+    await probeFrontDoor(cfg.domain, resolvedMode);
     console.log("");
     console.log(`AgentHub is up at ${art.url}`);
     console.log(`  Admin user:     admin`);
