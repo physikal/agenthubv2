@@ -555,16 +555,18 @@ export function adminRoutes(sessionManager: SessionManager) {
     });
   });
 
-  // POST /api/admin/tls/test — Plan 5 wires this to services/tls/health.ts.
-  // For now return a stub so the modal's "Test" button has an endpoint.
-  app.post("/tls/test", (c) => {
-    return c.json(
-      {
+  // POST /api/admin/tls/test — probe live cert and return classified health
+  app.post("/tls/test", async (c) => {
+    const domain = process.env["AGENTHUB_DOMAIN"] ?? process.env["DOMAIN"];
+    if (!domain || domain === "localhost") {
+      return c.json({
         ok: false,
-        reason: "tls/test endpoint stub — Plan 5 wires it to services/tls/health.ts",
-      },
-      501,
-    );
+        reason: "no domain to test (localhost install or DOMAIN unset)",
+      });
+    }
+    const { getTlsHealth } = await import("../services/tls/health.js");
+    const result = getTlsHealth(domain, /* force */ true);
+    return c.json(result);
   });
 
   return app;
