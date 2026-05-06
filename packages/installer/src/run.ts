@@ -136,6 +136,7 @@ async function writeTraefikOverride(
     tlsEmail: cfg.tlsEmail,
     dnsProvider: cfg.tlsDnsProvider,
     dnsEnvVars,
+    lanIp: cfg.lanIp,
   });
   if (!yaml) return;
   writeFileSync(overridePath, yaml, { mode: 0o644 });
