@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
 
 export interface ParsedTlsCert {
   subjectCN: string;
@@ -118,18 +118,18 @@ export function getTlsHealth(domain: string, force = false): TlsHealth {
 }
 
 function probe(domain: string): ParsedTlsCert {
-  const stdout = execFileSync(
-    "openssl",
-    [
-      "s_client",
-      "-connect",
-      "127.0.0.1:443",
-      "-servername",
-      domain,
-      "-showcerts",
-    ],
-    { input: "", stdio: ["pipe", "pipe", "ignore"], timeout: 8_000 },
-  ).toString();
+  // Pipe s_client through `openssl x509 -noout -subject -issuer -dates`
+  // so the output is the canonical `subject=…\nissuer=…\nnotBefore=…\n
+  // notAfter=…` form parseOpenssl expects. Without the second openssl
+  // invocation, s_client emits `NotBefore: …; NotAfter: …` (capital N,
+  // single line) which the regex never matched — so every probe threw
+  // "missing required fields".
+  const sq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
+  const cmd =
+    `openssl s_client -connect 127.0.0.1:443 -servername ${sq(domain)} ` +
+    `-showcerts < /dev/null 2>/dev/null | ` +
+    `openssl x509 -noout -subject -issuer -dates`;
+  const stdout = execSync(cmd, { timeout: 8_000 }).toString();
   return parseOpenssl(stdout);
 }
 

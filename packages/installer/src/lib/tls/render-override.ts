@@ -50,6 +50,13 @@ const NGINX_CONF = [
 export function renderTraefikOverride(input: RenderOverrideInput): string | null {
   if (input.mode === "none") return null;
 
+  // Why env vars instead of `command:` flags: docker-compose's override merge
+  // REPLACES list-typed fields (`command:` is a list) but MERGES dicts (env
+  // vars). Putting Traefik flags in `command:` clobbers the base compose's
+  // entrypoints / providers.docker / redirect flags. Traefik's TRAEFIK_*-
+  // prefixed env vars are first-class equivalents to every CLI flag (per
+  // doc.traefik.io/traefik/reference/static-configuration/env), and they
+  // merge cleanly without losing the base config.
   if (input.mode === "public-alpn") {
     if (!input.tlsEmail) {
       throw new Error(
@@ -60,11 +67,12 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
     return dumpYaml({
       services: {
         traefik: {
-          command: [
-            "--certificatesresolvers.le.acme.tlschallenge=true",
-            `--certificatesresolvers.le.acme.email=${input.tlsEmail}`,
-            "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json",
-          ],
+          environment: {
+            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_TLSCHALLENGE: "true",
+            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_EMAIL: input.tlsEmail,
+            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_STORAGE:
+              "/letsencrypt/acme.json",
+          },
         },
         "agenthub-server": {
           labels: ["traefik.http.routers.agenthub.tls.certresolver=le"],
@@ -85,17 +93,18 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
         "dns-01 TLS mode requires dnsProvider (lego provider name).",
       );
     }
-    const env = input.dnsEnvVars ?? {};
     return dumpYaml({
       services: {
         traefik: {
-          command: [
-            "--certificatesresolvers.le.acme.dnschallenge=true",
-            `--certificatesresolvers.le.acme.dnschallenge.provider=${input.dnsProvider}`,
-            `--certificatesresolvers.le.acme.email=${input.tlsEmail}`,
-            "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json",
-          ],
-          environment: env,
+          environment: {
+            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_DNSCHALLENGE: "true",
+            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_DNSCHALLENGE_PROVIDER:
+              input.dnsProvider,
+            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_EMAIL: input.tlsEmail,
+            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_STORAGE:
+              "/letsencrypt/acme.json",
+            ...(input.dnsEnvVars ?? {}),
+          },
         },
         "agenthub-server": {
           labels: ["traefik.http.routers.agenthub.tls.certresolver=le"],
@@ -113,7 +122,9 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
     return dumpYaml({
       services: {
         traefik: {
-          command: ["--providers.file.directory=/etc/traefik/dynamic"],
+          environment: {
+            TRAEFIK_PROVIDERS_FILE_DIRECTORY: "/etc/traefik/dynamic",
+          },
           volumes: ["traefik-self-ca:/etc/traefik/dynamic:ro"],
           depends_on: {
             "traefik-self-ca-init": {
