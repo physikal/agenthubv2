@@ -60,3 +60,69 @@ describe("renderTraefikOverride", () => {
     ).toThrow(/AGENTHUB_TLS_EMAIL/);
   });
 });
+
+describe("renderTraefikOverride dns-01", () => {
+  it("renders Cloudflare DNS-01 with token mapped to CF_DNS_API_TOKEN", () => {
+    const out = renderTraefikOverride({
+      mode: "dns-01",
+      domain: "agenthub.example.com",
+      tlsEmail: "ops@example.com",
+      dnsProvider: "cloudflare",
+      dnsEnvVars: { CF_DNS_API_TOKEN: "${CF_DNS_API_TOKEN}" },
+    });
+    const parsed = parseYaml(out!) as Record<string, unknown>;
+    const traefik = (parsed["services"] as Record<string, {
+      command: string[];
+      environment: Record<string, string>;
+    }>)["traefik"];
+    expect(traefik).toBeDefined();
+    expect(traefik!.command).toEqual(
+      expect.arrayContaining([
+        "--certificatesresolvers.le.acme.dnschallenge=true",
+        "--certificatesresolvers.le.acme.dnschallenge.provider=cloudflare",
+        "--certificatesresolvers.le.acme.email=ops@example.com",
+      ]),
+    );
+    expect(traefik!.environment).toEqual({
+      CF_DNS_API_TOKEN: "${CF_DNS_API_TOKEN}",
+    });
+  });
+
+  it("renders Route53 DNS-01 with all three env vars passed through", () => {
+    const out = renderTraefikOverride({
+      mode: "dns-01",
+      domain: "agenthub.example.com",
+      tlsEmail: "ops@example.com",
+      dnsProvider: "route53",
+      dnsEnvVars: {
+        AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}",
+        AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}",
+        AWS_REGION: "${AWS_REGION}",
+      },
+    });
+    const parsed = parseYaml(out!) as Record<string, unknown>;
+    const traefik = (parsed["services"] as Record<string, {
+      environment: Record<string, string>;
+    }>)["traefik"];
+    expect(traefik).toBeDefined();
+    expect(Object.keys(traefik!.environment)).toEqual(
+      expect.arrayContaining([
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_REGION",
+      ]),
+    );
+  });
+
+  it("throws when dns-01 has no provider", () => {
+    expect(() =>
+      renderTraefikOverride({
+        mode: "dns-01",
+        domain: "agenthub.example.com",
+        tlsEmail: "ops@example.com",
+        dnsProvider: "",
+        dnsEnvVars: {},
+      }),
+    ).toThrow(/dnsProvider/);
+  });
+});
