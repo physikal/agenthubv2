@@ -91,10 +91,16 @@ export async function runReconfigure(
   writeFileSync(overridePath, yaml, { mode: 0o644 });
   onLog(`wrote new override (mode: ${cfg.mode})`);
 
-  if (Object.keys(cfg.tlsDnsEnvVars).length > 0) {
-    upsertEnvVars(composeDir, cfg.tlsDnsEnvVars);
-    onLog("updated .env with DNS env vars");
-  }
+  // Always ensure COMPOSE_FILE references the override. localhost-origin
+  // installs never set this var at install time, so a localhost→real-domain
+  // reconfigure would otherwise leave compose ignoring the override file
+  // we just wrote, and Traefik would come up without the new TLS config.
+  const envUpdates: Record<string, string> = {
+    COMPOSE_FILE: "docker-compose.yml:traefik.override.yml",
+    ...cfg.tlsDnsEnvVars,
+  };
+  upsertEnvVars(composeDir, envUpdates);
+  onLog("updated .env (COMPOSE_FILE + DNS env vars if any)");
 
   onLog("restarting traefik…");
   await restartService(composeDir, "traefik", onLog);
@@ -135,7 +141,7 @@ export async function runReconfigure(
   );
 }
 
-function upsertEnvVars(composeDir: string, vars: Record<string, string>): void {
+export function upsertEnvVars(composeDir: string, vars: Record<string, string>): void {
   const envPath = join(composeDir, ".env");
   let text = "";
   try {
