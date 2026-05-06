@@ -61,6 +61,32 @@ See [installer-flow.md](installer-flow.md) for the full step → env-var mapping
 |---|---|
 | `AGENTHUB_TLS_EMAIL` | Email for Let's Encrypt cert expiry notifications. |
 
+### Optional: TLS strategy override
+
+| Var | Values | Notes |
+|---|---|---|
+| `AGENTHUB_TLS_MODE` | `auto` (default), `public-alpn`, `dns-01`, `self-ca` | Auto picks `dns-01` if a DNS provider is set, else `public-alpn`. |
+| `AGENTHUB_TLS_DNS_PROVIDER` | `cloudflare`, `route53`, … | Required when mode is `dns-01`. lego provider name. |
+| `AGENTHUB_CLOUDFLARE_API_TOKEN` | Cloudflare token | Convenience var for `dns-01` + Cloudflare. Mapped to `CF_DNS_API_TOKEN`. |
+
+For non-Cloudflare DNS providers, pre-export the lego-native env vars in your shell before running the installer; we'll forward them verbatim into Traefik's environment.
+
+**Internal-only with Cloudflare DNS-01:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh \
+  | AGENTHUB_AUTO_INSTALL=true \
+    AGENTHUB_DOMAIN=agenthub.example.com \
+    AGENTHUB_TLS_EMAIL=ops@example.com \
+    AGENTHUB_TLS_MODE=dns-01 \
+    AGENTHUB_TLS_DNS_PROVIDER=cloudflare \
+    AGENTHUB_CLOUDFLARE_API_TOKEN=<token> \
+    AGENTHUB_ADMIN_PASSWORD=<pw> \
+    bash -s -- --non-interactive
+```
+
+A pre-flight check validates the Cloudflare token + zone access before flipping config. Set `AGENTHUB_SKIP_PREFLIGHT=1` to bypass.
+
 ### Required when `AGENTHUB_MODE=dokploy-remote`
 
 | Var | |
