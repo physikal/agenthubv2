@@ -208,8 +208,10 @@ rebuild_changed_images() {
 
   if [[ "$rebuild_server" -eq 0 && "$rebuild_workspace" -eq 0 && "$rebuild_updater" -eq 0 ]]; then
     msg "no image-relevant changes — skipping rebuild"
+    REBUILT_ANY=0
     return
   fi
+  REBUILT_ANY=1
   # Baked into the image via ARG GIT_SHA / LABEL org.agenthub.git-sha.
   # image_drift_for_paths reads the label on next update to decide rebuild.
   local git_sha
@@ -269,7 +271,21 @@ probe_front_door() {
   local domain expected
   domain="$(grep -E '^DOMAIN=' "$ENV_FILE" | cut -d= -f2-)"
   [[ -z "$domain" ]] && return 0
-  expected="$( (cd "$AGENTHUB_DIR" && git rev-parse HEAD) 2>/dev/null || echo "")"
+  # AGENTHUB_GIT_SHA is baked into the server image at build time. When
+  # nothing was rebuilt this update (e.g. a docs-only commit outside any
+  # image's build context), the running container legitimately still
+  # serves the previous build's SHA — so probing for HEAD is wrong.
+  # Read the SHA from the existing :local image's label instead, so the
+  # probe targets the SHA actually running.
+  if [[ "${REBUILT_ANY:-1}" -eq 1 ]]; then
+    expected="$( (cd "$AGENTHUB_DIR" && git rev-parse HEAD) 2>/dev/null || echo "")"
+  else
+    expected="$($SUDO docker image inspect \
+      --format '{{index .Config.Labels "org.agenthub.git-sha"}}' \
+      agenthubv2-server:local 2>/dev/null || true)"
+    # If the label is absent ("unknown" / "<no value>" / empty), fall back
+    # to the legacy-image branch which treats any 200 as green.
+  fi
   local deadline=$((SECONDS + 60))
   local body served=""
   while [[ "$SECONDS" -lt "$deadline" ]]; do
