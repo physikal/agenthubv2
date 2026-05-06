@@ -437,6 +437,9 @@ Usage: agenthub <command> [args]
 
 Commands:
   update [--check]       Pull latest, rebuild, recreate. --check is a dry-run.
+  reconfigure-tls [...]  Change TLS strategy. Interactive by default;
+                         --non-interactive reads AGENTHUB_TLS_* env vars.
+                         Flags: --no-rollback, --regen-cert (self-ca only).
   status                 Git + compose service status.
   logs [service]         Tail compose logs (default: agenthub-server).
   restart [service...]   Restart services (default: all).
@@ -449,6 +452,14 @@ EOF
 
 case "${1:-}" in
   update)  shift; cmd_update "$@" ;;
+  reconfigure-tls)
+    shift
+    cli="$AGENTHUB_DIR/packages/installer/dist/reconfigure-cli.js"
+    if [[ ! -f "$cli" ]]; then
+      die "reconfigure-tls CLI not built; run 'pnpm -C $AGENTHUB_DIR/packages/installer build' first"
+    fi
+    exec node "$cli" "$@"
+    ;;
   status)  shift; cmd_status ;;
   logs)    shift; cmd_logs "$@" ;;
   restart) shift; cmd_restart "$@" ;;
