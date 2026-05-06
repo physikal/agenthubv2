@@ -27,4 +27,5 @@ token.json
 .omc/
 .vscode/
 .idea/
+.worktrees/
 
