@@ -16,7 +16,9 @@ type Step =
   | "prereq"
   | "mode"
   | "domain"
+  | "tls-strategy"
   | "tls-email"
+  | "tls-dns"
   | "dokploy-remote"
   | "admin"
   | "confirm"
@@ -117,9 +119,48 @@ export const App: React.FC = () => {
         onSubmit={(v) => {
           const next = { ...cfg, domain: v.trim() || "localhost" };
           setCfg(next);
-          setStep(next.domain === "localhost" ? "admin" : "tls-email");
+          setStep(next.domain === "localhost" ? "admin" : "tls-strategy");
         }}
       />
+    );
+  }
+
+  if (step === "tls-strategy") {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold>How should TLS work for {cfg.domain}?</Text>
+        <Box marginTop={1}>
+          <SelectInput
+            items={[
+              {
+                label:
+                  "Public ACME — Let's Encrypt cert. Needs port 443 reachable from the public internet.",
+                value: "public-alpn",
+              },
+              {
+                label:
+                  "DNS challenge — Let's Encrypt cert via your DNS provider's API. Use this for internal-only hosts.",
+                value: "dns-01",
+              },
+              {
+                label:
+                  "Self-signed CA — generate a private CA on this host. (Plan 3 — not yet wired up.)",
+                value: "self-ca",
+              },
+            ]}
+            onSelect={(item) => {
+              const tlsMode = item.value as "public-alpn" | "dns-01" | "self-ca";
+              setCfg({ ...cfg, tlsMode });
+              if (tlsMode === "self-ca") {
+                // Plan 3 wires the real self-ca step; for now skip ahead.
+                setStep("admin");
+              } else {
+                setStep("tls-email");
+              }
+            }}
+          />
+        </Box>
+      </Box>
     );
   }
 
@@ -129,8 +170,31 @@ export const App: React.FC = () => {
         prompt="Email for Let's Encrypt cert notifications:"
         initial={cfg.tlsEmail}
         onSubmit={(v) => {
-          setCfg({ ...cfg, tlsEmail: v.trim() });
+          const next = { ...cfg, tlsEmail: v.trim() };
+          setCfg(next);
+          if (next.tlsMode === "dns-01") {
+            setStep("tls-dns");
+          } else if (cfg.mode === "dokploy-remote") {
+            setStep("dokploy-remote");
+          } else {
+            setStep("admin");
+          }
+        }}
+      />
+    );
+  }
+
+  if (step === "tls-dns") {
+    return (
+      <TlsDnsStep
+        cfg={cfg}
+        onDone={(next) => {
+          setCfg(next);
           setStep(cfg.mode === "dokploy-remote" ? "dokploy-remote" : "admin");
+        }}
+        onAbort={(msg) => {
+          setError(msg);
+          setStep("done");
         }}
       />
     );
@@ -168,6 +232,14 @@ export const App: React.FC = () => {
         <Text bold>Ready to install with:</Text>
         <Text>  mode: {cfg.mode}</Text>
         <Text>  domain: {cfg.domain}</Text>
+        <Text>
+          {"  "}TLS:{" "}
+          {cfg.domain === "localhost"
+            ? "default cert (localhost)"
+            : cfg.tlsMode === "dns-01"
+              ? `dns-01 (${cfg.tlsDnsProvider || "?"})`
+              : cfg.tlsMode}
+        </Text>
         {cfg.tlsEmail && <Text>  TLS email: {cfg.tlsEmail}</Text>}
         {cfg.mode === "dokploy-remote" && (
           <Text>  Dokploy: {cfg.dokployUrl}</Text>
@@ -266,6 +338,123 @@ const PromptStep: React.FC<{
       <Box>
         <Text color="cyan">{"> "}</Text>
         <TextInput value={value} onChange={setValue} onSubmit={onSubmit} {...(mask ? { mask: "•" } : {})} />
+      </Box>
+    </Box>
+  );
+};
+
+const TlsDnsStep: React.FC<{
+  cfg: InstallConfig;
+  onDone: (next: InstallConfig) => void;
+  onAbort: (msg: string) => void;
+}> = ({ cfg, onDone, onAbort }) => {
+  type Sub = "provider" | "cloudflare-token" | "other-name";
+  const [sub, setSub] = useState<Sub>("provider");
+  const [token, setToken] = useState("");
+  const [otherName, setOtherName] = useState("");
+
+  if (sub === "provider") {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold>DNS provider for ACME challenge:</Text>
+        <SelectInput
+          items={[
+            { label: "Cloudflare", value: "cloudflare" },
+            { label: "Other (lego provider)", value: "other" },
+          ]}
+          onSelect={(item) => {
+            if (item.value === "cloudflare") {
+              setSub("cloudflare-token");
+            } else {
+              setSub("other-name");
+            }
+          }}
+        />
+      </Box>
+    );
+  }
+
+  if (sub === "cloudflare-token") {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text>Cloudflare API token (DNS:Edit on the zone):</Text>
+        <Box>
+          <Text color="cyan">{"> "}</Text>
+          <TextInput
+            value={token}
+            onChange={setToken}
+            mask="•"
+            onSubmit={(v) => {
+              const t = v.trim();
+              if (!t) return;
+              const next: InstallConfig = {
+                ...cfg,
+                tlsDnsProvider: "cloudflare",
+                tlsDnsEnvVars: { ...cfg.tlsDnsEnvVars, CF_DNS_API_TOKEN: t },
+              };
+              void (async () => {
+                const { preflightCloudflare } = await import(
+                  "./lib/tls/preflight.js"
+                );
+                const pf = await preflightCloudflare(t, cfg.domain);
+                if (!pf.ok) {
+                  onAbort(`Cloudflare pre-flight failed: ${pf.reason}`);
+                  return;
+                }
+                onDone(next);
+              })();
+            }}
+          />
+        </Box>
+      </Box>
+    );
+  }
+
+  // other-name
+  return (
+    <Box flexDirection="column" padding={1}>
+      <Text>lego provider name (e.g. route53, hetzner):</Text>
+      <Box>
+        <Text color="cyan">{"> "}</Text>
+        <TextInput
+          value={otherName}
+          onChange={setOtherName}
+          onSubmit={(v) => {
+            const provider = v.trim().toLowerCase();
+            if (!provider) return;
+            void (async () => {
+              const { requiredEnvVarsFor } = await import(
+                "./lib/tls/lego-providers.js"
+              );
+              const required = requiredEnvVarsFor(provider);
+              if (!required) {
+                onAbort(
+                  `'${provider}' isn't in our lego manifest. Set its env vars in your shell and re-run with AGENTHUB_TLS_DNS_PROVIDER=${provider}; we'll forward them verbatim.`,
+                );
+                return;
+              }
+              const present: Record<string, string> = {};
+              const missing: string[] = [];
+              for (const name of required) {
+                const val = process.env[name];
+                if (val) present[name] = val;
+                else missing.push(name);
+              }
+              if (missing.length > 0) {
+                onAbort(
+                  `Missing env vars for ${provider}: ${missing.join(", ")}. ` +
+                    `Export them in your shell and re-run the installer.`,
+                );
+                return;
+              }
+              onDone({
+                ...cfg,
+                tlsDnsProvider: provider,
+                tlsDnsEnvVars: { ...cfg.tlsDnsEnvVars, ...present },
+              });
+            })();
+          }}
+        />
       </Box>
     </Box>
   );
