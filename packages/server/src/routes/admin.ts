@@ -481,5 +481,91 @@ export function adminRoutes(sessionManager: SessionManager) {
     return c.json({ email, password });
   });
 
+  // POST /api/admin/tls/reconfigure — apply new TLS config, stream progress as SSE
+  app.post("/tls/reconfigure", async (c) => {
+    const body = await c.req.json<{
+      mode: "public-alpn" | "dns-01" | "self-ca";
+      tlsEmail?: string;
+      dnsProvider?: string;
+      dnsEnvVars?: Record<string, string>;
+      lanIp?: string;
+      noRollback?: boolean;
+      regenCert?: boolean;
+    }>();
+
+    return streamSSE(c, async (stream) => {
+      const safeWrite = (ev: { event: string; data: string }): void => {
+        stream.writeSSE(ev).catch(() => {});
+      };
+      try {
+        const { runReconfigureContainer } = await import(
+          "../services/tls/reconfigure.js"
+        );
+        for await (const line of runReconfigureContainer(
+          body,
+          body.noRollback ?? false,
+          body.regenCert ?? false,
+        )) {
+          safeWrite({ event: "log", data: line });
+        }
+        safeWrite({ event: "done", data: "ok" });
+      } catch (err) {
+        safeWrite({
+          event: "error",
+          data: err instanceof Error ? err.message : "unknown",
+        });
+      }
+    });
+  });
+
+  // POST /api/admin/tls/renew — force-renew the cert.
+  // Self-CA: REGEN=1 via reconfigure container. LE modes: same path; the
+  // reconfigure CLI re-applies the existing config and Traefik picks up
+  // renewal on restart.
+  app.post("/tls/renew", async (c) => {
+    const body = await c.req.json<{
+      mode: "public-alpn" | "dns-01" | "self-ca";
+      tlsEmail?: string;
+      dnsProvider?: string;
+      dnsEnvVars?: Record<string, string>;
+      lanIp?: string;
+    }>();
+    return streamSSE(c, async (stream) => {
+      const safeWrite = (ev: { event: string; data: string }): void => {
+        stream.writeSSE(ev).catch(() => {});
+      };
+      try {
+        const { runReconfigureContainer } = await import(
+          "../services/tls/reconfigure.js"
+        );
+        for await (const line of runReconfigureContainer(
+          body,
+          false,
+          body.mode === "self-ca",
+        )) {
+          safeWrite({ event: "log", data: line });
+        }
+        safeWrite({ event: "done", data: "ok" });
+      } catch (err) {
+        safeWrite({
+          event: "error",
+          data: err instanceof Error ? err.message : "unknown",
+        });
+      }
+    });
+  });
+
+  // POST /api/admin/tls/test — Plan 5 wires this to services/tls/health.ts.
+  // For now return a stub so the modal's "Test" button has an endpoint.
+  app.post("/tls/test", (c) => {
+    return c.json(
+      {
+        ok: false,
+        reason: "tls/test endpoint stub — Plan 5 wires it to services/tls/health.ts",
+      },
+      501,
+    );
+  });
+
   return app;
 }
