@@ -25,7 +25,13 @@ import { randomPassword } from "./secrets.js";
  * REST calls are simple (just need a valid bearer) and don't need crypto.
  */
 
-const INFISICAL_CLI_VERSION = "latest";
+// Pinned, NOT "latest". Infisical's @infisical/cli@0.43.80 (released
+// 2026-05-06) was rebuilt against GLIBC 2.39, which Debian 12 (the
+// project's documented supported distro, GLIBC 2.36) cannot run —
+// `npx infisical` exits with `version GLIBC_2.39 not found`. 0.43.79
+// is the last version that runs on GLIBC 2.36. Track upstream for a
+// glibc-2.36-compatible release before bumping this.
+const INFISICAL_CLI_VERSION = "0.43.79";
 
 export interface BootstrapInput {
   baseUrl: string;
