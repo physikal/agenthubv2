@@ -1,4 +1,5 @@
 import { randomHex, randomPassword } from "./secrets.js";
+import { requiredEnvVarsFor } from "./tls/lego-providers.js";
 
 export type ProvisionerMode = "docker" | "dokploy-remote";
 
@@ -57,6 +58,8 @@ export interface InstallConfig {
   workspaceImage: string;
 
   tlsMode: TlsMode;
+  tlsDnsProvider: string;
+  tlsDnsEnvVars: Record<string, string>;
 }
 
 export function emptyConfig(): InstallConfig {
@@ -83,6 +86,8 @@ export function emptyConfig(): InstallConfig {
     serverImage: "ghcr.io/physikal/agenthubv2-server:latest",
     workspaceImage: "ghcr.io/physikal/agenthubv2-workspace:latest",
     tlsMode: "auto",
+    tlsDnsProvider: "",
+    tlsDnsEnvVars: {},
   };
 }
 
@@ -167,6 +172,36 @@ export function applyEnvOverrides(
   if (env["AGENTHUB_TLS_MODE"]) {
     next.tlsMode = env["AGENTHUB_TLS_MODE"] as TlsMode;
   }
+  if (env["AGENTHUB_TLS_DNS_PROVIDER"]) {
+    next.tlsDnsProvider = env["AGENTHUB_TLS_DNS_PROVIDER"];
+  }
+  // Convenience var: AGENTHUB_CLOUDFLARE_API_TOKEN → CF_DNS_API_TOKEN.
+  if (env["AGENTHUB_CLOUDFLARE_API_TOKEN"]) {
+    next.tlsDnsEnvVars = {
+      ...next.tlsDnsEnvVars,
+      CF_DNS_API_TOKEN: env["AGENTHUB_CLOUDFLARE_API_TOKEN"],
+    };
+  }
+  // Direct CF_DNS_API_TOKEN (for users who already export the lego-style var).
+  if (env["CF_DNS_API_TOKEN"] && !next.tlsDnsEnvVars["CF_DNS_API_TOKEN"]) {
+    next.tlsDnsEnvVars = {
+      ...next.tlsDnsEnvVars,
+      CF_DNS_API_TOKEN: env["CF_DNS_API_TOKEN"],
+    };
+  }
+  // Forward provider-specific env vars: read the lego manifest for the
+  // chosen provider, copy any matching vars from the host env. Best-effort
+  // for providers we know; users of unknown providers can pre-export and
+  // we'll skip-validate at install time, relying on the loud-failure gate.
+  if (next.tlsDnsProvider) {
+    const requiredVars = requiredEnvVarsFor(next.tlsDnsProvider) ?? [];
+    for (const name of requiredVars) {
+      const v = env[name];
+      if (v && !next.tlsDnsEnvVars[name]) {
+        next.tlsDnsEnvVars = { ...next.tlsDnsEnvVars, [name]: v };
+      }
+    }
+  }
   return next;
 }
 
@@ -189,6 +224,24 @@ export function missingRequiredForHeadless(cfg: InstallConfig): string[] {
     missing.push(
       `AGENTHUB_TLS_MODE (got '${cfg.tlsMode}'; valid: ${VALID_TLS_MODES.join(", ")})`,
     );
+  }
+  if (cfg.tlsMode === "dns-01" || (cfg.tlsMode === "auto" && cfg.tlsDnsProvider)) {
+    if (!cfg.tlsDnsProvider) {
+      missing.push("AGENTHUB_TLS_DNS_PROVIDER");
+    } else if (cfg.tlsDnsProvider === "cloudflare") {
+      if (!cfg.tlsDnsEnvVars["CF_DNS_API_TOKEN"]) {
+        missing.push("AGENTHUB_CLOUDFLARE_API_TOKEN (or CF_DNS_API_TOKEN)");
+      }
+    } else {
+      const required = requiredEnvVarsFor(cfg.tlsDnsProvider);
+      if (required) {
+        for (const name of required) {
+          if (!cfg.tlsDnsEnvVars[name]) missing.push(name);
+        }
+      }
+      // Unknown provider: no manifest, can't validate. Loud-failure gate at
+      // install time will surface a wrong/missing token via the cert probe.
+    }
   }
   return missing;
 }

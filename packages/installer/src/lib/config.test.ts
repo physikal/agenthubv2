@@ -165,6 +165,93 @@ describe("renderEnv COMPOSE_FILE", () => {
   });
 });
 
+describe("dns-01 config fields", () => {
+  it("defaults dnsProvider to empty + dnsEnvVars to empty object", () => {
+    const cfg = emptyConfig();
+    expect(cfg.tlsDnsProvider).toBe("");
+    expect(cfg.tlsDnsEnvVars).toEqual({});
+  });
+
+  it("AGENTHUB_TLS_DNS_PROVIDER is read", () => {
+    const cfg = applyEnvOverrides(emptyConfig(), {
+      AGENTHUB_TLS_DNS_PROVIDER: "cloudflare",
+    });
+    expect(cfg.tlsDnsProvider).toBe("cloudflare");
+  });
+
+  it("AGENTHUB_CLOUDFLARE_API_TOKEN maps to CF_DNS_API_TOKEN in dnsEnvVars", () => {
+    const cfg = applyEnvOverrides(emptyConfig(), {
+      AGENTHUB_TLS_DNS_PROVIDER: "cloudflare",
+      AGENTHUB_CLOUDFLARE_API_TOKEN: "tok-123",
+    });
+    expect(cfg.tlsDnsEnvVars).toEqual({ CF_DNS_API_TOKEN: "tok-123" });
+  });
+
+  it("dns-01 mode requires dnsProvider in headless validation", () => {
+    const cfg = {
+      ...emptyConfig(),
+      domain: "foo.com",
+      tlsMode: "dns-01" as const,
+      tlsEmail: "x@y.com",
+    };
+    expect(missingRequiredForHeadless(cfg)).toContain("AGENTHUB_TLS_DNS_PROVIDER");
+  });
+
+  it("dns-01 cloudflare requires CF_DNS_API_TOKEN in dnsEnvVars", () => {
+    const cfg = {
+      ...emptyConfig(),
+      domain: "foo.com",
+      tlsMode: "dns-01" as const,
+      tlsEmail: "x@y.com",
+      tlsDnsProvider: "cloudflare",
+    };
+    expect(missingRequiredForHeadless(cfg)).toContain(
+      "AGENTHUB_CLOUDFLARE_API_TOKEN (or CF_DNS_API_TOKEN)",
+    );
+  });
+});
+
+describe("applyEnvOverrides for other providers", () => {
+  it("forwards Route53's lego env vars when provider=route53", () => {
+    const cfg = applyEnvOverrides(emptyConfig(), {
+      AGENTHUB_TLS_DNS_PROVIDER: "route53",
+      AWS_ACCESS_KEY_ID: "AKIA...",
+      AWS_SECRET_ACCESS_KEY: "secret",
+      AWS_REGION: "us-east-1",
+    });
+    expect(cfg.tlsDnsEnvVars).toEqual({
+      AWS_ACCESS_KEY_ID: "AKIA...",
+      AWS_SECRET_ACCESS_KEY: "secret",
+      AWS_REGION: "us-east-1",
+    });
+  });
+
+  it("does not forward unrelated env vars", () => {
+    const cfg = applyEnvOverrides(emptyConfig(), {
+      AGENTHUB_TLS_DNS_PROVIDER: "route53",
+      AWS_ACCESS_KEY_ID: "AKIA...",
+      AWS_SECRET_ACCESS_KEY: "secret",
+      AWS_REGION: "us-east-1",
+      UNRELATED_VAR: "nope",
+    });
+    expect(cfg.tlsDnsEnvVars).not.toHaveProperty("UNRELATED_VAR");
+  });
+
+  it("missingRequiredForHeadless flags missing route53 vars", () => {
+    const cfg = {
+      ...emptyConfig(),
+      domain: "foo.com",
+      tlsMode: "dns-01" as const,
+      tlsEmail: "x@y.com",
+      tlsDnsProvider: "route53",
+      tlsDnsEnvVars: { AWS_ACCESS_KEY_ID: "x" },
+    };
+    const missing = missingRequiredForHeadless(cfg);
+    expect(missing).toContain("AWS_SECRET_ACCESS_KEY");
+    expect(missing).toContain("AWS_REGION");
+  });
+});
+
 describe("tlsMode", () => {
   it("defaults to 'auto'", () => {
     expect(emptyConfig().tlsMode).toBe("auto");
