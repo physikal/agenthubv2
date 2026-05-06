@@ -1,0 +1,11 @@
+{
+  "$schema": "lego provider env-var manifest, hand-curated from go-acme/lego v4 sources",
+  "providers": {
+    "cloudflare": ["CF_DNS_API_TOKEN"],
+    "route53": ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_REGION"],
+    "digitalocean": ["DO_AUTH_TOKEN"],
+    "hetzner": ["HETZNER_API_KEY"],
+    "gandi": ["GANDI_API_KEY"],
+    "linode": ["LINODE_TOKEN"]
+  }
+}
