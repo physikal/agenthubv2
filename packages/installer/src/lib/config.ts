@@ -60,6 +60,12 @@ export interface InstallConfig {
   tlsMode: TlsMode;
   tlsDnsProvider: string;
   tlsDnsEnvVars: Record<string, string>;
+  /**
+   * Self-CA only: comma-separated list of IPs to include in the leaf cert SAN.
+   * Auto-detected by run.ts/headless when self-ca mode is selected and this
+   * is empty; user can override via AGENTHUB_LAN_IP or the TUI prompt.
+   */
+  lanIp: string;
 }
 
 export function emptyConfig(): InstallConfig {
@@ -88,6 +94,7 @@ export function emptyConfig(): InstallConfig {
     tlsMode: "auto",
     tlsDnsProvider: "",
     tlsDnsEnvVars: {},
+    lanIp: "",
   };
 }
 
@@ -144,6 +151,7 @@ export function renderEnv(cfg: InstallConfig): string {
     `INFISICAL_ADMIN_PASSWORD=${cfg.infisicalAdminPassword}`,
     "",
     `AGENTHUB_ADMIN_PASSWORD=${cfg.adminPassword}`,
+    ...(cfg.lanIp ? [`AGENTHUB_LAN_IP=${cfg.lanIp}`] : []),
     ...(Object.keys(cfg.tlsDnsEnvVars).length > 0
       ? [
           "",
@@ -178,6 +186,9 @@ export function applyEnvOverrides(
   if (env["AGENTHUB_WORKSPACE_IMAGE"]) next.workspaceImage = env["AGENTHUB_WORKSPACE_IMAGE"];
   if (env["AGENTHUB_TLS_MODE"]) {
     next.tlsMode = env["AGENTHUB_TLS_MODE"] as TlsMode;
+  }
+  if (env["AGENTHUB_LAN_IP"]) {
+    next.lanIp = env["AGENTHUB_LAN_IP"];
   }
   if (env["AGENTHUB_TLS_DNS_PROVIDER"]) {
     next.tlsDnsProvider = env["AGENTHUB_TLS_DNS_PROVIDER"];

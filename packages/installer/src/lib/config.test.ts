@@ -165,6 +165,28 @@ describe("renderEnv COMPOSE_FILE", () => {
   });
 });
 
+describe("lanIp config", () => {
+  it("defaults to empty (filled by run.ts / headless if needed)", () => {
+    expect(emptyConfig().lanIp).toBe("");
+  });
+
+  it("AGENTHUB_LAN_IP override sets it", () => {
+    const cfg = applyEnvOverrides(emptyConfig(), {
+      AGENTHUB_LAN_IP: "10.0.0.5",
+    });
+    expect(cfg.lanIp).toBe("10.0.0.5");
+  });
+
+  it("renderEnv emits AGENTHUB_LAN_IP only when non-empty", () => {
+    expect(renderEnv({ ...emptyConfig(), lanIp: "10.0.0.5" })).toContain(
+      "AGENTHUB_LAN_IP=10.0.0.5",
+    );
+    expect(renderEnv({ ...emptyConfig(), lanIp: "" })).not.toContain(
+      "AGENTHUB_LAN_IP=",
+    );
+  });
+});
+
 describe("dns-01 config fields", () => {
   it("defaults dnsProvider to empty + dnsEnvVars to empty object", () => {
     const cfg = emptyConfig();
