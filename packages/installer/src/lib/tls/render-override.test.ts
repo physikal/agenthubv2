@@ -126,3 +126,66 @@ describe("renderTraefikOverride dns-01", () => {
     ).toThrow(/dnsProvider/);
   });
 });
+
+describe("renderTraefikOverride self-ca", () => {
+  it("renders init container + renew sidecar + static nginx", () => {
+    const out = renderTraefikOverride({
+      mode: "self-ca",
+      domain: "agenthub.physhlab.com",
+      tlsEmail: "",
+      lanIp: "192.168.4.36",
+    });
+    const parsed = parseYaml(out!) as Record<string, unknown>;
+    const services = parsed["services"] as Record<string, unknown>;
+    expect(services).toHaveProperty("traefik-self-ca-init");
+    expect(services).toHaveProperty("traefik-self-ca-renew");
+    expect(services).toHaveProperty("agenthub-static");
+    const traefik = services["traefik"] as { command: string[] };
+    expect(traefik.command).toContain(
+      "--providers.file.directory=/etc/traefik/dynamic",
+    );
+  });
+
+  it("init container receives DOMAIN + LAN_IP env", () => {
+    const out = renderTraefikOverride({
+      mode: "self-ca",
+      domain: "agenthub.physhlab.com",
+      tlsEmail: "",
+      lanIp: "192.168.4.36,10.0.0.1",
+    });
+    const parsed = parseYaml(out!) as Record<string, unknown>;
+    const init = (parsed["services"] as Record<string, {
+      environment: Record<string, string>;
+    }>)["traefik-self-ca-init"];
+    expect(init).toBeDefined();
+    expect(init!.environment["DOMAIN"]).toBe("agenthub.physhlab.com");
+    expect(init!.environment["LAN_IP"]).toBe("192.168.4.36,10.0.0.1");
+  });
+
+  it("nginx sidecar exposes /.well-known/agenthub-ca.crt and /install/ca on web entrypoint", () => {
+    const out = renderTraefikOverride({
+      mode: "self-ca",
+      domain: "agenthub.physhlab.com",
+      tlsEmail: "",
+      lanIp: "192.168.4.36",
+    });
+    const parsed = parseYaml(out!) as Record<string, unknown>;
+    const nginx = (parsed["services"] as Record<string, { labels?: string[] }>)[
+      "agenthub-static"
+    ];
+    const labels = nginx?.labels ?? [];
+    expect(labels.some((l) => l.includes("agenthub-ca"))).toBe(true);
+    expect(labels.some((l) => l.includes("install-ca"))).toBe(true);
+  });
+
+  it("throws when self-ca has no lanIp", () => {
+    expect(() =>
+      renderTraefikOverride({
+        mode: "self-ca",
+        domain: "x.com",
+        tlsEmail: "",
+        lanIp: "",
+      }),
+    ).toThrow(/lanIp/);
+  });
+});

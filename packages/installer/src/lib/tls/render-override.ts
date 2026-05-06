@@ -14,7 +14,27 @@ export interface RenderOverrideInput {
    * file free of literal secrets.
    */
   dnsEnvVars?: Record<string, string>;
+  /** Required for mode='self-ca'. Comma-separated list of IPs for SAN. */
+  lanIp?: string;
 }
+
+const NGINX_CONF = [
+  "server {",
+  "  listen 80;",
+  "  location = /.well-known/agenthub-ca.crt {",
+  "    alias /usr/share/nginx/html/.well-known/ca.crt;",
+  "    add_header Content-Type application/x-x509-ca-cert;",
+  "    add_header Content-Disposition 'attachment; filename=\"agenthub-ca.crt\"';",
+  "  }",
+  "  location /install/ca/ {",
+  "    alias /usr/share/nginx/html/install/ca/;",
+  "    index index.html;",
+  "  }",
+  "  location /install/ca {",
+  "    return 301 /install/ca/;",
+  "  }",
+  "}",
+].join("\n");
 
 /**
  * Render the Traefik-specific compose override for the resolved TLS mode.
@@ -84,8 +104,97 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
     });
   }
 
+  if (input.mode === "self-ca") {
+    if (!input.lanIp) {
+      throw new Error(
+        "self-ca TLS mode requires lanIp (host LAN IP for cert SAN).",
+      );
+    }
+    return dumpYaml({
+      services: {
+        traefik: {
+          command: ["--providers.file.directory=/etc/traefik/dynamic"],
+          volumes: ["traefik-self-ca:/etc/traefik/dynamic:ro"],
+          depends_on: {
+            "traefik-self-ca-init": {
+              condition: "service_completed_successfully",
+            },
+          },
+        },
+        "traefik-self-ca-init": {
+          image: "alpine:3.20",
+          restart: "no",
+          environment: {
+            DOMAIN: input.domain,
+            LAN_IP: input.lanIp,
+          },
+          command: ["sh", "/init.sh"],
+          volumes: [
+            "traefik-self-ca:/out",
+            "../scripts/self-ca-init.sh:/init.sh:ro",
+          ],
+        },
+        "traefik-self-ca-renew": {
+          image: "alpine:3.20",
+          restart: "unless-stopped",
+          depends_on: {
+            "traefik-self-ca-init": {
+              condition: "service_completed_successfully",
+            },
+          },
+          environment: {
+            DOMAIN: input.domain,
+            LAN_IP: input.lanIp,
+          },
+          command: ["sh", "/renew.sh"],
+          volumes: [
+            "traefik-self-ca:/out",
+            "../scripts/self-ca-init.sh:/init.sh:ro",
+            "../scripts/self-ca-renew.sh:/renew.sh:ro",
+          ],
+        },
+        "agenthub-static": {
+          image: "nginx:alpine",
+          restart: "unless-stopped",
+          depends_on: {
+            "traefik-self-ca-init": {
+              condition: "service_completed_successfully",
+            },
+          },
+          volumes: [
+            "traefik-self-ca:/usr/share/nginx/html/.well-known:ro",
+            "../compose/static/install-ca:/usr/share/nginx/html/install/ca:ro",
+          ],
+          configs: [
+            {
+              source: "agenthub-static-nginx",
+              target: "/etc/nginx/conf.d/default.conf",
+            },
+          ],
+          labels: [
+            "traefik.enable=true",
+            "traefik.http.routers.agenthub-ca.rule=Path(`/.well-known/agenthub-ca.crt`)",
+            "traefik.http.routers.agenthub-ca.entrypoints=web",
+            "traefik.http.routers.agenthub-ca.service=agenthub-static",
+            "traefik.http.routers.install-ca.rule=PathPrefix(`/install/ca`)",
+            "traefik.http.routers.install-ca.entrypoints=web",
+            "traefik.http.routers.install-ca.service=agenthub-static",
+            "traefik.http.services.agenthub-static.loadbalancer.server.port=80",
+          ],
+        },
+      },
+      configs: {
+        "agenthub-static-nginx": {
+          content: NGINX_CONF,
+        },
+      },
+      volumes: {
+        "traefik-self-ca": {},
+      },
+    });
+  }
+
   throw new Error(
-    `renderTraefikOverride: mode '${input.mode}' is not implemented in this plan; ` +
-      "Plan 3 (self-ca) adds the remaining branch.",
+    `renderTraefikOverride: unrecognized mode '${input.mode}'.`,
   );
 }
