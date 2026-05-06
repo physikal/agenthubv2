@@ -93,6 +93,36 @@ cmd_status() {
   fi
   printf '\n%sCompose services%s\n' "$c_bold" "$c_reset"
   compose ps --format "table {{.Service}}\t{{.State}}\t{{.Status}}"
+
+  # TLS status — fetched from /api/health. Best-effort: if the server isn't
+  # responding yet we silently skip rather than block the whole status output.
+  local domain tls_json
+  domain="$(grep -oE '^DOMAIN=.*' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
+  if [[ -n "$domain" && "$domain" != "localhost" ]]; then
+    tls_json="$(curl -ksf -m 3 "https://${domain}/api/health" 2>/dev/null \
+                || curl -sf -m 3 "http://localhost:3000/api/health" 2>/dev/null \
+                || echo "")"
+    if [[ -n "$tls_json" ]] && grep -q '"tls":' <<<"$tls_json"; then
+      local tls_ok tls_resolver tls_days
+      tls_ok="$(grep -oE '"ok":(true|false)' <<<"$tls_json" | head -1 | cut -d: -f2)"
+      tls_resolver="$(grep -oE '"resolver":"[^"]+"' <<<"$tls_json" | head -1 | cut -d'"' -f4)"
+      tls_days="$(grep -oE '"daysToExpiry":-?[0-9]+' <<<"$tls_json" | head -1 | cut -d: -f2)"
+      printf '\n%sTLS%s\n' "$c_bold" "$c_reset"
+      if [[ "$tls_ok" == "true" ]]; then
+        if [[ "${tls_days:-100}" -lt 14 ]]; then
+          printf '  %sWARN%s  %s — %sd remaining (expiring soon)\n' "$c_yel" "$c_reset" "$tls_resolver" "$tls_days"
+        else
+          printf '  %sok%s    %s — %sd remaining\n' "$c_grn" "$c_reset" "$tls_resolver" "$tls_days"
+        fi
+      else
+        if [[ "$tls_resolver" == "default-fallback" ]]; then
+          printf '  %sWARN%s  serving Traefik default cert — run `agenthub reconfigure-tls`\n' "$c_yel" "$c_reset"
+        else
+          printf '  %sERROR%s %s (%sd)\n' "$c_red" "$c_reset" "$tls_resolver" "$tls_days"
+        fi
+      fi
+    fi
+  fi
 }
 
 # True if the local image has drifted from the repo: either a commit has
