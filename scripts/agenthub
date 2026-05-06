@@ -65,10 +65,15 @@ cmd_version() {
 # uses when AGENTHUB_BRANCH is set) installs a narrow refspec that only
 # tracks branch X — so for installs started from a non-main branch,
 # `origin/main` doesn't exist and `git rev-parse origin/main` throws.
-# Widening is idempotent; fetch is best-effort.
+# Add the refspec only if it isn't already tracked: `set-branches --add`
+# without a guard appends a duplicate `+refs/heads/main:...` line on every
+# invocation, which accumulates indefinitely on long-lived installs.
 ensure_origin_main_tracked() {
   cd "$AGENTHUB_DIR"
-  git remote set-branches --add origin main 2>/dev/null || true
+  if ! git config --get-all remote.origin.fetch 2>/dev/null \
+       | grep -qE '^\+?refs/heads/(main|\*):refs/remotes/origin/(main|\*)$'; then
+    git remote set-branches --add origin main 2>/dev/null || true
+  fi
   git fetch --quiet origin main 2>/dev/null || true
 }
 
