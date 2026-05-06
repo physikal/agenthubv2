@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { randomPassword } from "./lib/secrets.js";
 import type { InstallConfig } from "./lib/config.js";
 import { renderEnv } from "./lib/config.js";
@@ -10,6 +11,8 @@ import {
   recreateService,
 } from "./lib/compose.js";
 import { bootstrapInfisical } from "./lib/infisical-bootstrap.js";
+import { renderTraefikOverride } from "./lib/tls/render-override.js";
+import { resolveTlsMode } from "./lib/tls/resolve-mode.js";
 
 export interface InstallArtifacts {
   url: string;
@@ -35,6 +38,11 @@ export async function runInstall(
   const composeDir = findComposeDir();
   const envFile = writeEnvFile(final, composeDir);
   onLog(`wrote ${envFile}`);
+
+  // Generate traefik.override.yml. For localhost installs this is a no-op
+  // (returns null) — the base compose runs without a cert resolver and
+  // serves its default cert, which is the right behavior for local-only.
+  await writeTraefikOverride(final, composeDir, onLog);
 
   onLog("pulling images…");
   await composePull({ composeDir, envFile, onLine: onLog });
@@ -99,6 +107,30 @@ export async function runInstallSimple(
 ): Promise<string> {
   const res = await runInstall(cfg, onLog);
   return res.url;
+}
+
+async function writeTraefikOverride(
+  cfg: InstallConfig,
+  composeDir: string,
+  onLog: (line: string) => void,
+): Promise<void> {
+  const resolved = resolveTlsMode(cfg.tlsMode, cfg.domain, process.env);
+  const overridePath = join(composeDir, "traefik.override.yml");
+  if (resolved === "none") {
+    if (existsSync(overridePath)) {
+      unlinkSync(overridePath);
+      onLog(`removed ${overridePath} (localhost install)`);
+    }
+    return;
+  }
+  const yaml = renderTraefikOverride({
+    mode: resolved,
+    domain: cfg.domain,
+    tlsEmail: cfg.tlsEmail,
+  });
+  if (!yaml) return;
+  writeFileSync(overridePath, yaml, { mode: 0o644 });
+  onLog(`wrote ${overridePath} (mode: ${resolved})`);
 }
 
 // Silence unused-import warning until headless.ts picks up readFileSync.

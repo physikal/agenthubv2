@@ -149,6 +149,22 @@ describe("missingRequiredForHeadless", () => {
   });
 });
 
+describe("renderEnv COMPOSE_FILE", () => {
+  it("omits COMPOSE_FILE for localhost installs", () => {
+    const cfg = { ...emptyConfig(), domain: "localhost" };
+    const env = renderEnv(cfg);
+    expect(env).not.toContain("COMPOSE_FILE=");
+  });
+
+  it("sets COMPOSE_FILE for non-localhost installs", () => {
+    const cfg = { ...emptyConfig(), domain: "foo.com", tlsEmail: "x@y.com" };
+    const env = renderEnv(cfg);
+    expect(env).toContain(
+      "COMPOSE_FILE=docker-compose.yml:traefik.override.yml",
+    );
+  });
+});
+
 describe("tlsMode", () => {
   it("defaults to 'auto'", () => {
     expect(emptyConfig().tlsMode).toBe("auto");
