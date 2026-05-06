@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
 
 export interface ParsedCert {
   subjectCN: string;
@@ -44,23 +44,27 @@ export function parseOpensslOutput(stdout: string): ParsedCert {
 /**
  * Connect to host:port via TLS using SNI=domain, return the parsed serving
  * cert. Throws on connection failure; never returns nullable.
+ *
+ * Pipes `openssl s_client -showcerts` through `openssl x509 -noout -subject
+ * -issuer -dates` so the output is the canonical `subject=…\nissuer=…\n
+ * notBefore=…\nnotAfter=…` form that parseOpensslOutput expects. Calling
+ * `s_client` directly would emit `NotBefore: …; NotAfter: …` (capital N,
+ * single line) instead — which the regex never matched, so every probe
+ * threw "missing notBefore/notAfter".
  */
 export function probeServingCert(
   host: string,
   port: number,
   sni: string,
 ): ParsedCert {
-  const stdout = execFileSync(
-    "openssl",
-    [
-      "s_client",
-      "-connect",
-      `${host}:${port}`,
-      "-servername",
-      sni,
-      "-showcerts",
-    ],
-    { input: "", stdio: ["pipe", "pipe", "ignore"], timeout: 10_000 },
-  ).toString();
+  // execSync is the simplest path to a piped command; the inputs are
+  // local-IP / port / domain, not user-supplied free text — but we still
+  // shell-escape with single quotes to be defensive.
+  const sq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
+  const cmd =
+    `openssl s_client -connect ${sq(`${host}:${port}`)} ` +
+    `-servername ${sq(sni)} -showcerts < /dev/null 2>/dev/null | ` +
+    `openssl x509 -noout -subject -issuer -dates`;
+  const stdout = execSync(cmd, { timeout: 10_000 }).toString();
   return parseOpensslOutput(stdout);
 }

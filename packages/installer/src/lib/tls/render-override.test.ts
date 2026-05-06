@@ -13,7 +13,7 @@ describe("renderTraefikOverride", () => {
     ).toBeNull();
   });
 
-  it("renders public-alpn with the canonical Traefik flags", () => {
+  it("renders public-alpn TLS flags via TRAEFIK_* env vars (so the override merges with the base command)", () => {
     const out = renderTraefikOverride({
       mode: "public-alpn",
       domain: "agenthub.example.com",
@@ -21,17 +21,20 @@ describe("renderTraefikOverride", () => {
     });
     expect(out).not.toBeNull();
     const parsed = parseYaml(out!) as Record<string, unknown>;
-    const traefik = (parsed["services"] as Record<string, { command: string[] }>)[
-      "traefik"
-    ];
+    const traefik = (parsed["services"] as Record<
+      string,
+      { command?: string[]; environment?: Record<string, string> }
+    >)["traefik"];
     expect(traefik).toBeDefined();
-    expect(traefik!.command).toEqual(
-      expect.arrayContaining([
-        "--certificatesresolvers.le.acme.tlschallenge=true",
-        "--certificatesresolvers.le.acme.email=ops@example.com",
-        "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json",
-      ]),
-    );
+    // Bug #1 regression guard: must NOT emit a `command:` array (compose
+    // merge would replace the base Traefik command and lose providers/
+    // entrypoints/redirect).
+    expect(traefik!.command).toBeUndefined();
+    expect(traefik!.environment).toEqual({
+      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_TLSCHALLENGE: "true",
+      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_EMAIL: "ops@example.com",
+      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_STORAGE: "/letsencrypt/acme.json",
+    });
   });
 
   it("attaches cert resolver to the agenthub router via labels", () => {
@@ -62,7 +65,7 @@ describe("renderTraefikOverride", () => {
 });
 
 describe("renderTraefikOverride dns-01", () => {
-  it("renders Cloudflare DNS-01 with token mapped to CF_DNS_API_TOKEN", () => {
+  it("renders Cloudflare DNS-01 with TRAEFIK_* flags + provider token in one env block", () => {
     const out = renderTraefikOverride({
       mode: "dns-01",
       domain: "agenthub.example.com",
@@ -72,23 +75,21 @@ describe("renderTraefikOverride dns-01", () => {
     });
     const parsed = parseYaml(out!) as Record<string, unknown>;
     const traefik = (parsed["services"] as Record<string, {
-      command: string[];
+      command?: string[];
       environment: Record<string, string>;
     }>)["traefik"];
     expect(traefik).toBeDefined();
-    expect(traefik!.command).toEqual(
-      expect.arrayContaining([
-        "--certificatesresolvers.le.acme.dnschallenge=true",
-        "--certificatesresolvers.le.acme.dnschallenge.provider=cloudflare",
-        "--certificatesresolvers.le.acme.email=ops@example.com",
-      ]),
-    );
-    expect(traefik!.environment).toEqual({
+    expect(traefik!.command).toBeUndefined();
+    expect(traefik!.environment).toMatchObject({
+      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_DNSCHALLENGE: "true",
+      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_DNSCHALLENGE_PROVIDER: "cloudflare",
+      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_EMAIL: "ops@example.com",
+      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_STORAGE: "/letsencrypt/acme.json",
       CF_DNS_API_TOKEN: "${CF_DNS_API_TOKEN}",
     });
   });
 
-  it("renders Route53 DNS-01 with all three env vars passed through", () => {
+  it("renders Route53 DNS-01 with all three lego env vars passed through", () => {
     const out = renderTraefikOverride({
       mode: "dns-01",
       domain: "agenthub.example.com",
@@ -110,6 +111,7 @@ describe("renderTraefikOverride dns-01", () => {
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
         "AWS_REGION",
+        "TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_DNSCHALLENGE_PROVIDER",
       ]),
     );
   });
@@ -140,10 +142,14 @@ describe("renderTraefikOverride self-ca", () => {
     expect(services).toHaveProperty("traefik-self-ca-init");
     expect(services).toHaveProperty("traefik-self-ca-renew");
     expect(services).toHaveProperty("agenthub-static");
-    const traefik = services["traefik"] as { command: string[] };
-    expect(traefik.command).toContain(
-      "--providers.file.directory=/etc/traefik/dynamic",
-    );
+    const traefik = services["traefik"] as {
+      command?: string[];
+      environment: Record<string, string>;
+    };
+    expect(traefik.command).toBeUndefined();
+    expect(traefik.environment).toMatchObject({
+      TRAEFIK_PROVIDERS_FILE_DIRECTORY: "/etc/traefik/dynamic",
+    });
   });
 
   it("init container receives DOMAIN + LAN_IP env", () => {
