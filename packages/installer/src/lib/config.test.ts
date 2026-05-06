@@ -148,3 +148,25 @@ describe("missingRequiredForHeadless", () => {
     expect(missing).toContain("AGENTHUB_DOKPLOY_ENVIRONMENT_ID");
   });
 });
+
+describe("tlsMode", () => {
+  it("defaults to 'auto'", () => {
+    expect(emptyConfig().tlsMode).toBe("auto");
+  });
+
+  it("applies AGENTHUB_TLS_MODE override", () => {
+    const cfg = applyEnvOverrides(emptyConfig(), {
+      AGENTHUB_TLS_MODE: "dns-01",
+    });
+    expect(cfg.tlsMode).toBe("dns-01");
+  });
+
+  it("rejects unknown TLS mode at validation", () => {
+    const cfg = applyEnvOverrides(emptyConfig(), {
+      AGENTHUB_TLS_MODE: "wat",
+    });
+    expect(missingRequiredForHeadless(cfg)).toContain(
+      "AGENTHUB_TLS_MODE (got 'wat'; valid: auto, public-alpn, dns-01, self-ca)",
+    );
+  });
+});

@@ -2,6 +2,14 @@ import { randomHex, randomPassword } from "./secrets.js";
 
 export type ProvisionerMode = "docker" | "dokploy-remote";
 
+export type TlsMode = "auto" | "public-alpn" | "dns-01" | "self-ca";
+const VALID_TLS_MODES: readonly TlsMode[] = [
+  "auto",
+  "public-alpn",
+  "dns-01",
+  "self-ca",
+] as const;
+
 export interface InstallConfig {
   mode: ProvisionerMode;
   domain: string;
@@ -47,6 +55,8 @@ export interface InstallConfig {
   // Image tags (defaults work for npx install).
   serverImage: string;
   workspaceImage: string;
+
+  tlsMode: TlsMode;
 }
 
 export function emptyConfig(): InstallConfig {
@@ -72,6 +82,7 @@ export function emptyConfig(): InstallConfig {
     dokployEnvironmentId: "",
     serverImage: "ghcr.io/physikal/agenthubv2-server:latest",
     workspaceImage: "ghcr.io/physikal/agenthubv2-workspace:latest",
+    tlsMode: "auto",
   };
 }
 
@@ -150,6 +161,9 @@ export function applyEnvOverrides(
   if (env["AGENTHUB_DOKPLOY_ENVIRONMENT_ID"]) next.dokployEnvironmentId = env["AGENTHUB_DOKPLOY_ENVIRONMENT_ID"];
   if (env["AGENTHUB_SERVER_IMAGE"]) next.serverImage = env["AGENTHUB_SERVER_IMAGE"];
   if (env["AGENTHUB_WORKSPACE_IMAGE"]) next.workspaceImage = env["AGENTHUB_WORKSPACE_IMAGE"];
+  if (env["AGENTHUB_TLS_MODE"]) {
+    next.tlsMode = env["AGENTHUB_TLS_MODE"] as TlsMode;
+  }
   return next;
 }
 
@@ -167,6 +181,11 @@ export function missingRequiredForHeadless(cfg: InstallConfig): string[] {
   }
   if (cfg.domain !== "localhost" && !cfg.tlsEmail) {
     missing.push("AGENTHUB_TLS_EMAIL");
+  }
+  if (!VALID_TLS_MODES.includes(cfg.tlsMode)) {
+    missing.push(
+      `AGENTHUB_TLS_MODE (got '${cfg.tlsMode}'; valid: ${VALID_TLS_MODES.join(", ")})`,
+    );
   }
   return missing;
 }
