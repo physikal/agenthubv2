@@ -270,6 +270,17 @@ migrate_env() {
     msg "migrating: adding AGENTHUB_REPO_DIR=$AGENTHUB_DIR to compose/.env"
     echo "AGENTHUB_REPO_DIR=$AGENTHUB_DIR" >> "$ENV_FILE"
   fi
+
+  # TLS Plan 1: pre-Plan-1 installs have no compose/traefik.override.yml.
+  # The migrate-tls CLI generates one based on existing DOMAIN + TLS_EMAIL
+  # so Traefik restarts pick up the right cert resolver. Idempotent.
+  local migrate_cli="$AGENTHUB_DIR/packages/installer/dist/lib/tls/migrate-cli.js"
+  if [[ -f "$migrate_cli" ]]; then
+    node "$migrate_cli" "$AGENTHUB_DIR/compose" \
+      || die "TLS migration failed — refusing to upgrade Traefik"
+  else
+    warn "migrate-cli.js not built yet; skipping TLS migration (run 'pnpm -C packages/installer build' if you expected this)"
+  fi
 }
 
 # Install the freshly-pulled CLI script over the one on PATH. Called at
