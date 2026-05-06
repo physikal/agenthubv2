@@ -67,11 +67,6 @@ export const sessions = sqliteTable("sessions", {
   endedAt: integer("ended_at", { mode: "timestamp" }),
 });
 
-export const settings = sqliteTable("settings", {
-  key: text("key").primaryKey(),
-  value: text("value").notNull(),
-});
-
 export const infrastructureConfigs = sqliteTable("infrastructure_configs", {
   id: text("id").primaryKey(),
   userId: text("user_id")

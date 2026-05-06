@@ -9,7 +9,6 @@ import { initDb } from "./db/index.js";
 import { SessionManager } from "./services/session-manager.js";
 import { createProvisioner } from "./services/provisioner/index.js";
 import { sessionsRoutes } from "./routes/sessions.js";
-import { settingsRoutes } from "./routes/settings.js";
 import { authRoutes } from "./routes/auth.js";
 import { adminRoutes } from "./routes/admin.js";
 import { userRoutes } from "./routes/user.js";
@@ -134,7 +133,6 @@ app.use("/api/*", async (c, next) => {
 app.route("/api/sessions", sessionsRoutes(sessionManager));
 app.route("/api/sessions", previewRoutes(sessionManager));
 app.route("/api/user", userRoutes(sessionManager));
-app.route("/api/settings", settingsRoutes());
 app.route("/api/infra", infraRoutes());
 app.route("/api/integrations/github", githubIntegrationRoutes());
 app.route("/api/packages", packagesRoutes(packageManager));
