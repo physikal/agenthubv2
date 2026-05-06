@@ -563,3 +563,17 @@ Submit hits `POST /api/admin/tls/reconfigure` with the answers. Server-side: wri
 - Multi-domain installs.
 - Self-CA root rotation tooling.
 - agentdeploy MCP awareness of self-CA trust state on deploy targets.
+
+---
+
+## Postscript — implementation deltas (2026-05-06)
+
+End-to-end validation on Proxmox VM 918 ([issue #64](https://github.com/physikal/agenthubv2/issues/64)) surfaced 5 bugs in PR #62; all fixed in PRs #65-#69. The two notable design-vs-reality deltas:
+
+1. **Override flags are TRAEFIK_* env vars, not a `command:` array.** The "Override examples" section above shows compose `services.traefik.command:` arrays. That doesn't work: docker-compose merges list-typed fields like `command:` by REPLACING — putting TLS flags in the override's `command:` strips the base's `--providers.docker=true`, entrypoints, and redirect, leaving Traefik with only the override flags. PR #69 converted all override flags to `services.traefik.environment:` with `TRAEFIK_*`-prefixed vars (Traefik's documented env-var equivalents for every CLI flag), which compose merges as a dict. Result: base + override coexist correctly. Snapshot tests now assert `traefik.command === undefined` for every override mode as a regression guard.
+
+2. **Probe parsing pipes through `openssl x509`.** `s_client -showcerts` doesn't emit `notBefore=…`/`notAfter=…` lines (it emits `NotBefore: …; NotAfter: …` on a single `v:` line). The original probe regex never matched, so `/api/health.tls` and the install loud-failure gate always failed. PR #69 pipes s_client through `openssl x509 -noout -subject -issuer -dates` to get the canonical key=value form the parser expects.
+
+Plus minor fixes: PR #66 (refspec accumulation in `scripts/agenthub`), PR #67 (SHA-aware update probe handles docs-only updates), PR #68 (reconfigure-tls now sets `COMPOSE_FILE` so localhost→real-domain migration works).
+
+The architectural concept of the spec — three TLS strategies, override-file pattern, loud-failure gate, web UI parity — is preserved. Only the override's *encoding* changed (env vars vs. command flags). User-facing surface unchanged.
