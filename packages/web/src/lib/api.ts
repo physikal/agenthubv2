@@ -58,6 +58,29 @@ export async function tlsTest(): Promise<{ ok: boolean; [k: string]: unknown }> 
   return res.json();
 }
 
+export interface TlsHealthResponse {
+  ok: boolean;
+  domain: string;
+  resolver: "public-alpn" | "dns-01" | "self-ca" | "default-fallback" | "unknown";
+  issuer: string;
+  notBefore: string;
+  notAfter: string;
+  daysToExpiry: number;
+  warnings: string[];
+}
+
+export interface HealthResponse {
+  status: string;
+  sha?: string;
+  startedAt?: string;
+  tls?: TlsHealthResponse;
+}
+
+export async function getHealth(): Promise<HealthResponse> {
+  const res = await fetch("/api/health", { credentials: "include" });
+  return res.json();
+}
+
 // ---- generic API helper -------------------------------------------------
 
 /** Fetch wrapper that includes credentials and handles 401 globally. */
