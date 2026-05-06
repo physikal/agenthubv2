@@ -83,6 +83,25 @@ export function recreateService(opts: RecreateServiceOptions): Promise<void> {
   );
 }
 
+/**
+ * Recreate a service in-place after a config change. Used by reconfigure-tls
+ * to pick up override-file changes without touching other services.
+ */
+export function restartService(
+  composeDir: string,
+  service: string,
+  onLine?: (line: string) => void,
+): Promise<void> {
+  return runCompose(
+    ["up", "-d", "--pull", "never", "--force-recreate", service],
+    {
+      composeDir,
+      envFile: join(composeDir, ".env"),
+      ...(onLine ? { onLine } : {}),
+    },
+  );
+}
+
 function runCompose(
   subcommand: string[],
   opts: ComposeUpOptions,

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Trust the AgentHub CA</title>
+  <link rel="stylesheet" href="/install/ca/style.css">
+</head>
+<body>
+  <main>
+    <h1>Trust the AgentHub CA</h1>
+    <p class="lead">
+      AgentHub generated a private certificate authority for this install.
+      Import it on each device that connects to AgentHub from this LAN —
+      <strong>once per device</strong>. Then your browser will trust the
+      AgentHub HTTPS certificate just like any public site.
+    </p>
+
+    <a class="download-btn" href="/.well-known/agenthub-ca.crt" download="agenthub-ca.crt">
+      Download CA certificate
+    </a>
+
+    <nav class="tabs" id="platform-tabs">
+      <button data-tab="macos">macOS</button>
+      <button data-tab="ios">iOS</button>
+      <button data-tab="android">Android</button>
+      <button data-tab="linux">Linux</button>
+      <button data-tab="windows">Windows</button>
+    </nav>
+
+    <section data-panel="macos">
+      <h2>macOS</h2>
+      <ol>
+        <li>Click the download button above.</li>
+        <li>Run this in Terminal:</li>
+      </ol>
+      <pre><code>sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain ~/Downloads/agenthub-ca.crt</code></pre>
+      <button class="copy" data-copy="sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ~/Downloads/agenthub-ca.crt">Copy</button>
+      <p class="note">You'll be prompted for your macOS user password. Restart your browser to pick up the new trust root.</p>
+    </section>
+
+    <section data-panel="ios">
+      <h2>iOS</h2>
+      <ol>
+        <li>Tap the download button above on your iOS device.</li>
+        <li>Open <strong>Settings &rarr; General &rarr; VPN &amp; Device Management</strong>.</li>
+        <li>Under "Downloaded Profile", tap the AgentHub CA, then tap <strong>Install</strong>.</li>
+        <li>Open <strong>Settings &rarr; General &rarr; About &rarr; Certificate Trust Settings</strong>.</li>
+        <li>Toggle ON the trust switch next to <strong>AgentHub Self-CA</strong>.</li>
+      </ol>
+    </section>
+
+    <section data-panel="android">
+      <h2>Android</h2>
+      <ol>
+        <li>Download the certificate to your device.</li>
+        <li>Open <strong>Settings &rarr; Security &rarr; Encryption &amp; credentials &rarr; Install a certificate &rarr; CA certificate</strong>.</li>
+        <li>Select the downloaded file and confirm.</li>
+      </ol>
+      <p class="note">Android distinguishes user-installed CAs (apps may not trust them) from system CAs. For most browsers, user-installed is sufficient.</p>
+    </section>
+
+    <section data-panel="linux">
+      <h2>Linux (Debian/Ubuntu)</h2>
+      <pre><code>sudo cp ~/Downloads/agenthub-ca.crt /usr/local/share/ca-certificates/agenthub.crt
+sudo update-ca-certificates</code></pre>
+      <button class="copy" data-copy="sudo cp ~/Downloads/agenthub-ca.crt /usr/local/share/ca-certificates/agenthub.crt && sudo update-ca-certificates">Copy</button>
+      <h3>Firefox (separate trust store)</h3>
+      <ol>
+        <li>Open <strong>about:preferences#privacy</strong>.</li>
+        <li>Scroll to <strong>Certificates &rarr; View Certificates</strong>.</li>
+        <li>Switch to the <strong>Authorities</strong> tab and click <strong>Import&hellip;</strong>.</li>
+        <li>Select <code>agenthub-ca.crt</code> and check <strong>Trust this CA to identify websites</strong>.</li>
+      </ol>
+    </section>
+
+    <section data-panel="windows">
+      <h2>Windows</h2>
+      <ol>
+        <li>Download the certificate and double-click it.</li>
+        <li>Click <strong>Install Certificate&hellip;</strong> &rarr; <strong>Local Machine</strong> &rarr; <strong>Next</strong>.</li>
+        <li>Select <strong>Place all certificates in the following store</strong> &rarr; <strong>Browse &rarr; Trusted Root Certification Authorities</strong>.</li>
+        <li>Click <strong>OK</strong>, <strong>Next</strong>, <strong>Finish</strong>.</li>
+      </ol>
+    </section>
+  </main>
+  <script src="/install/ca/script.js"></script>
+</body>
+</html>

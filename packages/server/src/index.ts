@@ -87,13 +87,28 @@ app.route("/api/auth", authRoutes());
 // on a ghost dangling image in April 2026.
 const SERVER_GIT_SHA = process.env["AGENTHUB_GIT_SHA"] ?? "unknown";
 const SERVER_STARTED_AT = new Date().toISOString();
-app.get("/api/health", (c) =>
-  c.json({
+app.get("/api/health", async (c) => {
+  // TLS health probe runs only for non-localhost installs. Probe failure
+  // is reflected via tls.warnings — never crashes the health endpoint.
+  const domain =
+    process.env["AGENTHUB_DOMAIN"] ?? process.env["DOMAIN"] ?? "localhost";
+  let tls = null;
+  if (domain !== "localhost") {
+    try {
+      const { getTlsHealth } = await import("./services/tls/health.js");
+      tls = getTlsHealth(domain);
+    } catch {
+      // Defensive: if openssl is missing or the probe blows up, keep
+      // /api/health responding healthy for the rest of the stack.
+    }
+  }
+  return c.json({
     status: "ok",
     sha: SERVER_GIT_SHA,
     startedAt: SERVER_STARTED_AT,
-  }),
-);
+    ...(tls ? { tls } : {}),
+  });
+});
 
 // --- Agent-authenticated routes (MCP server inside workspace — before cookie auth) ---
 const agentDeployApp = new Hono();

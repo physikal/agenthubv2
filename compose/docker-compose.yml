@@ -33,9 +33,10 @@ services:
       - --entrypoints.infisical.address=:8443
       - --entrypoints.web.http.redirections.entrypoint.to=websecure
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
-      - --certificatesresolvers.le.acme.tlschallenge=true
-      - --certificatesresolvers.le.acme.email=${TLS_EMAIL}
-      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+      # Cert-resolver flags live in compose/traefik.override.yml — generated
+      # by the installer based on the chosen TLS mode (public-alpn / dns-01 /
+      # self-ca). Localhost installs run without a cert resolver and rely on
+      # Traefik's built-in default cert.
     ports:
       - "80:80"
       - "443:443"
@@ -197,7 +198,9 @@ services:
       - traefik.enable=true
       - traefik.http.routers.agenthub.rule=${AGENTHUB_HOST_RULE}
       - traefik.http.routers.agenthub.entrypoints=websecure
-      - traefik.http.routers.agenthub.tls.certresolver=le
+      # Cert resolver attached via traefik.override.yml when in an ACME mode.
+      # Localhost installs omit it so Traefik serves its default cert.
+      - traefik.http.routers.agenthub.tls=true
       - traefik.http.services.agenthub.loadbalancer.server.port=3000
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]

@@ -93,6 +93,36 @@ cmd_status() {
   fi
   printf '\n%sCompose services%s\n' "$c_bold" "$c_reset"
   compose ps --format "table {{.Service}}\t{{.State}}\t{{.Status}}"
+
+  # TLS status — fetched from /api/health. Best-effort: if the server isn't
+  # responding yet we silently skip rather than block the whole status output.
+  local domain tls_json
+  domain="$(grep -oE '^DOMAIN=.*' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
+  if [[ -n "$domain" && "$domain" != "localhost" ]]; then
+    tls_json="$(curl -ksf -m 3 "https://${domain}/api/health" 2>/dev/null \
+                || curl -sf -m 3 "http://localhost:3000/api/health" 2>/dev/null \
+                || echo "")"
+    if [[ -n "$tls_json" ]] && grep -q '"tls":' <<<"$tls_json"; then
+      local tls_ok tls_resolver tls_days
+      tls_ok="$(grep -oE '"ok":(true|false)' <<<"$tls_json" | head -1 | cut -d: -f2)"
+      tls_resolver="$(grep -oE '"resolver":"[^"]+"' <<<"$tls_json" | head -1 | cut -d'"' -f4)"
+      tls_days="$(grep -oE '"daysToExpiry":-?[0-9]+' <<<"$tls_json" | head -1 | cut -d: -f2)"
+      printf '\n%sTLS%s\n' "$c_bold" "$c_reset"
+      if [[ "$tls_ok" == "true" ]]; then
+        if [[ "${tls_days:-100}" -lt 14 ]]; then
+          printf '  %sWARN%s  %s — %sd remaining (expiring soon)\n' "$c_yel" "$c_reset" "$tls_resolver" "$tls_days"
+        else
+          printf '  %sok%s    %s — %sd remaining\n' "$c_grn" "$c_reset" "$tls_resolver" "$tls_days"
+        fi
+      else
+        if [[ "$tls_resolver" == "default-fallback" ]]; then
+          printf '  %sWARN%s  serving Traefik default cert — run `agenthub reconfigure-tls`\n' "$c_yel" "$c_reset"
+        else
+          printf '  %sERROR%s %s (%sd)\n' "$c_red" "$c_reset" "$tls_resolver" "$tls_days"
+        fi
+      fi
+    fi
+  fi
 }
 
 # True if the local image has drifted from the repo: either a commit has
@@ -270,6 +300,17 @@ migrate_env() {
     msg "migrating: adding AGENTHUB_REPO_DIR=$AGENTHUB_DIR to compose/.env"
     echo "AGENTHUB_REPO_DIR=$AGENTHUB_DIR" >> "$ENV_FILE"
   fi
+
+  # TLS Plan 1: pre-Plan-1 installs have no compose/traefik.override.yml.
+  # The migrate-tls CLI generates one based on existing DOMAIN + TLS_EMAIL
+  # so Traefik restarts pick up the right cert resolver. Idempotent.
+  local migrate_cli="$AGENTHUB_DIR/packages/installer/dist/lib/tls/migrate-cli.js"
+  if [[ -f "$migrate_cli" ]]; then
+    node "$migrate_cli" "$AGENTHUB_DIR/compose" \
+      || die "TLS migration failed — refusing to upgrade Traefik"
+  else
+    warn "migrate-cli.js not built yet; skipping TLS migration (run 'pnpm -C packages/installer build' if you expected this)"
+  fi
 }
 
 # Install the freshly-pulled CLI script over the one on PATH. Called at
@@ -426,6 +467,9 @@ Usage: agenthub <command> [args]
 
 Commands:
   update [--check]       Pull latest, rebuild, recreate. --check is a dry-run.
+  reconfigure-tls [...]  Change TLS strategy. Interactive by default;
+                         --non-interactive reads AGENTHUB_TLS_* env vars.
+                         Flags: --no-rollback, --regen-cert (self-ca only).
   status                 Git + compose service status.
   logs [service]         Tail compose logs (default: agenthub-server).
   restart [service...]   Restart services (default: all).
@@ -438,6 +482,14 @@ EOF
 
 case "${1:-}" in
   update)  shift; cmd_update "$@" ;;
+  reconfigure-tls)
+    shift
+    cli="$AGENTHUB_DIR/packages/installer/dist/reconfigure-cli.js"
+    if [[ ! -f "$cli" ]]; then
+      die "reconfigure-tls CLI not built; run 'pnpm -C $AGENTHUB_DIR/packages/installer build' first"
+    fi
+    exec node "$cli" "$@"
+    ;;
   status)  shift; cmd_status ;;
   logs)    shift; cmd_logs "$@" ;;
   restart) shift; cmd_restart "$@" ;;

@@ -185,6 +185,57 @@ Then:
 docker compose -f compose/docker-compose.yml up -d --force-recreate agenthub-server
 ```
 
+## TLS issues
+
+### "Your connection isn't private" / red padlock in browser
+
+Run `agenthub status`. If you see `TLS WARN serving Traefik default cert`, your install fell through to Traefik's built-in self-signed cert. Fix:
+
+```bash
+agenthub reconfigure-tls
+```
+
+Or click [Fix now] in the migration banner that appears at the top of the admin UI. The Settings page also has a TLS card with [Reconfigure TLS] / [Force renew] / [Test] buttons.
+
+### Cert is valid but expiring soon (< 14 days)
+
+`agenthub status` will surface this with `TLS WARN ... — Nd remaining (expiring soon)`. ACME modes auto-renew via Traefik on each restart; self-CA auto-renews via the `traefik-self-ca-renew` sidecar daily. To force renewal now:
+
+```bash
+# Self-CA: regenerates the leaf, CA root unchanged
+agenthub reconfigure-tls --regen-cert --non-interactive
+
+# LE modes: re-applying the same config triggers Traefik renewal on restart
+agenthub reconfigure-tls --non-interactive
+```
+
+Or click [Force renew] in the Settings TLS card.
+
+### Cloudflare DNS-01 failing
+
+Most often: the API token doesn't have access to the right zone. The pre-flight check catches this before Traefik flips config, but if you bypassed it:
+
+```bash
+curl -H "Authorization: Bearer $CF_DNS_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/zones?name=<your-zone>"
+```
+
+Should return your zone in `result`. If empty: re-create the token with `Zone:Read` + `DNS:Edit` permissions on the right zone.
+
+### Self-CA leaf doesn't match my LAN IP
+
+You moved the box, or auto-detection picked the wrong interface. Override:
+
+```bash
+AGENTHUB_TLS_MODE=self-ca \
+AGENTHUB_LAN_IP=<correct-ip-or-comma-list> \
+agenthub reconfigure-tls --regen-cert --non-interactive
+```
+
+### Pre-fix install (before TLS Plan 1)
+
+If you're running an install from before this PR landed, `agenthub update` migrates `compose/.env` automatically — generates `traefik.override.yml` based on the existing `DOMAIN` + `TLS_EMAIL` and infers `public-alpn` mode. No operator action required for the mechanical migration; if the old install was silently serving Traefik's default cert you'll see the migration banner in the admin UI after upgrade — click [Fix now] to switch to a working mode.
+
 ## Debugging tips
 
 - Every service logs to stdout; `docker compose logs <service>` is your primary tool
