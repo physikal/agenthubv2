@@ -295,3 +295,25 @@ describe("tlsMode", () => {
     );
   });
 });
+
+describe("accessMode", () => {
+  it("defaults to 'lan'", () => {
+    expect(emptyConfig().accessMode).toBe("lan");
+  });
+
+  it("applies AGENTHUB_ACCESS_MODE override", () => {
+    const cfg = applyEnvOverrides(emptyConfig(), {
+      AGENTHUB_ACCESS_MODE: "public",
+    });
+    expect(cfg.accessMode).toBe("public");
+  });
+
+  it("rejects unknown access mode at validation", () => {
+    const cfg = applyEnvOverrides(emptyConfig(), {
+      AGENTHUB_ACCESS_MODE: "bogus",
+    });
+    expect(
+      missingRequiredForHeadless(cfg).some((m) => m.startsWith("AGENTHUB_ACCESS_MODE")),
+    ).toBe(true);
+  });
+});

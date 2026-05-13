@@ -1,8 +1,7 @@
 import { randomHex, randomPassword } from "./secrets.js";
 import { requiredEnvVarsFor } from "./tls/lego-providers.js";
-import type { AccessMode, PublicTlsMode } from "./access/types.js";
+import { VALID_ACCESS_MODES, type AccessMode, type PublicTlsMode } from "./access/types.js";
 export type { AccessMode, PublicTlsMode } from "./access/types.js";
-import { VALID_ACCESS_MODES } from "./access/types.js";
 
 export type ProvisionerMode = "docker" | "dokploy-remote";
 
