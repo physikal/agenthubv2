@@ -36,6 +36,14 @@ A first-run install with no TLS / cert decisions, accessible immediately via `ht
 
 Self-CA and the four-mode surface in PR #62 collapse into this. No surface is lost — direct dns-01 / public-alpn remain available under `public-tls`. Self-CA disappears.
 
+## Implementation scope
+
+**First PR ships:** `lan-http` (new default), `public` (renamed from `public-alpn` / `dns-01`), and self-CA deletion + auto-migration. The new TUI mode-selection step, headless `AGENTHUB_ACCESS_MODE` contract, Web UI rename (Settings → Access), and `agenthub reconfigure-access` verb all land here.
+
+**Deferred to a follow-up PR:** `tunnel` mode (Cloudflare Tunnel + `cloudflared` service in compose, `compose/tunnel.override.yml` generation, token-entry TUI branch, token-rotation reconfigure path). The three-mode mental model above stays in this spec as the target end-state; the follow-up PR completes it.
+
+This scope cut keeps the first PR at the ~half-day-to-one-day estimate and lets `lan-http` get to a fresh VM (and migration of VM 923) without waiting on tunnel-mode integration testing.
+
 ### `lan-http` default
 
 - Traefik runs with `web` entrypoint on :80 only. No `websecure` entrypoint. No cert resolver. No redirect.
@@ -155,8 +163,10 @@ The reconfigure modal runs the same three-question flow as the TUI.
 - **WebSocket-over-HTTP on a LAN domain**: confirm browsers don't downgrade `ws://` in mixed contexts. Today's WS goes over `wss://` because the page is HTTPS. With `lan-http`, page is HTTP, WS becomes `ws://` — should work; needs verifying in the e2e test.
 - **Mixed-content blocks on iframes / external resources**: agenthub-server doesn't currently embed external HTTPS resources, but worth a smoke check.
 - **DOMAIN=localhost vs DOMAIN=lan-hostname**: both flow into `lan-http`. The TUI should detect whether the operator entered a real-looking hostname and offer to set DNS or use the IP.
-- **Cloudflare Tunnel reconfigure**: tokens are rotateable; the reconfigure-access flow needs to handle replacing a token without breaking the cloudflared connection mid-flight.
+- **Cloudflare Tunnel reconfigure**: tokens are rotateable; the reconfigure-access flow needs to handle replacing a token without breaking the cloudflared connection mid-flight. (Deferred to follow-up PR.)
 - **Backward compat for the `agenthub reconfigure-tls` verb**: keep the alias working for one release, deprecate-warn, remove later.
+- **HSTS pinning on migrating browsers**: PR #74 fixed Hono's `secureHeaders()` emitting `Strict-Transport-Security` on every response. Browsers that visited the install pre-#74 may be HSTS-pinned to HTTPS for ~6 months. Auto-migration to `lan-http` works at the server, but those browsers will refuse plain `http://`. The migration log line, the `[migrate-tls]` notice, and the post-install message must call out the operator-side fix: clear `chrome://net-internals/#hsts` (Chrome) or "Forget About This Site" (Firefox) for the install's hostname. Treat as expected UX, not a bug.
+- **Cookie `Secure` flag on HTTP**: the cookie-auth path (`packages/server/src/auth/`) likely sets `Secure` on the session cookie, which prevents the browser from sending it over `http://`. In `lan-http` mode the cookie must drop the `Secure` flag (or the server must read `X-Forwarded-Proto` from Traefik to decide). Plan must include an audit of the cookie attributes + a regression test that login works over plain HTTP.
 
 ## Out of scope (true follow-ups)
 
