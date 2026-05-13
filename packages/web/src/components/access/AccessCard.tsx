@@ -4,7 +4,7 @@ import {
   accessTest,
   type TlsHealthResponse,
 } from "../../lib/api.js";
-import { ReconfigureTlsModal } from "../tls/ReconfigureTlsModal.js";
+import { ReconfigureAccessModal } from "./ReconfigureAccessModal.js";
 
 function statusIcon(tls: TlsHealthResponse): "ok" | "warn" | "error" {
   if (!tls.ok) return "error";
@@ -47,7 +47,7 @@ export const AccessCard: React.FC = () => {
           <button onClick={() => setShowModal(true)}>Switch mode</button>
         </div>
         {showModal && (
-          <ReconfigureTlsModal
+          <ReconfigureAccessModal
             initialDomain={tls.domain}
             defaultLanIp=""
             onClose={() => {
@@ -126,7 +126,7 @@ export const AccessCard: React.FC = () => {
       )}
 
       {showModal && (
-        <ReconfigureTlsModal
+        <ReconfigureAccessModal
           initialDomain={tls.domain}
           defaultLanIp=""
           onClose={() => {

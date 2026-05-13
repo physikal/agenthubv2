@@ -1,13 +1,11 @@
 // ---- TLS admin (Plan 4) -------------------------------------------------
 
 export interface TlsReconfigureRequest {
-  mode: "public-alpn" | "dns-01" | "self-ca";
+  mode: "public-alpn" | "dns-01" | "lan";
   tlsEmail?: string;
   dnsProvider?: string;
   dnsEnvVars?: Record<string, string>;
-  lanIp?: string;
   noRollback?: boolean;
-  regenCert?: boolean;
 }
 
 /**
