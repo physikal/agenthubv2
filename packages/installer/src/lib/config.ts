@@ -1,5 +1,8 @@
 import { randomHex, randomPassword } from "./secrets.js";
 import { requiredEnvVarsFor } from "./tls/lego-providers.js";
+import type { AccessMode, PublicTlsMode } from "./access/types.js";
+export type { AccessMode, PublicTlsMode } from "./access/types.js";
+import { VALID_ACCESS_MODES } from "./access/types.js";
 
 export type ProvisionerMode = "docker" | "dokploy-remote";
 
@@ -58,6 +61,7 @@ export interface InstallConfig {
   workspaceImage: string;
 
   tlsMode: TlsMode;
+  accessMode: AccessMode;
   tlsDnsProvider: string;
   tlsDnsEnvVars: Record<string, string>;
   /**
@@ -92,6 +96,7 @@ export function emptyConfig(): InstallConfig {
     serverImage: "ghcr.io/physikal/agenthubv2-server:latest",
     workspaceImage: "ghcr.io/physikal/agenthubv2-workspace:latest",
     tlsMode: "auto",
+    accessMode: "lan",
     tlsDnsProvider: "",
     tlsDnsEnvVars: {},
     lanIp: "",
@@ -187,6 +192,9 @@ export function applyEnvOverrides(
   if (env["AGENTHUB_TLS_MODE"]) {
     next.tlsMode = env["AGENTHUB_TLS_MODE"] as TlsMode;
   }
+  if (env["AGENTHUB_ACCESS_MODE"]) {
+    next.accessMode = env["AGENTHUB_ACCESS_MODE"] as AccessMode;
+  }
   if (env["AGENTHUB_LAN_IP"]) {
     next.lanIp = env["AGENTHUB_LAN_IP"];
   }
@@ -237,6 +245,11 @@ export function missingRequiredForHeadless(cfg: InstallConfig): string[] {
   }
   if (cfg.domain !== "localhost" && !cfg.tlsEmail) {
     missing.push("AGENTHUB_TLS_EMAIL");
+  }
+  if (!VALID_ACCESS_MODES.includes(cfg.accessMode)) {
+    missing.push(
+      `AGENTHUB_ACCESS_MODE (got '${cfg.accessMode}'; valid: ${VALID_ACCESS_MODES.join(", ")})`,
+    );
   }
   if (!VALID_TLS_MODES.includes(cfg.tlsMode)) {
     missing.push(
