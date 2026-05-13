@@ -71,9 +71,11 @@ export const TlsCard: React.FC = () => {
       <p>
         Valid for <code>{tls.domain}</code>
         <br />
-        {tls.daysToExpiry >= 0
-          ? `Expires in ${tls.daysToExpiry} day${tls.daysToExpiry === 1 ? "" : "s"}`
-          : `Expired ${-tls.daysToExpiry} days ago`}
+        {tls.daysToExpiry === null
+          ? "N/A"
+          : tls.daysToExpiry >= 0
+            ? `Expires in ${tls.daysToExpiry} day${tls.daysToExpiry === 1 ? "" : "s"}`
+            : `Expired ${-tls.daysToExpiry} days ago`}
       </p>
 
       {tls.warnings.length > 0 && (
