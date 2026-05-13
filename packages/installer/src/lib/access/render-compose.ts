@@ -103,6 +103,9 @@ export function renderTraefikOverride(input: RenderInput): string | null {
   }
 
   const services: Record<string, unknown> = {
+    traefik: {
+      ports: ["80:80", "443:443", "8443:8443"],
+    },
     "agenthub-server": {
       labels: ["traefik.http.routers.agenthub.tls.certresolver=le"],
     },
@@ -112,9 +115,8 @@ export function renderTraefikOverride(input: RenderInput): string | null {
     if (!input.dnsProvider) {
       throw new Error("public + dns-01 requires dnsProvider.");
     }
-    services["traefik"] = {
-      environment: input.dnsEnvVars ?? {},
-    };
+    (services["traefik"] as Record<string, unknown>)["environment"] =
+      input.dnsEnvVars ?? {};
   }
 
   return dumpYaml({ services });

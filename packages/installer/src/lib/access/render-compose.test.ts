@@ -94,7 +94,6 @@ describe("renderTraefikOverride", () => {
     expect(yaml).not.toBeNull();
     expect(yaml!).toContain("agenthub-server");
     expect(yaml!).toContain("traefik.http.routers.agenthub.tls.certresolver=le");
-    expect(yaml!).not.toContain("services:\n  traefik:");
   });
 
   it("public + dns-01: adds DNS env vars on traefik service + certresolver label", () => {
@@ -109,6 +108,21 @@ describe("renderTraefikOverride", () => {
     expect(yaml).not.toBeNull();
     expect(yaml!).toContain("CF_DNS_API_TOKEN");
     expect(yaml!).toContain("certresolver=le");
+    expect(yaml!).toMatch(/80:80/);
+    expect(yaml!).toMatch(/443:443/);
+  });
+
+  it("public: restates :80, :443, :8443 on traefik.ports so compose merge doesn't drop :80", () => {
+    const yaml = renderTraefikOverride({
+      accessMode: "public",
+      domain: "agenthub.example.com",
+      publicTlsMode: "public-alpn",
+      tlsEmail: "ops@example.com",
+    });
+    expect(yaml).not.toBeNull();
+    expect(yaml!).toMatch(/80:80/);
+    expect(yaml!).toMatch(/443:443/);
+    expect(yaml!).toMatch(/8443:8443/);
   });
 
   it("never emits `command:` on the traefik service (regression guard for #69)", () => {
