@@ -178,6 +178,11 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
         "agenthub-static": {
           image: "nginx:alpine",
           restart: "unless-stopped",
+          // Same network as Traefik so the docker provider can route to
+          // it. Without this, the service lands on docker's default
+          // bridge and Traefik (on the `agenthub` network) returns 504
+          // Gateway Timeout when it tries to proxy.
+          networks: ["agenthub"],
           depends_on: {
             "traefik-self-ca-init": {
               condition: "service_completed_successfully",

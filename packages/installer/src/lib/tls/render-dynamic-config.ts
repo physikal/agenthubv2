@@ -27,7 +27,10 @@ export function renderTraefikDynamicConfig(): string {
       },
       routers: {
         "redirect-all-to-https": {
-          rule: "HostRegexp(`{any:.+}`)",
+          // Plain Go regex — matches any non-empty host. In v2 this
+          // would have been `{any:.+}` (named capture); v3 dropped the
+          // named-capture syntax entirely. Tested in v3.6.17.
+          rule: "HostRegexp(`.+`)",
           entryPoints: ["web"],
           middlewares: ["redirect-to-https"],
           // Explicit priority lower than docker-labeled routers'

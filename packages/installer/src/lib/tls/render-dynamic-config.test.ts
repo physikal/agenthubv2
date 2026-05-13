@@ -15,7 +15,7 @@ describe("renderTraefikDynamicConfig", () => {
 
     const routers = http["routers"] as Record<string, unknown>;
     const router = routers["redirect-all-to-https"] as Record<string, unknown>;
-    expect(router["rule"]).toBe("HostRegexp(`{any:.+}`)");
+    expect(router["rule"]).toBe("HostRegexp(`.+`)");
     expect(router["entryPoints"]).toEqual(["web"]);
     expect(router["middlewares"]).toEqual(["redirect-to-https"]);
     expect(router["priority"]).toBe(1);

@@ -64,6 +64,11 @@ export function probeServingCert(
   const cmd =
     `openssl s_client -connect ${sq(`${host}:${port}`)} ` +
     `-servername ${sq(sni)} -showcerts < /dev/null 2>/dev/null | ` +
+    // Extract just the first PEM block — s_client emits a connection-
+    // log preamble followed by the cert chain, and x509 chokes on the
+    // preamble (alpine inside the server container is strict about
+    // input that isn't pure PEM).
+    `sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' | ` +
     `openssl x509 -noout -subject -issuer -dates`;
   const stdout = execSync(cmd, { timeout: 10_000 }).toString();
   return parseOpensslOutput(stdout);

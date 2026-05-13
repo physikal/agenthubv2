@@ -123,6 +123,12 @@ services:
       PORT: 3000
       DB_PATH: /data/agenthub.db
 
+      # The TLS health probe (services/tls/health.ts) uses this to know
+      # which domain to s_client into. Without it, the probe falls back
+      # to "localhost" → no probe runs → /api/health.tls field is
+      # silently absent on real-domain installs.
+      DOMAIN: ${DOMAIN}
+
       # Public URLs (CORS + .agenthub-env export)
       AGENTHUB_PUBLIC_URL: https://${DOMAIN}
       AGENTHUB_PORTAL_URL: http://agenthub-server:3000
