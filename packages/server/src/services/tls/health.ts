@@ -125,8 +125,11 @@ function probe(domain: string): ParsedTlsCert {
   // single line) which the regex never matched — so every probe threw
   // "missing required fields".
   const sq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
+  // Probe Traefik via its docker service name, NOT 127.0.0.1: the
+  // server container's loopback isn't Traefik. SNI stays as the user's
+  // domain so Traefik picks the right router/cert.
   const cmd =
-    `openssl s_client -connect 127.0.0.1:443 -servername ${sq(domain)} ` +
+    `openssl s_client -connect traefik:443 -servername ${sq(domain)} ` +
     `-showcerts < /dev/null 2>/dev/null | ` +
     // Extract just the first PEM block — s_client emits a connection-
     // log preamble followed by the cert chain, and x509 chokes on the
