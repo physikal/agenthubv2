@@ -6,14 +6,14 @@ Gets you from "nothing" to "logged into a running AgentHub" in about 10 minutes.
 
 - Supported Linux host: Debian/Ubuntu, Fedora/RHEL/Rocky/Alma, Arch, Alpine
 - Internet access + sudo (the installer auto-provisions missing prereqs)
-- **Ports 80, 443, and 8443 free** (Traefik binds :80 and :443 for AgentHub, :8443 for the Infisical admin console)
+- **Ports 80 and 8443 free** (Traefik binds :80 for AgentHub; :8443 for the Infisical admin console). Port 443 is only needed for `public` access mode.
 - **4 GB RAM, 20 GB disk** minimum
 
 The installer auto-installs what's missing, with your consent, for each of: git, Docker, Docker Compose plugin, Node 22+, pnpm. If everything is already present it skips straight to the TUI.
 
 ### Domain (optional)
 
-`localhost` works and gives you a local-only install over HTTP. For a real hostname, point an A record at the host's IP *before* installing so Let's Encrypt's ACME challenge can complete on first boot.
+`localhost` works and gives you a local-only install over HTTP. For a real hostname with public access, point an A record at the host's IP *before* installing so Let's Encrypt's ACME challenge can complete on first boot.
 
 ## Install
 
@@ -63,8 +63,10 @@ The TUI walks you through:
 2. **Provisioner choice.** Pick one:
    - **Local Docker** (default) — workspace containers run on the same host. Simplest.
    - **Remote Dokploy** — point AgentHub at an existing Dokploy instance. Needs its URL + API token + project ID + environment ID.
-3. **Domain.** `localhost` or a real hostname.
-4. **TLS email.** Only asked for non-localhost domains. Used by Let's Encrypt for cert expiry notices.
+3. **Domain.** `localhost` or a real hostname (e.g. `192.168.4.10` or `agenthub.example.com`).
+4. **Access mode.** How this install will be reached:
+   - **LAN only** (default) — HTTP on :80, no TLS, accessible from your local network. Hit Enter to accept this.
+   - **Public internet** — Let's Encrypt HTTPS. You'll be asked for a TLS sub-mode (`public-alpn` if :443 is port-forwarded; `dns-01` if you have a DNS provider API token) and a contact email.
 5. **Admin password.** Leave blank to auto-generate one (printed at the end).
 6. **Confirm → install.** The installer writes `compose/.env`, pulls images, `docker compose up -d`, bootstraps Infisical, force-recreates the server so it picks up the Infisical creds, and prints your credentials.
 
