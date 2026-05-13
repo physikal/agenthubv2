@@ -55,7 +55,13 @@ void (async () => {
 const app = new Hono();
 
 app.use("*", logger());
-app.use("*", secureHeaders());
+// HSTS off: it's a footgun for the lan-http access mode. A single
+// browser visit to https:// pins the browser to HTTPS for 6 months,
+// even though the operator may legitimately prefer http:// on their
+// LAN. Browsers correctly ignore HSTS sent over HTTP, but the prior
+// HTTPS visit's header still sticks. Other secure headers (X-Frame-
+// Options, X-Content-Type-Options, Referrer-Policy, etc.) stay on.
+app.use("*", secureHeaders({ strictTransportSecurity: false }));
 
 app.use(
   "/api/*",
