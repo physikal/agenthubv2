@@ -113,7 +113,9 @@ cmd_status() {
       tls_resolver="$(grep -oE '"resolver":"[^"]+"' <<<"$tls_json" | head -1 | cut -d'"' -f4)"
       tls_days="$(grep -oE '"daysToExpiry":-?[0-9]+' <<<"$tls_json" | head -1 | cut -d: -f2)"
       printf '\n%sTLS%s\n' "$c_bold" "$c_reset"
-      if [[ "$tls_ok" == "true" ]]; then
+      if [[ "$tls_resolver" == "lan" ]]; then
+        printf '  %sok%s    Access: LAN (http://%s)\n' "$c_grn" "$c_reset" "$domain"
+      elif [[ "$tls_ok" == "true" ]]; then
         if [[ "${tls_days:-100}" -lt 14 ]]; then
           printf '  %sWARN%s  %s — %sd remaining (expiring soon)\n' "$c_yel" "$c_reset" "$tls_resolver" "$tls_days"
         else
