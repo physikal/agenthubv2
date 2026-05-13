@@ -481,8 +481,8 @@ export function adminRoutes(sessionManager: SessionManager) {
     return c.json({ email, password });
   });
 
-  // POST /api/admin/tls/reconfigure — apply new TLS config, stream progress as SSE
-  app.post("/tls/reconfigure", async (c) => {
+  // POST /api/admin/access/reconfigure — apply new TLS config, stream progress as SSE
+  app.post("/access/reconfigure", async (c) => {
     const body = await c.req.json<{
       mode: "public-alpn" | "dns-01" | "self-ca";
       tlsEmail?: string;
@@ -518,11 +518,11 @@ export function adminRoutes(sessionManager: SessionManager) {
     });
   });
 
-  // POST /api/admin/tls/renew — force-renew the cert.
+  // POST /api/admin/access/renew — force-renew the cert.
   // Self-CA: REGEN=1 via reconfigure container. LE modes: same path; the
   // reconfigure CLI re-applies the existing config and Traefik picks up
   // renewal on restart.
-  app.post("/tls/renew", async (c) => {
+  app.post("/access/renew", async (c) => {
     const body = await c.req.json<{
       mode: "public-alpn" | "dns-01" | "self-ca";
       tlsEmail?: string;
@@ -555,8 +555,8 @@ export function adminRoutes(sessionManager: SessionManager) {
     });
   });
 
-  // POST /api/admin/tls/test — probe live cert and return classified health
-  app.post("/tls/test", async (c) => {
+  // POST /api/admin/access/test — probe live cert and return classified health
+  app.post("/access/test", async (c) => {
     const domain = process.env["AGENTHUB_DOMAIN"] ?? process.env["DOMAIN"];
     if (!domain || domain === "localhost") {
       return c.json({

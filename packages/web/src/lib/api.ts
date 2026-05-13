@@ -11,11 +11,11 @@ export interface TlsReconfigureRequest {
 }
 
 /**
- * Open an SSE stream against /api/admin/tls/reconfigure. Yields events as
+ * Open an SSE stream against /api/admin/access/reconfigure. Yields events as
  * the server emits them. Caller closes via the AbortController on the
  * optional `signal` arg.
  */
-export async function* streamTlsReconfigure(
+export async function* streamAccessReconfigure(
   req: TlsReconfigureRequest,
   signal?: AbortSignal,
 ): AsyncIterable<{ event: string; data: string }> {
@@ -26,7 +26,7 @@ export async function* streamTlsReconfigure(
     credentials: "include",
   };
   if (signal) init.signal = signal;
-  const res = await fetch("/api/admin/tls/reconfigure", init);
+  const res = await fetch("/api/admin/access/reconfigure", init);
   if (!res.body) throw new Error("no SSE body");
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -50,8 +50,8 @@ export async function* streamTlsReconfigure(
   }
 }
 
-export async function tlsTest(): Promise<{ ok: boolean; [k: string]: unknown }> {
-  const res = await fetch("/api/admin/tls/test", {
+export async function accessTest(): Promise<{ ok: boolean; [k: string]: unknown }> {
+  const res = await fetch("/api/admin/access/test", {
     method: "POST",
     credentials: "include",
   });

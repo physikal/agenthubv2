@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
   getHealth,
-  tlsTest,
+  accessTest,
   type TlsHealthResponse,
 } from "../../lib/api.js";
 import { ReconfigureTlsModal } from "./ReconfigureTlsModal.js";
@@ -41,7 +41,7 @@ export const TlsCard: React.FC = () => {
   async function runTest(): Promise<void> {
     setTesting(true);
     try {
-      const r = await tlsTest();
+      const r = await accessTest();
       setTestResult(r as unknown as TlsHealthResponse);
     } finally {
       setTesting(false);
@@ -49,7 +49,7 @@ export const TlsCard: React.FC = () => {
   }
 
   async function forceRenew(): Promise<void> {
-    const res = await fetch("/api/admin/tls/renew", {
+    const res = await fetch("/api/admin/access/renew", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",

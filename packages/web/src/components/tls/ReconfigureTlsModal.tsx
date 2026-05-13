@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { streamTlsReconfigure } from "../../lib/api.js";
+import { streamAccessReconfigure } from "../../lib/api.js";
 
 type Step =
   | "strategy"
@@ -52,7 +52,7 @@ export const ReconfigureTlsModal: React.FC<{
       if (state.mode === "dns-01" && state.dnsProvider === "cloudflare") {
         dnsEnvVars["CF_DNS_API_TOKEN"] = state.cfApiToken;
       }
-      const stream = streamTlsReconfigure(
+      const stream = streamAccessReconfigure(
         {
           mode: state.mode!,
           tlsEmail: state.tlsEmail,
