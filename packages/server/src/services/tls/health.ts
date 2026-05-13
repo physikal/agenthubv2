@@ -125,9 +125,17 @@ function probe(domain: string): ParsedTlsCert {
   // single line) which the regex never matched — so every probe threw
   // "missing required fields".
   const sq = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
+  // Probe Traefik via its docker service name, NOT 127.0.0.1: the
+  // server container's loopback isn't Traefik. SNI stays as the user's
+  // domain so Traefik picks the right router/cert.
   const cmd =
-    `openssl s_client -connect 127.0.0.1:443 -servername ${sq(domain)} ` +
+    `openssl s_client -connect traefik:443 -servername ${sq(domain)} ` +
     `-showcerts < /dev/null 2>/dev/null | ` +
+    // Extract just the first PEM block — s_client emits a connection-
+    // log preamble followed by the cert chain, and x509 chokes on the
+    // preamble (alpine inside the server container is strict about
+    // input that isn't pure PEM).
+    `sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' | ` +
     `openssl x509 -noout -subject -issuer -dates`;
   const stdout = execSync(cmd, { timeout: 8_000 }).toString();
   return parseOpenssl(stdout);
@@ -141,8 +149,10 @@ function parseOpenssl(stdout: string): ParsedTlsCert {
   if (!subject || !issuer || !nb || !na) {
     throw new Error("probe: missing required fields in openssl output");
   }
+  // openssl emits `CN = value` (with spaces) on RFC 2253 DN strings;
+  // some platforms / older releases emit `CN=value`. Tolerate both.
   const pickField = (dn: string, key: string): string | undefined =>
-    dn.match(new RegExp(`(?:^|,\\s*)${key}=([^,]+)`))?.[1]?.trim();
+    dn.match(new RegExp(`(?:^|,\\s*)${key}\\s*=\\s*([^,]+)`))?.[1]?.trim();
   const issuerO = pickField(issuer, "O");
   return {
     subjectCN: pickField(subject, "CN") ?? "",

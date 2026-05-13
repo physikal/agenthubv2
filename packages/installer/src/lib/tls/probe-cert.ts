@@ -14,7 +14,9 @@ export interface ParsedCert {
  * the two forms openssl emits: `CN=foo` and `C=US, O=org, CN=foo`.
  */
 function pickField(dn: string, key: string): string | undefined {
-  const match = dn.match(new RegExp(`(?:^|,\\s*)${key}=([^,]+)`));
+  // openssl emits `CN = value` (with spaces) on RFC 2253 DN strings;
+  // some platforms / older releases emit `CN=value`. Tolerate both.
+  const match = dn.match(new RegExp(`(?:^|,\\s*)${key}\\s*=\\s*([^,]+)`));
   return match ? match[1]!.trim() : undefined;
 }
 
@@ -64,6 +66,11 @@ export function probeServingCert(
   const cmd =
     `openssl s_client -connect ${sq(`${host}:${port}`)} ` +
     `-servername ${sq(sni)} -showcerts < /dev/null 2>/dev/null | ` +
+    // Extract just the first PEM block — s_client emits a connection-
+    // log preamble followed by the cert chain, and x509 chokes on the
+    // preamble (alpine inside the server container is strict about
+    // input that isn't pure PEM).
+    `sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' | ` +
     `openssl x509 -noout -subject -issuer -dates`;
   const stdout = execSync(cmd, { timeout: 10_000 }).toString();
   return parseOpensslOutput(stdout);

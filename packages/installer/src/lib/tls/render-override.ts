@@ -12,6 +12,13 @@ export interface RenderOverrideInput {
    * should typically be `${VAR_NAME}` placeholders so docker compose
    * substitutes from the host's `.env` at run time, keeping the override
    * file free of literal secrets.
+   *
+   * Per the 2026-05-12 redesign, DNS provider env vars are placed on
+   * the traefik service's `environment:` (which compose merges as a
+   * dict — safe). The override no longer touches `services.traefik.
+   * command:` or any other list-typed field, since those would clobber
+   * the base compose. Cert resolver flags themselves live in
+   * compose/traefik.yml (rendered separately).
    */
   dnsEnvVars?: Record<string, string>;
   /** Required for mode='self-ca'. Comma-separated list of IPs for SAN. */
@@ -37,26 +44,37 @@ const NGINX_CONF = [
 ].join("\n");
 
 /**
- * Render the Traefik-specific compose override for the resolved TLS mode.
+ * Render the compose override for the resolved TLS mode.
  *
- * Returns null for `none` (localhost): no override file needed, the base
- * compose's Traefik will serve its built-in default cert as fallback for
- * any Host without a cert resolver, which is the right behavior for local-
- * only access.
+ * Per the 2026-05-12 redesign (see
+ * docs/superpowers/specs/2026-05-12-tls-static-config-redesign.md), this
+ * only emits compose constructs that merge SAFELY onto the base compose:
+ *   - Service-level `environment:` (dict-merged): DNS provider tokens
+ *     for dns-01 mode go to the traefik container's env so lego can
+ *     read them at runtime.
+ *   - Service-level `labels:` (list-appended): cert-resolver attachment
+ *     to the agenthub-server router (public-alpn / dns-01).
+ *   - Service-level `volumes:` (list-appended): self-ca only — mount
+ *     the leaf-cert volume into Traefik.
+ *   - New top-level services: self-ca only — init, renew, static
+ *     containers.
  *
- * Plans 2 and 3 extend this with the dns-01 and self-ca branches; this
- * plan only handles public-alpn (matching today's behavior post-refactor).
+ * What it does NOT emit (and must never re-introduce):
+ *   - `services.traefik.command:` — replaces the base command, killing
+ *     `--configfile` and the ports we depend on.
+ *   - Cert resolver / file provider config in env vars — Traefik's
+ *     static-config precedence (file > CLI > env) means env vars get
+ *     ignored once a configfile is loaded.
+ *
+ * All Traefik static config (entrypoints, providers, cert resolvers,
+ * middlewares) goes through `renderTraefikConfig` → compose/traefik.yml
+ * instead.
+ *
+ * Returns `null` for `none` (localhost) — no override file needed.
  */
 export function renderTraefikOverride(input: RenderOverrideInput): string | null {
   if (input.mode === "none") return null;
 
-  // Why env vars instead of `command:` flags: docker-compose's override merge
-  // REPLACES list-typed fields (`command:` is a list) but MERGES dicts (env
-  // vars). Putting Traefik flags in `command:` clobbers the base compose's
-  // entrypoints / providers.docker / redirect flags. Traefik's TRAEFIK_*-
-  // prefixed env vars are first-class equivalents to every CLI flag (per
-  // doc.traefik.io/traefik/reference/static-configuration/env), and they
-  // merge cleanly without losing the base config.
   if (input.mode === "public-alpn") {
     if (!input.tlsEmail) {
       throw new Error(
@@ -64,16 +82,11 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
           "needs a contact email for expiry notifications.",
       );
     }
+    // Only thing we need to add for public-alpn is the cert-resolver
+    // label on the agenthub-server router; the cert resolver itself is
+    // defined in compose/traefik.yml.
     return dumpYaml({
       services: {
-        traefik: {
-          environment: {
-            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_TLSCHALLENGE: "true",
-            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_EMAIL: input.tlsEmail,
-            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_STORAGE:
-              "/letsencrypt/acme.json",
-          },
-        },
         "agenthub-server": {
           labels: ["traefik.http.routers.agenthub.tls.certresolver=le"],
         },
@@ -96,15 +109,10 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
     return dumpYaml({
       services: {
         traefik: {
-          environment: {
-            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_DNSCHALLENGE: "true",
-            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_DNSCHALLENGE_PROVIDER:
-              input.dnsProvider,
-            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_EMAIL: input.tlsEmail,
-            TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_STORAGE:
-              "/letsencrypt/acme.json",
-            ...(input.dnsEnvVars ?? {}),
-          },
+          // DNS provider env vars (e.g. CF_DNS_API_TOKEN) — lego reads
+          // these at runtime to talk to the DNS provider. dict-merged
+          // with the base compose, so safe.
+          environment: input.dnsEnvVars ?? {},
         },
         "agenthub-server": {
           labels: ["traefik.http.routers.agenthub.tls.certresolver=le"],
@@ -119,13 +127,16 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
         "self-ca TLS mode requires lanIp (host LAN IP for cert SAN).",
       );
     }
+    // Self-CA writes leaf cert files into the host's compose/dynamic/
+    // directory (bind mount). Traefik's base mount of ./dynamic:/etc/
+    // traefik/dynamic picks them up via the file provider. Init writes
+    // self-ca.yml alongside (a tls.certificates dynamic config). No
+    // Docker volume needed.
     return dumpYaml({
       services: {
         traefik: {
-          environment: {
-            TRAEFIK_PROVIDERS_FILE_DIRECTORY: "/etc/traefik/dynamic",
-          },
-          volumes: ["traefik-self-ca:/etc/traefik/dynamic:ro"],
+          // Just depends_on; the volume is already bind-mounted by the
+          // base compose. depends_on dict-merges with base.
           depends_on: {
             "traefik-self-ca-init": {
               condition: "service_completed_successfully",
@@ -141,7 +152,7 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
           },
           command: ["sh", "/init.sh"],
           volumes: [
-            "traefik-self-ca:/out",
+            "./dynamic:/out:rw",
             "../scripts/self-ca-init.sh:/init.sh:ro",
           ],
         },
@@ -159,7 +170,7 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
           },
           command: ["sh", "/renew.sh"],
           volumes: [
-            "traefik-self-ca:/out",
+            "./dynamic:/out:rw",
             "../scripts/self-ca-init.sh:/init.sh:ro",
             "../scripts/self-ca-renew.sh:/renew.sh:ro",
           ],
@@ -167,13 +178,22 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
         "agenthub-static": {
           image: "nginx:alpine",
           restart: "unless-stopped",
+          // Same network as Traefik so the docker provider can route to
+          // it. Without this, the service lands on docker's default
+          // bridge and Traefik (on the `agenthub` network) returns 504
+          // Gateway Timeout when it tries to proxy.
+          networks: ["agenthub"],
           depends_on: {
             "traefik-self-ca-init": {
               condition: "service_completed_successfully",
             },
           },
           volumes: [
-            "traefik-self-ca:/usr/share/nginx/html/.well-known:ro",
+            // Reads ca.crt from the same dynamic dir Traefik reads from.
+            // Nginx config below only exposes `agenthub-ca.crt` via
+            // location =, so other files (leaf.key, redirect.yml) stay
+            // inaccessible via HTTP.
+            "./dynamic:/usr/share/nginx/html/.well-known:ro",
             "../compose/static/install-ca:/usr/share/nginx/html/install/ca:ro",
           ],
           configs: [
@@ -199,13 +219,10 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
           content: NGINX_CONF,
         },
       },
-      volumes: {
-        "traefik-self-ca": {},
-      },
     });
   }
 
   throw new Error(
-    `renderTraefikOverride: unrecognized mode '${input.mode}'.`,
+    `renderTraefikOverride: unrecognized mode '${input.mode as string}'.`,
   );
 }

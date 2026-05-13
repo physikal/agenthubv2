@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { writeFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { InstallConfig } from "./config.js";
@@ -102,14 +102,46 @@ export function restartService(
   );
 }
 
+/**
+ * Read COMPOSE_FILE from `.env` and return the colon-separated file list.
+ * Returns null if .env is missing or COMPOSE_FILE isn't set.
+ *
+ * Why: the installer writes COMPOSE_FILE=docker-compose.yml:traefik.
+ * override.yml when a TLS override is generated. If runCompose passes
+ * an explicit `-f docker-compose.yml` (and only that), docker compose
+ * IGNORES COMPOSE_FILE — so the override is never loaded and the self-
+ * CA / DNS-01 / public-alpn auxiliary services + labels never reach
+ * containers. Bug #9 in the post-PR-#62 audit.
+ */
+function readComposeFiles(envFile: string): string[] | null {
+  let text: string;
+  try {
+    text = readFileSync(envFile, "utf8");
+  } catch {
+    return null;
+  }
+  const m = text.match(/^COMPOSE_FILE=(.+)$/m);
+  if (!m || !m[1]) return null;
+  return m[1].split(":").filter((s) => s.length > 0);
+}
+
 function runCompose(
   subcommand: string[],
   opts: ComposeUpOptions,
 ): Promise<void> {
-  const files = [
-    "-f",
-    join(opts.composeDir, "docker-compose.yml"),
-  ];
+  // Honor COMPOSE_FILE from .env if set; fall back to base docker-compose.yml.
+  // Without this, the installer's own override is ignored by its own
+  // compose invocations.
+  const composeFiles = readComposeFiles(opts.envFile);
+  const files: string[] = [];
+  if (composeFiles) {
+    for (const f of composeFiles) {
+      const abs = f.startsWith("/") ? f : join(opts.composeDir, f);
+      files.push("-f", abs);
+    }
+  } else {
+    files.push("-f", join(opts.composeDir, "docker-compose.yml"));
+  }
 
   return new Promise((resolvePromise, reject) => {
     const proc = spawn(

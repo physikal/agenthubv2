@@ -1,6 +1,7 @@
 import {
   copyFileSync,
   existsSync,
+  mkdirSync,
   readFileSync,
   unlinkSync,
   writeFileSync,
@@ -9,6 +10,8 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { findComposeDir, restartService } from "./lib/compose.js";
 import { renderTraefikOverride } from "./lib/tls/render-override.js";
+import { renderTraefikConfig } from "./lib/tls/render-traefik-config.js";
+import { renderTraefikDynamicConfig } from "./lib/tls/render-dynamic-config.js";
 import { probeServingCert } from "./lib/tls/probe-cert.js";
 import { explainAcmeFailure } from "./headless.js";
 
@@ -71,6 +74,28 @@ export async function runReconfigure(
     onLog(`snapshot: ${overridePath} -> ${prevPath}`);
   }
 
+  // Always rewrite compose/traefik.yml — Traefik static config lives
+  // there now (per the 2026-05-12 redesign), not in env vars or
+  // command flags. Mounted via the base compose's --configfile.
+  const traefikYaml = renderTraefikConfig({
+    mode: cfg.mode,
+    domain: cfg.domain,
+    tlsEmail: cfg.tlsEmail,
+    dnsProvider: cfg.tlsDnsProvider,
+  });
+  writeFileSync(join(composeDir, "traefik.yml"), traefikYaml, { mode: 0o644 });
+  onLog(`wrote ${join(composeDir, "traefik.yml")} (mode: ${cfg.mode})`);
+
+  // Refresh the redirect dynamic config too (idempotent — same content
+  // every time, but ensures the file exists if the install predates
+  // the dynamic-config split).
+  const dynamicDir = join(composeDir, "dynamic");
+  if (!existsSync(dynamicDir)) mkdirSync(dynamicDir, { recursive: true, mode: 0o755 });
+  writeFileSync(join(dynamicDir, "redirect.yml"), renderTraefikDynamicConfig(), {
+    mode: 0o644,
+  });
+  onLog(`wrote ${join(dynamicDir, "redirect.yml")}`);
+
   // Render env-var values as ${VAR} placeholders so docker compose pulls
   // them from .env at run time (secrets stay in .env, mode 0600).
   const dnsEnvVars: Record<string, string> = {};
@@ -86,6 +111,8 @@ export async function runReconfigure(
     lanIp: cfg.lanIp,
   });
   if (!yaml) {
+    // public-alpn / dns-01 / self-ca all return non-null overrides.
+    // If we hit this, something upstream let an unexpected mode through.
     throw new Error("runReconfigure: render produced null — bug");
   }
   writeFileSync(overridePath, yaml, { mode: 0o644 });
