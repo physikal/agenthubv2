@@ -127,14 +127,16 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
         "self-ca TLS mode requires lanIp (host LAN IP for cert SAN).",
       );
     }
+    // Self-CA writes leaf cert files into the host's compose/dynamic/
+    // directory (bind mount). Traefik's base mount of ./dynamic:/etc/
+    // traefik/dynamic picks them up via the file provider. Init writes
+    // self-ca.yml alongside (a tls.certificates dynamic config). No
+    // Docker volume needed.
     return dumpYaml({
       services: {
         traefik: {
-          // Mount the cert volume; depends_on the init container so the
-          // cert files exist before Traefik starts. compose merges
-          // `volumes:` by APPEND, so this adds to the base compose's
-          // existing mounts rather than replacing them.
-          volumes: ["traefik-self-ca:/etc/traefik/dynamic:ro"],
+          // Just depends_on; the volume is already bind-mounted by the
+          // base compose. depends_on dict-merges with base.
           depends_on: {
             "traefik-self-ca-init": {
               condition: "service_completed_successfully",
@@ -150,7 +152,7 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
           },
           command: ["sh", "/init.sh"],
           volumes: [
-            "traefik-self-ca:/out",
+            "./dynamic:/out:rw",
             "../scripts/self-ca-init.sh:/init.sh:ro",
           ],
         },
@@ -168,7 +170,7 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
           },
           command: ["sh", "/renew.sh"],
           volumes: [
-            "traefik-self-ca:/out",
+            "./dynamic:/out:rw",
             "../scripts/self-ca-init.sh:/init.sh:ro",
             "../scripts/self-ca-renew.sh:/renew.sh:ro",
           ],
@@ -182,7 +184,11 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
             },
           },
           volumes: [
-            "traefik-self-ca:/usr/share/nginx/html/.well-known:ro",
+            // Reads ca.crt from the same dynamic dir Traefik reads from.
+            // Nginx config below only exposes `agenthub-ca.crt` via
+            // location =, so other files (leaf.key, redirect.yml) stay
+            // inaccessible via HTTP.
+            "./dynamic:/usr/share/nginx/html/.well-known:ro",
             "../compose/static/install-ca:/usr/share/nginx/html/install/ca:ro",
           ],
           configs: [
@@ -207,9 +213,6 @@ export function renderTraefikOverride(input: RenderOverrideInput): string | null
         "agenthub-static-nginx": {
           content: NGINX_CONF,
         },
-      },
-      volumes: {
-        "traefik-self-ca": {},
       },
     });
   }

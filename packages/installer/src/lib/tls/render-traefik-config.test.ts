@@ -3,7 +3,7 @@ import { load as parseYaml } from "js-yaml";
 import { renderTraefikConfig } from "./render-traefik-config.js";
 
 describe("renderTraefikConfig", () => {
-  it("none/localhost: emits base config without cert resolver or file provider", () => {
+  it("none/localhost: emits base config without cert resolver", () => {
     const yaml = renderTraefikConfig({
       mode: "none",
       domain: "localhost",
@@ -11,7 +11,6 @@ describe("renderTraefikConfig", () => {
     });
     const cfg = parseYaml(yaml) as Record<string, unknown>;
     expect(cfg["entryPoints"]).toBeDefined();
-    expect(cfg["providers"]).toEqual({ docker: { exposedByDefault: false } });
     expect(cfg["certificatesResolvers"]).toBeUndefined();
   });
 
@@ -21,8 +20,7 @@ describe("renderTraefikConfig", () => {
       domain: "agenthub.example.com",
       tlsEmail: "ops@example.com",
     });
-    expect(yaml).not.toBeNull();
-    const cfg = parseYaml(yaml!) as Record<string, unknown>;
+    const cfg = parseYaml(yaml) as Record<string, unknown>;
     expect(cfg["certificatesResolvers"]).toEqual({
       le: {
         acme: {
@@ -51,7 +49,7 @@ describe("renderTraefikConfig", () => {
       tlsEmail: "ops@example.com",
       dnsProvider: "cloudflare",
     });
-    const cfg = parseYaml(yaml!) as Record<string, unknown>;
+    const cfg = parseYaml(yaml) as Record<string, unknown>;
     expect(cfg["certificatesResolvers"]).toEqual({
       le: {
         acme: {
@@ -73,25 +71,27 @@ describe("renderTraefikConfig", () => {
     ).toThrow(/dnsProvider/);
   });
 
-  it("self-ca: adds file provider alongside docker provider", () => {
+  it("self-ca: file provider already enabled at the static-config level", () => {
     const yaml = renderTraefikConfig({
       mode: "self-ca",
       domain: "agenthub.example.com",
       tlsEmail: "",
     });
-    const cfg = parseYaml(yaml!) as Record<string, unknown>;
+    const cfg = parseYaml(yaml) as Record<string, unknown>;
     const providers = cfg["providers"] as Record<string, unknown>;
-    expect(providers["docker"]).toEqual({ exposedByDefault: false });
+    // file provider is enabled in EVERY mode (for the redirect dynamic
+    // config), so self-ca doesn't need to add it again.
     expect(providers["file"]).toEqual({
       directory: "/etc/traefik/dynamic",
       watch: true,
     });
-    // No cert resolvers — self-CA uses the file provider's leaf cert.
+    // No cert resolvers — self-CA uses the leaf cert from the file
+    // provider's tls.certificates instead.
     expect(cfg["certificatesResolvers"]).toBeUndefined();
   });
 
-  it("all modes include the redirect-to-https middleware", () => {
-    const modes = ["public-alpn", "dns-01", "self-ca"] as const;
+  it("all modes enable the file provider (for the redirect dynamic config)", () => {
+    const modes = ["none", "public-alpn", "dns-01", "self-ca"] as const;
     for (const mode of modes) {
       const yaml = renderTraefikConfig({
         mode,
@@ -99,11 +99,11 @@ describe("renderTraefikConfig", () => {
         tlsEmail: "ops@example.com",
         dnsProvider: "cloudflare",
       });
-      const cfg = parseYaml(yaml!) as Record<string, unknown>;
-      const http = cfg["http"] as Record<string, unknown>;
-      const middlewares = http["middlewares"] as Record<string, unknown>;
-      expect(middlewares["redirect-to-https"]).toEqual({
-        redirectScheme: { scheme: "https", permanent: true },
+      const cfg = parseYaml(yaml) as Record<string, unknown>;
+      const providers = cfg["providers"] as Record<string, unknown>;
+      expect(providers["file"]).toEqual({
+        directory: "/etc/traefik/dynamic",
+        watch: true,
       });
     }
   });
@@ -114,7 +114,7 @@ describe("renderTraefikConfig", () => {
       domain: "agenthub.example.com",
       tlsEmail: "",
     });
-    const cfg = parseYaml(yaml!) as Record<string, unknown>;
+    const cfg = parseYaml(yaml) as Record<string, unknown>;
     expect(cfg["entryPoints"]).toEqual({
       web: { address: ":80" },
       websecure: { address: ":443" },
@@ -122,13 +122,20 @@ describe("renderTraefikConfig", () => {
     });
   });
 
-  it("all modes disable the API dashboard", () => {
-    const yaml = renderTraefikConfig({
-      mode: "self-ca",
-      domain: "agenthub.example.com",
-      tlsEmail: "",
-    });
-    const cfg = parseYaml(yaml!) as Record<string, unknown>;
-    expect(cfg["api"]).toEqual({ dashboard: false });
+  it("never includes http: routers/middlewares/services (those are dynamic config)", () => {
+    const modes = ["none", "public-alpn", "dns-01", "self-ca"] as const;
+    for (const mode of modes) {
+      const yaml = renderTraefikConfig({
+        mode,
+        domain: "agenthub.example.com",
+        tlsEmail: "ops@example.com",
+        dnsProvider: "cloudflare",
+      });
+      const cfg = parseYaml(yaml) as Record<string, unknown>;
+      // Bug from the first redesign attempt: http: was being put in
+      // the static config and silently ignored at runtime. Guard
+      // against re-introducing the structure.
+      expect(cfg["http"]).toBeUndefined();
+    }
   });
 });

@@ -31,6 +31,9 @@ export interface RenderTraefikConfigInput {
  * accessible on plain HTTP (chicken-and-egg).
  */
 export function renderTraefikConfig(input: RenderTraefikConfigInput): string {
+  // Static config only. Routers / middlewares / services are dynamic
+  // config and live in compose/dynamic/redirect.yml (rendered separately
+  // by renderTraefikDynamicConfig), loaded via the file provider.
   const config: Record<string, unknown> = {
     log: { level: "INFO" },
     entryPoints: {
@@ -41,44 +44,10 @@ export function renderTraefikConfig(input: RenderTraefikConfigInput): string {
     api: { dashboard: false },
     providers: {
       docker: { exposedByDefault: false },
-    },
-    http: {
-      middlewares: {
-        "redirect-to-https": {
-          redirectScheme: { scheme: "https", permanent: true },
-        },
-      },
-      // Catch-all router on the web entrypoint that redirects HTTP →
-      // HTTPS via the middleware. Self-CA mode's `/install/ca` +
-      // `/.well-known/agenthub-ca.crt` routers (defined via the
-      // agenthub-static container's labels) have a HIGHER priority so
-      // they match first and serve plain HTTP — that's the only way
-      // a device can fetch the self-signed CA before trusting it.
-      // Bug #10 fix from the post-PR-#62 audit: previously the
-      // redirect was at entrypoint level (always-on, no per-router
-      // bypass), which made /install/ca unreachable.
-      routers: {
-        "redirect-all-to-https": {
-          rule: "HostRegexp(`.*`)",
-          entryPoints: ["web"],
-          middlewares: ["redirect-to-https"],
-          // Lower than the agenthub-static routers' default priority
-          // so they win when a request matches both.
-          priority: 1,
-          service: "redirect-stub",
-        },
-      },
-      // Stub service: the redirect middleware short-circuits with a
-      // 301 before the request ever reaches a backend. Traefik still
-      // requires a service to be declared on every router, so this
-      // points at a deliberately-unreachable address.
-      services: {
-        "redirect-stub": {
-          loadBalancer: {
-            servers: [{ url: "http://127.0.0.1:65535" }],
-          },
-        },
-      },
+      // File provider always enabled — points at the dynamic config
+      // directory that contains the http→https redirect router (all
+      // modes) and (self-ca only) the self-signed leaf cert config.
+      file: { directory: "/etc/traefik/dynamic", watch: true },
     },
   };
 
@@ -120,11 +89,10 @@ export function renderTraefikConfig(input: RenderTraefikConfigInput): string {
       },
     };
   } else if (input.mode === "self-ca") {
-    // Add file provider alongside docker provider. Both coexist.
-    (config["providers"] as Record<string, unknown>)["file"] = {
-      directory: "/etc/traefik/dynamic",
-      watch: true,
-    };
+    // File provider already enabled above for the redirect dynamic
+    // config; no extra static-config additions needed for self-CA.
+    // The leaf cert is added to the same dynamic dir by the init
+    // container (via tls.certificates in dynamic/self-ca.yml).
   } else if (input.mode === "none") {
     // localhost: just the base config, no cert resolver, no file provider.
     // Traefik will serve its built-in default cert as fallback for any

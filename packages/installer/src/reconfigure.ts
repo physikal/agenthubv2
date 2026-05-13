@@ -1,6 +1,7 @@
 import {
   copyFileSync,
   existsSync,
+  mkdirSync,
   readFileSync,
   unlinkSync,
   writeFileSync,
@@ -10,6 +11,7 @@ import { execFileSync } from "node:child_process";
 import { findComposeDir, restartService } from "./lib/compose.js";
 import { renderTraefikOverride } from "./lib/tls/render-override.js";
 import { renderTraefikConfig } from "./lib/tls/render-traefik-config.js";
+import { renderTraefikDynamicConfig } from "./lib/tls/render-dynamic-config.js";
 import { probeServingCert } from "./lib/tls/probe-cert.js";
 import { explainAcmeFailure } from "./headless.js";
 
@@ -83,6 +85,16 @@ export async function runReconfigure(
   });
   writeFileSync(join(composeDir, "traefik.yml"), traefikYaml, { mode: 0o644 });
   onLog(`wrote ${join(composeDir, "traefik.yml")} (mode: ${cfg.mode})`);
+
+  // Refresh the redirect dynamic config too (idempotent — same content
+  // every time, but ensures the file exists if the install predates
+  // the dynamic-config split).
+  const dynamicDir = join(composeDir, "dynamic");
+  if (!existsSync(dynamicDir)) mkdirSync(dynamicDir, { recursive: true, mode: 0o755 });
+  writeFileSync(join(dynamicDir, "redirect.yml"), renderTraefikDynamicConfig(), {
+    mode: 0o644,
+  });
+  onLog(`wrote ${join(dynamicDir, "redirect.yml")}`);
 
   // Render env-var values as ${VAR} placeholders so docker compose pulls
   // them from .env at run time (secrets stay in .env, mode 0600).

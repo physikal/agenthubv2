@@ -85,7 +85,7 @@ describe("renderTraefikOverride", () => {
     ).toThrow(/dnsProvider/);
   });
 
-  it("self-ca: emits init/renew/static services + traefik volume mount (no command, no env)", () => {
+  it("self-ca: emits init/renew/static services + traefik depends_on (no command, no env, no extra volume)", () => {
     const out = renderTraefikOverride({
       mode: "self-ca",
       domain: "agenthub.example.com",
@@ -97,16 +97,39 @@ describe("renderTraefikOverride", () => {
       command?: string[];
       environment?: Record<string, string>;
       volumes?: string[];
+      depends_on?: Record<string, unknown>;
     }>;
     expect(services).toHaveProperty("traefik-self-ca-init");
     expect(services).toHaveProperty("traefik-self-ca-renew");
     expect(services).toHaveProperty("agenthub-static");
-    // Traefik service: ONLY volumes + depends_on. No command, no env.
+    // Traefik service: ONLY depends_on. No command, no env, no volume
+    // (the dynamic-dir bind mount lives in the BASE compose now —
+    // adding it again in the override would double-mount).
     expect(services["traefik"]?.command).toBeUndefined();
     expect(services["traefik"]?.environment).toBeUndefined();
-    expect(services["traefik"]?.volumes).toEqual([
-      "traefik-self-ca:/etc/traefik/dynamic:ro",
-    ]);
+    expect(services["traefik"]?.volumes).toBeUndefined();
+    expect(services["traefik"]?.depends_on).toEqual({
+      "traefik-self-ca-init": {
+        condition: "service_completed_successfully",
+      },
+    });
+  });
+
+  it("self-ca: init container writes to host's compose/dynamic dir (bind mount, not Docker volume)", () => {
+    const out = renderTraefikOverride({
+      mode: "self-ca",
+      domain: "agenthub.example.com",
+      tlsEmail: "",
+      lanIp: "192.168.4.36",
+    });
+    const parsed = parseYaml(out!) as Record<string, unknown>;
+    const init = (parsed["services"] as Record<string, {
+      volumes: string[];
+    }>)["traefik-self-ca-init"];
+    expect(init?.volumes).toContain("./dynamic:/out:rw");
+    // No more `traefik-self-ca` named Docker volume — its purpose
+    // is filled by the bind mount.
+    expect(parsed["volumes"]).toBeUndefined();
   });
 
   it("self-ca: init container receives DOMAIN + LAN_IP env", () => {

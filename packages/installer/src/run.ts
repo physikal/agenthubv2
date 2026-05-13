@@ -1,4 +1,10 @@
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { randomPassword } from "./lib/secrets.js";
 import type { InstallConfig } from "./lib/config.js";
@@ -13,6 +19,7 @@ import {
 import { bootstrapInfisical } from "./lib/infisical-bootstrap.js";
 import { renderTraefikOverride } from "./lib/tls/render-override.js";
 import { renderTraefikConfig } from "./lib/tls/render-traefik-config.js";
+import { renderTraefikDynamicConfig } from "./lib/tls/render-dynamic-config.js";
 import { resolveTlsMode } from "./lib/tls/resolve-mode.js";
 
 export interface InstallArtifacts {
@@ -40,11 +47,14 @@ export async function runInstall(
   const envFile = writeEnvFile(final, composeDir);
   onLog(`wrote ${envFile}`);
 
-  // Generate compose/traefik.yml — the single source of truth for
-  // Traefik's static config, mounted via base compose's --configfile.
-  // Always emitted (even localhost) so the base compose's mount target
-  // exists.
+  // Generate compose/traefik.yml — Traefik's static config, mounted via
+  // base compose's --configfile. Always emitted.
   writeTraefikConfig(final, composeDir, onLog);
+
+  // Generate compose/dynamic/redirect.yml — Traefik's dynamic config
+  // (http → https redirect router + middleware + stub service).
+  // Loaded via the file provider. Always emitted, all modes.
+  writeTraefikDynamicConfig(composeDir, onLog);
 
   // Generate compose/traefik.override.yml — only the safely-mergeable
   // bits (cert-resolver labels, DNS provider env vars, self-CA aux
@@ -131,6 +141,22 @@ function writeTraefikConfig(
   const path = join(composeDir, "traefik.yml");
   writeFileSync(path, yaml, { mode: 0o644 });
   onLog(`wrote ${path} (mode: ${resolved})`);
+}
+
+function writeTraefikDynamicConfig(
+  composeDir: string,
+  onLog: (line: string) => void,
+): void {
+  const dynamicDir = join(composeDir, "dynamic");
+  if (!existsSync(dynamicDir)) {
+    // 0755 so Traefik (running as root in its container) can read; the
+    // self-CA init container also writes leaf.crt here in self-CA mode
+    // (mounted as :rw via the override).
+    mkdirSync(dynamicDir, { recursive: true, mode: 0o755 });
+  }
+  const path = join(dynamicDir, "redirect.yml");
+  writeFileSync(path, renderTraefikDynamicConfig(), { mode: 0o644 });
+  onLog(`wrote ${path}`);
 }
 
 function writeTraefikOverride(

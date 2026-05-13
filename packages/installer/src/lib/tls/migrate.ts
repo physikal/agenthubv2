@@ -1,6 +1,13 @@
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  unlinkSync,
+} from "node:fs";
 import { join } from "node:path";
 import { renderTraefikConfig } from "./render-traefik-config.js";
+import { renderTraefikDynamicConfig } from "./render-dynamic-config.js";
 import { renderTraefikOverride } from "./render-override.js";
 import { resolveTlsMode } from "./resolve-mode.js";
 import type { TlsMode } from "../config.js";
@@ -119,6 +126,13 @@ export function migrateTlsConfig(composeDir: string): MigrateResult {
     dnsProvider: env["AGENTHUB_TLS_DNS_PROVIDER"] ?? "",
   });
   writeFileSync(configPath, traefikYaml, { mode: 0o644 });
+
+  // Always render the redirect dynamic config in the dynamic dir.
+  const dynamicDir = join(composeDir, "dynamic");
+  if (!existsSync(dynamicDir)) mkdirSync(dynamicDir, { recursive: true, mode: 0o755 });
+  writeFileSync(join(dynamicDir, "redirect.yml"), renderTraefikDynamicConfig(), {
+    mode: 0o644,
+  });
 
   // Render the override (or remove a stale one for none/localhost).
   if (resolved === "none") {

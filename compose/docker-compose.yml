@@ -38,6 +38,10 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik-letsencrypt:/letsencrypt
       - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      # Dynamic config: redirect.yml (always) + self-ca.yml + leaf
+      # cert files (self-CA mode only — written by traefik-self-ca-init
+      # via a :rw mount in the override).
+      - ./dynamic:/etc/traefik/dynamic:ro
     networks:
       - agenthub
 
