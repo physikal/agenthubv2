@@ -150,18 +150,54 @@ describe("missingRequiredForHeadless", () => {
 });
 
 describe("renderEnv COMPOSE_FILE", () => {
-  it("omits COMPOSE_FILE for localhost installs", () => {
-    const cfg = { ...emptyConfig(), domain: "localhost" };
+  it("omits COMPOSE_FILE for lan mode installs", () => {
+    const cfg = { ...emptyConfig(), accessMode: "lan" as const, domain: "192.168.1.5" };
     const env = renderEnv(cfg);
     expect(env).not.toContain("COMPOSE_FILE=");
   });
 
-  it("sets COMPOSE_FILE for non-localhost installs", () => {
-    const cfg = { ...emptyConfig(), domain: "foo.com", tlsEmail: "x@y.com" };
+  it("omits COMPOSE_FILE for localhost (lan mode)", () => {
+    const cfg = { ...emptyConfig(), accessMode: "lan" as const, domain: "localhost" };
+    const env = renderEnv(cfg);
+    expect(env).not.toContain("COMPOSE_FILE=");
+  });
+
+  it("sets COMPOSE_FILE for public mode installs", () => {
+    const cfg = {
+      ...emptyConfig(),
+      accessMode: "public" as const,
+      domain: "foo.com",
+      tlsEmail: "x@y.com",
+    };
     const env = renderEnv(cfg);
     expect(env).toContain(
       "COMPOSE_FILE=docker-compose.yml:traefik.override.yml",
     );
+  });
+});
+
+describe("renderEnv ACCESS_MODE + PUBLIC_URL", () => {
+  it("lan mode: PUBLIC_URL is http; no COMPOSE_FILE override", () => {
+    const env = renderEnv({ ...emptyConfig(), accessMode: "lan", domain: "192.168.1.5" });
+    expect(env).toContain("AGENTHUB_ACCESS_MODE=lan");
+    expect(env).toContain("AGENTHUB_PUBLIC_URL=http://192.168.1.5");
+    expect(env).not.toContain("COMPOSE_FILE=");
+  });
+
+  it("public mode: PUBLIC_URL is https; COMPOSE_FILE includes override", () => {
+    const env = renderEnv({
+      ...emptyConfig(),
+      accessMode: "public",
+      domain: "agenthub.example.com",
+    });
+    expect(env).toContain("AGENTHUB_ACCESS_MODE=public");
+    expect(env).toContain("AGENTHUB_PUBLIC_URL=https://agenthub.example.com");
+    expect(env).toContain("COMPOSE_FILE=docker-compose.yml:traefik.override.yml");
+  });
+
+  it("localhost still maps to lan", () => {
+    const env = renderEnv({ ...emptyConfig(), accessMode: "lan", domain: "localhost" });
+    expect(env).toContain("AGENTHUB_PUBLIC_URL=http://localhost");
   });
 });
 
