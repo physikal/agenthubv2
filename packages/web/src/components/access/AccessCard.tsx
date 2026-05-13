@@ -49,8 +49,7 @@ export const AccessCard: React.FC = () => {
         {showModal && (
           <ReconfigureAccessModal
             initialDomain={tls.domain}
-            defaultLanIp=""
-            onClose={() => {
+              onClose={() => {
               setShowModal(false);
               void refresh();
             }}
@@ -128,7 +127,6 @@ export const AccessCard: React.FC = () => {
       {showModal && (
         <ReconfigureAccessModal
           initialDomain={tls.domain}
-          defaultLanIp=""
           onClose={() => {
             setShowModal(false);
             void refresh();

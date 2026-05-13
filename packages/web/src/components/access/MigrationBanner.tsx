@@ -39,7 +39,6 @@ export const MigrationBanner: React.FC = () => {
       {showModal && (
         <ReconfigureAccessModal
           initialDomain={domain}
-          defaultLanIp=""
           onClose={() => {
             setShowModal(false);
             void getHealth().then((h) => {

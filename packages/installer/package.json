@@ -5,7 +5,7 @@
   "type": "module",
   "bin": {
     "agenthub-install": "./bin/agenthub-install.js",
-    "agenthub-migrate-tls": "./dist/lib/tls/migrate-cli.js",
+    "agenthub-migrate-tls": "./dist/lib/access/migrate-cli.js",
     "agenthub-reconfigure-tls": "./dist/reconfigure-cli.js"
   },
   "main": "dist/index.js",

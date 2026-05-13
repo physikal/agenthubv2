@@ -24,7 +24,6 @@ interface State {
 
 export const ReconfigureAccessModal: React.FC<{
   initialDomain: string;
-  defaultLanIp: string;
   onClose: () => void;
 }> = ({ initialDomain, onClose }) => {
   const [step, setStep] = useState<Step>("access-mode");
