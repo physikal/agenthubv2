@@ -121,7 +121,7 @@ cmd_status() {
         fi
       else
         if [[ "$tls_resolver" == "default-fallback" ]]; then
-          printf '  %sWARN%s  serving Traefik default cert — run `agenthub reconfigure-tls`\n' "$c_yel" "$c_reset"
+          printf '  %sWARN%s  serving Traefik default cert — run `agenthub reconfigure-access`\n' "$c_yel" "$c_reset"
         else
           printf '  %sERROR%s %s (%sd)\n' "$c_red" "$c_reset" "$tls_resolver" "$tls_days"
         fi
@@ -488,9 +488,11 @@ Usage: agenthub <command> [args]
 
 Commands:
   update [--check]       Pull latest, rebuild, recreate. --check is a dry-run.
-  reconfigure-tls [...]  Change TLS strategy. Interactive by default;
-                         --non-interactive reads AGENTHUB_TLS_* env vars.
-                         Flags: --no-rollback, --regen-cert (self-ca only).
+  reconfigure-access [...] Change access mode (lan/public) and TLS strategy.
+                         Interactive by default; --non-interactive reads
+                         AGENTHUB_ACCESS_MODE + AGENTHUB_TLS_MODE env vars.
+                         Flag: --no-rollback.
+  reconfigure-tls [...]  Deprecated alias for reconfigure-access.
   status                 Git + compose service status.
   logs [service]         Tail compose logs (default: agenthub-server).
   restart [service...]   Restart services (default: all).
@@ -503,8 +505,17 @@ EOF
 
 case "${1:-}" in
   update)  shift; cmd_update "$@" ;;
+  reconfigure-access)
+    shift
+    cli="$AGENTHUB_DIR/packages/installer/dist/reconfigure-cli.js"
+    if [[ ! -f "$cli" ]]; then
+      die "reconfigure-access CLI not built; run 'pnpm -C $AGENTHUB_DIR/packages/installer build' first"
+    fi
+    exec node "$cli" "$@"
+    ;;
   reconfigure-tls)
     shift
+    warn "'agenthub reconfigure-tls' is deprecated; use 'agenthub reconfigure-access'"
     cli="$AGENTHUB_DIR/packages/installer/dist/reconfigure-cli.js"
     if [[ ! -f "$cli" ]]; then
       die "reconfigure-tls CLI not built; run 'pnpm -C $AGENTHUB_DIR/packages/installer build' first"

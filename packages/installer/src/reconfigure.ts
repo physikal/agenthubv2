@@ -7,33 +7,35 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { execFileSync } from "node:child_process";
 import { findComposeDir, restartService } from "./lib/compose.js";
-import { renderTraefikOverride } from "./lib/tls/render-override.js";
-import { renderTraefikConfig } from "./lib/tls/render-traefik-config.js";
-import { renderTraefikDynamicConfig } from "./lib/tls/render-dynamic-config.js";
+import {
+  renderTraefikStaticConfig,
+  renderTraefikOverride,
+  renderRedirectDynamic,
+} from "./lib/access/render-compose.js";
 import { probeServingCert } from "./lib/tls/probe-cert.js";
 import { explainAcmeFailure } from "./headless.js";
+import type { AccessMode, PublicTlsMode } from "./lib/access/types.js";
 
 export interface ReconfigureConfig {
-  mode: "public-alpn" | "dns-01" | "self-ca";
+  accessMode: AccessMode;
+  /** Required when accessMode === "public". */
+  publicTlsMode?: PublicTlsMode;
   domain: string;
   tlsEmail: string;
   tlsDnsProvider: string;
   tlsDnsEnvVars: Record<string, string>;
-  lanIp: string;
 }
 
 export interface ReconfigureOptions {
   /** Default false: on cert-validity failure, restore the prior override. */
   noRollback?: boolean;
-  /** Self-CA only: force regeneration of the leaf cert. */
-  regenCert?: boolean;
 }
 
 /**
- * Reconfigure TLS for an existing install. Atomic: snapshots prior override,
- * writes new one, restarts Traefik, validates cert, rolls back on failure.
+ * Reconfigure access mode for an existing install. Atomic: snapshots prior
+ * override, writes new configs, restarts Traefik, validates reachability
+ * (and cert for public mode), rolls back on failure.
  */
 export async function runReconfigure(
   cfg: ReconfigureConfig,
@@ -43,129 +45,159 @@ export async function runReconfigure(
   const composeDir = findComposeDir();
   const overridePath = join(composeDir, "traefik.override.yml");
   const prevPath = join(composeDir, "traefik.override.yml.prev");
-
-  // Self-CA + regen-cert: re-run the init container with REGEN=1, then
-  // restart Traefik to pick up the new leaf. Doesn't touch the override.
-  if (opts.regenCert && cfg.mode === "self-ca") {
-    onLog("regenerating self-CA leaf cert (REGEN=1)…");
-    execFileSync(
-      "docker",
-      [
-        "compose",
-        "-f",
-        join(composeDir, "docker-compose.yml"),
-        "-f",
-        overridePath,
-        "run",
-        "--rm",
-        "-e",
-        "REGEN=1",
-        "traefik-self-ca-init",
-      ],
-      { stdio: "inherit" },
-    );
-    onLog("leaf regenerated; restarting traefik to pick up new cert");
-    await restartService(composeDir, "traefik", onLog);
-    return;
-  }
+  const dynamicDir = join(composeDir, "dynamic");
+  const redirectPath = join(dynamicDir, "redirect.yml");
 
   if (existsSync(overridePath)) {
     copyFileSync(overridePath, prevPath);
     onLog(`snapshot: ${overridePath} -> ${prevPath}`);
   }
 
-  // Always rewrite compose/traefik.yml — Traefik static config lives
-  // there now (per the 2026-05-12 redesign), not in env vars or
-  // command flags. Mounted via the base compose's --configfile.
-  const traefikYaml = renderTraefikConfig({
-    mode: cfg.mode,
-    domain: cfg.domain,
-    tlsEmail: cfg.tlsEmail,
-    dnsProvider: cfg.tlsDnsProvider,
-  });
-  writeFileSync(join(composeDir, "traefik.yml"), traefikYaml, { mode: 0o644 });
-  onLog(`wrote ${join(composeDir, "traefik.yml")} (mode: ${cfg.mode})`);
-
-  // Refresh the redirect dynamic config too (idempotent — same content
-  // every time, but ensures the file exists if the install predates
-  // the dynamic-config split).
-  const dynamicDir = join(composeDir, "dynamic");
-  if (!existsSync(dynamicDir)) mkdirSync(dynamicDir, { recursive: true, mode: 0o755 });
-  writeFileSync(join(dynamicDir, "redirect.yml"), renderTraefikDynamicConfig(), {
-    mode: 0o644,
-  });
-  onLog(`wrote ${join(dynamicDir, "redirect.yml")}`);
-
-  // Render env-var values as ${VAR} placeholders so docker compose pulls
-  // them from .env at run time (secrets stay in .env, mode 0600).
-  const dnsEnvVars: Record<string, string> = {};
+  // Render and write Traefik's static config. This always gets rewritten so
+  // entrypoints + cert resolver reflect the new access mode.
+  const dnsEnvVarsPlaceholders: Record<string, string> = {};
   for (const name of Object.keys(cfg.tlsDnsEnvVars)) {
-    dnsEnvVars[name] = `\${${name}}`;
+    dnsEnvVarsPlaceholders[name] = `\${${name}}`;
   }
-  const yaml = renderTraefikOverride({
-    mode: cfg.mode,
-    domain: cfg.domain,
-    tlsEmail: cfg.tlsEmail,
-    dnsProvider: cfg.tlsDnsProvider,
-    dnsEnvVars,
-    lanIp: cfg.lanIp,
-  });
-  if (!yaml) {
-    // public-alpn / dns-01 / self-ca all return non-null overrides.
-    // If we hit this, something upstream let an unexpected mode through.
-    throw new Error("runReconfigure: render produced null — bug");
-  }
-  writeFileSync(overridePath, yaml, { mode: 0o644 });
-  onLog(`wrote new override (mode: ${cfg.mode})`);
 
-  // Always ensure COMPOSE_FILE references the override. localhost-origin
-  // installs never set this var at install time, so a localhost→real-domain
-  // reconfigure would otherwise leave compose ignoring the override file
-  // we just wrote, and Traefik would come up without the new TLS config.
-  const envUpdates: Record<string, string> = {
-    COMPOSE_FILE: "docker-compose.yml:traefik.override.yml",
-    ...cfg.tlsDnsEnvVars,
+  const renderInput: import("./lib/access/render-compose.js").RenderInput = {
+    accessMode: cfg.accessMode,
+    domain: cfg.domain,
+    publicTlsMode: cfg.publicTlsMode as PublicTlsMode | undefined,
+    tlsEmail: cfg.tlsEmail,
+    ...(cfg.tlsDnsProvider ? { dnsProvider: cfg.tlsDnsProvider } : {}),
+    dnsEnvVars: dnsEnvVarsPlaceholders,
   };
-  upsertEnvVars(composeDir, envUpdates);
-  onLog("updated .env (COMPOSE_FILE + DNS env vars if any)");
+
+  const traefikYaml = renderTraefikStaticConfig(renderInput);
+  writeFileSync(join(composeDir, "traefik.yml"), traefikYaml, { mode: 0o644 });
+  onLog(`wrote ${join(composeDir, "traefik.yml")} (access: ${cfg.accessMode})`);
+
+  // Render the override file. Null for lan mode — delete any existing one.
+  const overrideYaml = renderTraefikOverride(renderInput);
+  if (overrideYaml) {
+    writeFileSync(overridePath, overrideYaml, { mode: 0o644 });
+    onLog(`wrote new override (access: ${cfg.accessMode}, tls: ${cfg.publicTlsMode ?? "none"})`);
+  } else if (existsSync(overridePath)) {
+    unlinkSync(overridePath);
+    onLog(`removed ${overridePath} (lan mode — no override needed)`);
+  }
+
+  // Render redirect.yml. Null for lan — delete if present (no HTTPS endpoint).
+  const redirectYaml = renderRedirectDynamic({ accessMode: cfg.accessMode });
+  if (redirectYaml) {
+    if (!existsSync(dynamicDir)) mkdirSync(dynamicDir, { recursive: true, mode: 0o755 });
+    writeFileSync(redirectPath, redirectYaml, { mode: 0o644 });
+    onLog(`wrote ${redirectPath}`);
+  } else if (existsSync(redirectPath)) {
+    unlinkSync(redirectPath);
+    onLog(`removed ${redirectPath} (lan mode — no HTTPS redirect needed)`);
+  }
+
+  // Update .env: COMPOSE_FILE references the override only in public mode.
+  // Always update DNS env vars if provided.
+  const envUpdates: Record<string, string> = {};
+  if (cfg.accessMode === "public") {
+    envUpdates["COMPOSE_FILE"] = "docker-compose.yml:traefik.override.yml";
+  } else {
+    // LAN mode: remove override from COMPOSE_FILE if it was previously set.
+    const envPath = join(composeDir, ".env");
+    let envText = "";
+    try {
+      envText = readFileSync(envPath, "utf8");
+    } catch {
+      // Defensive — installs always have .env.
+    }
+    const hasOverrideInFile = /^COMPOSE_FILE=.*traefik\.override\.yml/m.test(envText);
+    if (hasOverrideInFile) {
+      envText = envText.replace(
+        /^COMPOSE_FILE=.*$/m,
+        "COMPOSE_FILE=docker-compose.yml",
+      );
+      writeFileSync(envPath, envText, { mode: 0o600 });
+      onLog("updated .env: removed override from COMPOSE_FILE (lan mode)");
+    }
+  }
+  if (Object.keys(cfg.tlsDnsEnvVars).length > 0) {
+    Object.assign(envUpdates, cfg.tlsDnsEnvVars);
+  }
+  if (Object.keys(envUpdates).length > 0) {
+    upsertEnvVars(composeDir, envUpdates);
+    onLog("updated .env (COMPOSE_FILE + DNS env vars if any)");
+  }
 
   onLog("restarting traefik…");
   await restartService(composeDir, "traefik", onLog);
 
-  onLog("verifying cert validity (up to 90s)…");
-  const deadline = Date.now() + (cfg.mode === "self-ca" ? 15_000 : 90_000);
-  let cert: ReturnType<typeof probeServingCert> | null = null;
-  let lastErr = "";
-  while (Date.now() < deadline) {
-    try {
-      cert = probeServingCert("127.0.0.1", 443, cfg.domain);
-      if (!cert.isTraefikDefault) break;
-      lastErr = "still serving Traefik default cert";
-    } catch (err) {
-      lastErr = err instanceof Error ? err.message : "probe failed";
+  // Probe — http for lan, https (cert check) for public.
+  if (cfg.accessMode === "lan") {
+    onLog("verifying lan reachability (up to 30s)…");
+    const deadline = Date.now() + 30_000;
+    let reachable = false;
+    let lastErr = "";
+    while (Date.now() < deadline) {
+      try {
+        const { execFileSync } = await import("node:child_process");
+        execFileSync("curl", ["-sf", "-m", "5", `http://${cfg.domain}/api/health`], {
+          stdio: "pipe",
+        });
+        reachable = true;
+        break;
+      } catch (err) {
+        lastErr = err instanceof Error ? err.message : "curl failed";
+      }
+      await new Promise((r) => setTimeout(r, 2_000));
     }
-    await new Promise((r) => setTimeout(r, 2_000));
-  }
+    if (!reachable) {
+      const reason = `LAN probe failed: ${lastErr}`;
+      if (!opts.noRollback && existsSync(prevPath)) {
+        onLog("reconfigure failed — rolling back");
+        copyFileSync(prevPath, overridePath);
+        unlinkSync(prevPath);
+        await restartService(composeDir, "traefik", onLog);
+        throw new Error(`Reconfigure failed and rolled back. Reason: ${reason}`);
+      }
+      throw new Error(reason);
+    }
+  } else {
+    onLog("verifying cert validity (up to 90s)…");
+    const deadline = Date.now() + 90_000;
+    let cert: ReturnType<typeof probeServingCert> | null = null;
+    let lastErr = "";
+    while (Date.now() < deadline) {
+      try {
+        cert = probeServingCert("127.0.0.1", 443, cfg.domain);
+        if (!cert.isTraefikDefault) break;
+        lastErr = "still serving Traefik default cert";
+      } catch (err) {
+        lastErr = err instanceof Error ? err.message : "probe failed";
+      }
+      await new Promise((r) => setTimeout(r, 2_000));
+    }
 
-  const failed = !cert || cert.isTraefikDefault;
-  if (failed) {
-    const reason = cert?.isTraefikDefault
-      ? `Traefik is serving its default self-signed cert. ${explainAcmeFailure(cfg.mode)}`
-      : `Cert probe failed: ${lastErr}`;
-    if (!opts.noRollback && existsSync(prevPath)) {
-      onLog("reconfigure failed — rolling back");
-      copyFileSync(prevPath, overridePath);
-      unlinkSync(prevPath);
-      await restartService(composeDir, "traefik", onLog);
-      throw new Error(`Reconfigure failed and rolled back. Reason: ${reason}`);
+    const failed = !cert || cert.isTraefikDefault;
+    if (failed) {
+      const reason = cert?.isTraefikDefault
+        ? `Traefik is serving its default self-signed cert. ${explainAcmeFailure(cfg.publicTlsMode ?? "public")}`
+        : `Cert probe failed: ${lastErr}`;
+      if (!opts.noRollback && existsSync(prevPath)) {
+        onLog("reconfigure failed — rolling back");
+        copyFileSync(prevPath, overridePath);
+        unlinkSync(prevPath);
+        await restartService(composeDir, "traefik", onLog);
+        throw new Error(`Reconfigure failed and rolled back. Reason: ${reason}`);
+      }
+      throw new Error(reason);
     }
-    throw new Error(reason);
+    onLog(
+      `reconfigure ok — issuer: ${cert!.issuerO ?? cert!.issuerCN}, expires ${cert!.notAfter.toISOString()}`,
+    );
   }
 
   if (existsSync(prevPath)) unlinkSync(prevPath);
-  onLog(
-    `reconfigure ok — issuer: ${cert!.issuerO ?? cert!.issuerCN}, expires ${cert!.notAfter.toISOString()}`,
-  );
+  if (cfg.accessMode === "lan") {
+    onLog("reconfigure ok — lan mode active");
+  }
 }
 
 export function upsertEnvVars(composeDir: string, vars: Record<string, string>): void {
