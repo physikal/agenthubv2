@@ -14,7 +14,9 @@ export interface ParsedCert {
  * the two forms openssl emits: `CN=foo` and `C=US, O=org, CN=foo`.
  */
 function pickField(dn: string, key: string): string | undefined {
-  const match = dn.match(new RegExp(`(?:^|,\\s*)${key}=([^,]+)`));
+  // openssl emits `CN = value` (with spaces) on RFC 2253 DN strings;
+  // some platforms / older releases emit `CN=value`. Tolerate both.
+  const match = dn.match(new RegExp(`(?:^|,\\s*)${key}\\s*=\\s*([^,]+)`));
   return match ? match[1]!.trim() : undefined;
 }
 

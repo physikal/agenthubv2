@@ -149,8 +149,10 @@ function parseOpenssl(stdout: string): ParsedTlsCert {
   if (!subject || !issuer || !nb || !na) {
     throw new Error("probe: missing required fields in openssl output");
   }
+  // openssl emits `CN = value` (with spaces) on RFC 2253 DN strings;
+  // some platforms / older releases emit `CN=value`. Tolerate both.
   const pickField = (dn: string, key: string): string | undefined =>
-    dn.match(new RegExp(`(?:^|,\\s*)${key}=([^,]+)`))?.[1]?.trim();
+    dn.match(new RegExp(`(?:^|,\\s*)${key}\\s*=\\s*([^,]+)`))?.[1]?.trim();
   const issuerO = pickField(issuer, "O");
   return {
     subjectCN: pickField(subject, "CN") ?? "",
