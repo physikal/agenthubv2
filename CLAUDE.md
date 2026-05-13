@@ -79,7 +79,7 @@ Self-CA mode is gone. `agenthub update` auto-migrates old installs: `self-ca` �
 **Where the code lives:**
 - `packages/installer/src/lib/access/` — types, resolve-mode, render-compose, migrate
 - `packages/installer/src/{reconfigure,reconfigure-cli,reconfigure-app}.{ts,tsx}` — reconfigure flow
-- `packages/server/src/services/access/{health,reconfigure}.ts` — health probe + reconfigure-via-updater-container
+- `packages/server/src/services/tls/{health,reconfigure}.ts` — health probe + reconfigure-via-updater-container (internal dir kept as `tls/`; public routes are `/api/admin/access/*`)
 - `packages/web/src/components/access/{AccessCard,MigrationBanner,ReconfigureAccessModal}.tsx` — UI
 
 **HSTS gotcha:** PR #74 disabled Hono's `secureHeaders()` HSTS emission. Browsers that visited the install pre-#74 on HTTPS may be HSTS-pinned for ~6 months and will refuse plain `http://` after migration to `lan` mode. Operator fix: Chrome `chrome://net-internals/#hsts` → Delete domain; Firefox "Forget About This Site".
