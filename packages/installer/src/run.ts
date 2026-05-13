@@ -12,6 +12,7 @@ import {
 } from "./lib/compose.js";
 import { bootstrapInfisical } from "./lib/infisical-bootstrap.js";
 import { renderTraefikOverride } from "./lib/tls/render-override.js";
+import { renderTraefikConfig } from "./lib/tls/render-traefik-config.js";
 import { resolveTlsMode } from "./lib/tls/resolve-mode.js";
 
 export interface InstallArtifacts {
@@ -39,10 +40,16 @@ export async function runInstall(
   const envFile = writeEnvFile(final, composeDir);
   onLog(`wrote ${envFile}`);
 
-  // Generate traefik.override.yml. For localhost installs this is a no-op
-  // (returns null) — the base compose runs without a cert resolver and
-  // serves its default cert, which is the right behavior for local-only.
-  await writeTraefikOverride(final, composeDir, onLog);
+  // Generate compose/traefik.yml — the single source of truth for
+  // Traefik's static config, mounted via base compose's --configfile.
+  // Always emitted (even localhost) so the base compose's mount target
+  // exists.
+  writeTraefikConfig(final, composeDir, onLog);
+
+  // Generate compose/traefik.override.yml — only the safely-mergeable
+  // bits (cert-resolver labels, DNS provider env vars, self-CA aux
+  // services). Localhost: no override file written (returns null).
+  writeTraefikOverride(final, composeDir, onLog);
 
   onLog("pulling images…");
   await composePull({ composeDir, envFile, onLine: onLog });
@@ -109,11 +116,28 @@ export async function runInstallSimple(
   return res.url;
 }
 
-async function writeTraefikOverride(
+function writeTraefikConfig(
   cfg: InstallConfig,
   composeDir: string,
   onLog: (line: string) => void,
-): Promise<void> {
+): void {
+  const resolved = resolveTlsMode(cfg.tlsMode, cfg.domain, process.env);
+  const yaml = renderTraefikConfig({
+    mode: resolved,
+    domain: cfg.domain,
+    tlsEmail: cfg.tlsEmail,
+    dnsProvider: cfg.tlsDnsProvider,
+  });
+  const path = join(composeDir, "traefik.yml");
+  writeFileSync(path, yaml, { mode: 0o644 });
+  onLog(`wrote ${path} (mode: ${resolved})`);
+}
+
+function writeTraefikOverride(
+  cfg: InstallConfig,
+  composeDir: string,
+  onLog: (line: string) => void,
+): void {
   const resolved = resolveTlsMode(cfg.tlsMode, cfg.domain, process.env);
   const overridePath = join(composeDir, "traefik.override.yml");
   if (resolved === "none") {

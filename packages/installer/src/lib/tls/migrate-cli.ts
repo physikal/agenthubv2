@@ -13,14 +13,23 @@ function main(): void {
   }
   try {
     const r = migrateTlsConfig(composeDir);
-    if (r.action === "migrated") {
-      console.log(
-        `[migrate-tls] generated ${r.overridePath} (mode: ${r.inferredMode})`,
-      );
-    } else if (r.action === "noop-already-migrated") {
-      console.log("[migrate-tls] already migrated, no changes");
-    } else if (r.action === "noop-localhost") {
-      console.log("[migrate-tls] localhost install, no override needed");
+    switch (r.action) {
+      case "migrated-new-shape":
+        console.log(
+          `[migrate-tls] generated ${r.configPath ?? "traefik.yml"}` +
+            (r.overridePath ? ` + ${r.overridePath}` : "") +
+            ` (mode: ${r.inferredMode ?? "unknown"})`,
+        );
+        break;
+      case "migrated-from-old-shape":
+        console.log(
+          `[migrate-tls] migrated old-shape override → static config` +
+            ` (mode: ${r.inferredMode ?? "unknown"})`,
+        );
+        break;
+      case "noop-already-migrated":
+        console.log("[migrate-tls] already migrated, no changes");
+        break;
     }
   } catch (err) {
     console.error(

@@ -13,7 +13,7 @@ describe("renderTraefikOverride", () => {
     ).toBeNull();
   });
 
-  it("renders public-alpn TLS flags via TRAEFIK_* env vars (so the override merges with the base command)", () => {
+  it("public-alpn: only adds the cert-resolver label on agenthub-server (no traefik command/env)", () => {
     const out = renderTraefikOverride({
       mode: "public-alpn",
       domain: "agenthub.example.com",
@@ -21,39 +21,20 @@ describe("renderTraefikOverride", () => {
     });
     expect(out).not.toBeNull();
     const parsed = parseYaml(out!) as Record<string, unknown>;
-    const traefik = (parsed["services"] as Record<
-      string,
-      { command?: string[]; environment?: Record<string, string> }
-    >)["traefik"];
-    expect(traefik).toBeDefined();
-    // Bug #1 regression guard: must NOT emit a `command:` array (compose
-    // merge would replace the base Traefik command and lose providers/
-    // entrypoints/redirect).
-    expect(traefik!.command).toBeUndefined();
-    expect(traefik!.environment).toEqual({
-      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_TLSCHALLENGE: "true",
-      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_EMAIL: "ops@example.com",
-      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_STORAGE: "/letsencrypt/acme.json",
-    });
-  });
-
-  it("attaches cert resolver to the agenthub router via labels", () => {
-    const out = renderTraefikOverride({
-      mode: "public-alpn",
-      domain: "agenthub.example.com",
-      tlsEmail: "ops@example.com",
-    });
-    const parsed = parseYaml(out!) as Record<string, unknown>;
-    const server = (parsed["services"] as Record<string, { labels: string[] }>)[
-      "agenthub-server"
-    ];
-    expect(server).toBeDefined();
-    expect(server!.labels).toContain(
+    const services = parsed["services"] as Record<string, {
+      command?: string[];
+      environment?: Record<string, string>;
+      labels?: string[];
+    }>;
+    // Bug #1 regression guard: NEVER emit traefik.command (would clobber
+    // the base via list-replace merge).
+    expect(services["traefik"]).toBeUndefined();
+    expect(services["agenthub-server"]?.labels).toEqual([
       "traefik.http.routers.agenthub.tls.certresolver=le",
-    );
+    ]);
   });
 
-  it("throws when public-alpn is requested without an email", () => {
+  it("public-alpn: throws when tlsEmail is empty", () => {
     expect(() =>
       renderTraefikOverride({
         mode: "public-alpn",
@@ -62,10 +43,8 @@ describe("renderTraefikOverride", () => {
       }),
     ).toThrow(/AGENTHUB_TLS_EMAIL/);
   });
-});
 
-describe("renderTraefikOverride dns-01", () => {
-  it("renders Cloudflare DNS-01 with TRAEFIK_* flags + provider token in one env block", () => {
+  it("dns-01: adds DNS provider env vars to traefik service + cert-resolver label (no command, no TRAEFIK_*)", () => {
     const out = renderTraefikOverride({
       mode: "dns-01",
       domain: "agenthub.example.com",
@@ -74,49 +53,27 @@ describe("renderTraefikOverride dns-01", () => {
       dnsEnvVars: { CF_DNS_API_TOKEN: "${CF_DNS_API_TOKEN}" },
     });
     const parsed = parseYaml(out!) as Record<string, unknown>;
-    const traefik = (parsed["services"] as Record<string, {
+    const services = parsed["services"] as Record<string, {
       command?: string[];
-      environment: Record<string, string>;
-    }>)["traefik"];
-    expect(traefik).toBeDefined();
-    expect(traefik!.command).toBeUndefined();
-    expect(traefik!.environment).toMatchObject({
-      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_DNSCHALLENGE: "true",
-      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_DNSCHALLENGE_PROVIDER: "cloudflare",
-      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_EMAIL: "ops@example.com",
-      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_STORAGE: "/letsencrypt/acme.json",
+      environment?: Record<string, string>;
+      labels?: string[];
+    }>;
+    // Regression guard: no command, no TRAEFIK_* env vars (those go into
+    // compose/traefik.yml via renderTraefikConfig now).
+    expect(services["traefik"]?.command).toBeUndefined();
+    expect(services["traefik"]?.environment).toEqual({
       CF_DNS_API_TOKEN: "${CF_DNS_API_TOKEN}",
     });
-  });
-
-  it("renders Route53 DNS-01 with all three lego env vars passed through", () => {
-    const out = renderTraefikOverride({
-      mode: "dns-01",
-      domain: "agenthub.example.com",
-      tlsEmail: "ops@example.com",
-      dnsProvider: "route53",
-      dnsEnvVars: {
-        AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID}",
-        AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY}",
-        AWS_REGION: "${AWS_REGION}",
-      },
-    });
-    const parsed = parseYaml(out!) as Record<string, unknown>;
-    const traefik = (parsed["services"] as Record<string, {
-      environment: Record<string, string>;
-    }>)["traefik"];
-    expect(traefik).toBeDefined();
-    expect(Object.keys(traefik!.environment)).toEqual(
-      expect.arrayContaining([
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_REGION",
-        "TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_DNSCHALLENGE_PROVIDER",
-      ]),
+    // No TRAEFIK_*-prefixed keys leaking back in.
+    for (const k of Object.keys(services["traefik"]?.environment ?? {})) {
+      expect(k.startsWith("TRAEFIK_")).toBe(false);
+    }
+    expect(services["agenthub-server"]?.labels).toContain(
+      "traefik.http.routers.agenthub.tls.certresolver=le",
     );
   });
 
-  it("throws when dns-01 has no provider", () => {
+  it("dns-01: throws when dnsProvider is missing", () => {
     expect(() =>
       renderTraefikOverride({
         mode: "dns-01",
@@ -127,32 +84,32 @@ describe("renderTraefikOverride dns-01", () => {
       }),
     ).toThrow(/dnsProvider/);
   });
-});
 
-describe("renderTraefikOverride self-ca", () => {
-  it("renders init container + renew sidecar + static nginx", () => {
+  it("self-ca: emits init/renew/static services + traefik volume mount (no command, no env)", () => {
     const out = renderTraefikOverride({
       mode: "self-ca",
-      domain: "agenthub.physhlab.com",
+      domain: "agenthub.example.com",
       tlsEmail: "",
       lanIp: "192.168.4.36",
     });
     const parsed = parseYaml(out!) as Record<string, unknown>;
-    const services = parsed["services"] as Record<string, unknown>;
+    const services = parsed["services"] as Record<string, {
+      command?: string[];
+      environment?: Record<string, string>;
+      volumes?: string[];
+    }>;
     expect(services).toHaveProperty("traefik-self-ca-init");
     expect(services).toHaveProperty("traefik-self-ca-renew");
     expect(services).toHaveProperty("agenthub-static");
-    const traefik = services["traefik"] as {
-      command?: string[];
-      environment: Record<string, string>;
-    };
-    expect(traefik.command).toBeUndefined();
-    expect(traefik.environment).toMatchObject({
-      TRAEFIK_PROVIDERS_FILE_DIRECTORY: "/etc/traefik/dynamic",
-    });
+    // Traefik service: ONLY volumes + depends_on. No command, no env.
+    expect(services["traefik"]?.command).toBeUndefined();
+    expect(services["traefik"]?.environment).toBeUndefined();
+    expect(services["traefik"]?.volumes).toEqual([
+      "traefik-self-ca:/etc/traefik/dynamic:ro",
+    ]);
   });
 
-  it("init container receives DOMAIN + LAN_IP env", () => {
+  it("self-ca: init container receives DOMAIN + LAN_IP env", () => {
     const out = renderTraefikOverride({
       mode: "self-ca",
       domain: "agenthub.physhlab.com",
@@ -168,7 +125,7 @@ describe("renderTraefikOverride self-ca", () => {
     expect(init!.environment["LAN_IP"]).toBe("192.168.4.36,10.0.0.1");
   });
 
-  it("nginx sidecar exposes /.well-known/agenthub-ca.crt and /install/ca on web entrypoint", () => {
+  it("self-ca: nginx static service exposes /.well-known/agenthub-ca.crt and /install/ca on web entrypoint", () => {
     const out = renderTraefikOverride({
       mode: "self-ca",
       domain: "agenthub.physhlab.com",
@@ -184,7 +141,7 @@ describe("renderTraefikOverride self-ca", () => {
     expect(labels.some((l) => l.includes("install-ca"))).toBe(true);
   });
 
-  it("throws when self-ca has no lanIp", () => {
+  it("self-ca: throws when lanIp is empty", () => {
     expect(() =>
       renderTraefikOverride({
         mode: "self-ca",

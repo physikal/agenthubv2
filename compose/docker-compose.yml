@@ -20,23 +20,16 @@ services:
   traefik:
     image: traefik:v3.6
     restart: unless-stopped
+    # All Traefik static config (entrypoints, providers, cert resolvers,
+    # middlewares) lives in compose/traefik.yml — generated per-install
+    # by the installer based on the chosen TLS mode. See
+    # docs/superpowers/specs/2026-05-12-tls-static-config-redesign.md for
+    # why this is a single config file and not a compose override:
+    # docker-compose's `command:` merge REPLACES list-typed fields, and
+    # Traefik's static-config precedence (file > CLI > env vars) means
+    # env-var workarounds also don't survive once CLI flags are present.
     command:
-      - --api.dashboard=false
-      - --providers.docker=true
-      - --providers.docker.exposedbydefault=false
-      - --entrypoints.web.address=:80
-      - --entrypoints.websecure.address=:443
-      # Dedicated entrypoint for the Infisical admin console. Putting it on
-      # a second port (instead of secrets.${DOMAIN}) means DOMAIN=localhost
-      # users reach it at https://<host>:8443/ without a /etc/hosts entry
-      # for the subdomain. Same cert, same TLS termination, no extra DNS.
-      - --entrypoints.infisical.address=:8443
-      - --entrypoints.web.http.redirections.entrypoint.to=websecure
-      - --entrypoints.web.http.redirections.entrypoint.scheme=https
-      # Cert-resolver flags live in compose/traefik.override.yml — generated
-      # by the installer based on the chosen TLS mode (public-alpn / dns-01 /
-      # self-ca). Localhost installs run without a cert resolver and rely on
-      # Traefik's built-in default cert.
+      - --configfile=/etc/traefik/traefik.yml
     ports:
       - "80:80"
       - "443:443"
@@ -44,6 +37,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik-letsencrypt:/letsencrypt
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
     networks:
       - agenthub
 
