@@ -14,13 +14,13 @@ describe("upsertEnvVars", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  it("adds COMPOSE_FILE when .env doesn't have it (localhost-origin install)", () => {
-    writeFileSync(join(tmp, ".env"), "DOMAIN=agenthub-test.lan\nTLS_EMAIL=\n");
+  it("adds COMPOSE_FILE when .env doesn't have it (public mode reconfigure)", () => {
+    writeFileSync(join(tmp, ".env"), "DOMAIN=agenthub-test.example.com\nTLS_EMAIL=\n");
     upsertEnvVars(tmp, {
       COMPOSE_FILE: "docker-compose.yml:traefik.override.yml",
     });
     const text = readFileSync(join(tmp, ".env"), "utf8");
-    expect(text).toContain("DOMAIN=agenthub-test.lan");
+    expect(text).toContain("DOMAIN=agenthub-test.example.com");
     expect(text).toContain(
       "COMPOSE_FILE=docker-compose.yml:traefik.override.yml",
     );
@@ -42,7 +42,7 @@ describe("upsertEnvVars", () => {
     );
   });
 
-  it("merges DNS env vars alongside COMPOSE_FILE", () => {
+  it("merges DNS env vars alongside COMPOSE_FILE (public + dns-01 reconfigure)", () => {
     writeFileSync(join(tmp, ".env"), "DOMAIN=foo.com\n");
     upsertEnvVars(tmp, {
       COMPOSE_FILE: "docker-compose.yml:traefik.override.yml",

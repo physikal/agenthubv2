@@ -113,7 +113,9 @@ cmd_status() {
       tls_resolver="$(grep -oE '"resolver":"[^"]+"' <<<"$tls_json" | head -1 | cut -d'"' -f4)"
       tls_days="$(grep -oE '"daysToExpiry":-?[0-9]+' <<<"$tls_json" | head -1 | cut -d: -f2)"
       printf '\n%sTLS%s\n' "$c_bold" "$c_reset"
-      if [[ "$tls_ok" == "true" ]]; then
+      if [[ "$tls_resolver" == "lan" ]]; then
+        printf '  %sok%s    Access: LAN (http://%s)\n' "$c_grn" "$c_reset" "$domain"
+      elif [[ "$tls_ok" == "true" ]]; then
         if [[ "${tls_days:-100}" -lt 14 ]]; then
           printf '  %sWARN%s  %s — %sd remaining (expiring soon)\n' "$c_yel" "$c_reset" "$tls_resolver" "$tls_days"
         else
@@ -121,7 +123,7 @@ cmd_status() {
         fi
       else
         if [[ "$tls_resolver" == "default-fallback" ]]; then
-          printf '  %sWARN%s  serving Traefik default cert — run `agenthub reconfigure-tls`\n' "$c_yel" "$c_reset"
+          printf '  %sWARN%s  serving Traefik default cert — run `agenthub reconfigure-access`\n' "$c_yel" "$c_reset"
         else
           printf '  %sERROR%s %s (%sd)\n' "$c_red" "$c_reset" "$tls_resolver" "$tls_days"
         fi
@@ -322,15 +324,15 @@ migrate_env() {
     echo "AGENTHUB_REPO_DIR=$AGENTHUB_DIR" >> "$ENV_FILE"
   fi
 
-  # TLS Plan 1: pre-Plan-1 installs have no compose/traefik.override.yml.
-  # The migrate-tls CLI generates one based on existing DOMAIN + TLS_EMAIL
-  # so Traefik restarts pick up the right cert resolver. Idempotent.
-  local migrate_cli="$AGENTHUB_DIR/packages/installer/dist/lib/tls/migrate-cli.js"
+  # LAN-first TLS: migrate legacy AGENTHUB_TLS_MODE to the new
+  # AGENTHUB_ACCESS_MODE shape. The migrate-access CLI rewrites .env and
+  # cleans up old override artifacts. Idempotent.
+  local migrate_cli="$AGENTHUB_DIR/packages/installer/dist/lib/access/migrate-cli.js"
   if [[ -f "$migrate_cli" ]]; then
     node "$migrate_cli" "$AGENTHUB_DIR/compose" \
       || die "TLS migration failed — refusing to upgrade Traefik"
   else
-    warn "migrate-cli.js not built yet; skipping TLS migration (run 'pnpm -C packages/installer build' if you expected this)"
+    warn "skipping access migration (run 'pnpm -C packages/installer build' if you expected this)"
   fi
 }
 
@@ -618,9 +620,11 @@ Commands:
   restore-install        Restore a bundle (runs in a temp container).
                          Flags: --from <path|b2://...>, --snapshot <latest|ts>,
                          --force, --dry-run
-  reconfigure-tls [...]  Change TLS strategy. Interactive by default;
-                         --non-interactive reads AGENTHUB_TLS_* env vars.
-                         Flags: --no-rollback, --regen-cert (self-ca only).
+  reconfigure-access [...] Change access mode (lan/public) and TLS strategy.
+                         Interactive by default; --non-interactive reads
+                         AGENTHUB_ACCESS_MODE + AGENTHUB_TLS_MODE env vars.
+                         Flag: --no-rollback.
+  reconfigure-tls [...]  Deprecated alias for reconfigure-access.
   status                 Git + compose service status.
   logs [service]         Tail compose logs (default: agenthub-server).
   restart [service...]   Restart services (default: all).
@@ -635,8 +639,17 @@ case "${1:-}" in
   update)          shift; cmd_update "$@" ;;
   backup-install)  shift; cmd_backup_install "$@" ;;
   restore-install) shift; cmd_restore_install "$@" ;;
+  reconfigure-access)
+    shift
+    cli="$AGENTHUB_DIR/packages/installer/dist/reconfigure-cli.js"
+    if [[ ! -f "$cli" ]]; then
+      die "reconfigure-access CLI not built; run 'pnpm -C $AGENTHUB_DIR/packages/installer build' first"
+    fi
+    exec node "$cli" "$@"
+    ;;
   reconfigure-tls)
     shift
+    warn "'agenthub reconfigure-tls' is deprecated; use 'agenthub reconfigure-access'"
     cli="$AGENTHUB_DIR/packages/installer/dist/reconfigure-cli.js"
     if [[ ! -f "$cli" ]]; then
       die "reconfigure-tls CLI not built; run 'pnpm -C $AGENTHUB_DIR/packages/installer build' first"

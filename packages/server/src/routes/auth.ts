@@ -6,6 +6,9 @@ import { compareSync, hashSync } from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import { authMiddleware, type AuthUser } from "../middleware/auth.js";
+import { cookieSecureFromPublicUrl } from "./auth-cookie.js";
+
+export { cookieSecureFromPublicUrl };
 
 /**
  * Get the real client IP for rate limiting. Trusting `X-Forwarded-For` from
@@ -102,7 +105,7 @@ export function authRoutes() {
 
     setCookie(c, "session_token", token, {
       httpOnly: true,
-      secure: process.env["NODE_ENV"] === "production",
+      secure: cookieSecureFromPublicUrl(),
       sameSite: "Lax",
       path: "/",
       maxAge: TOKEN_TTL_MS / 1000,

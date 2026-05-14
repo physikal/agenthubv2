@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api.ts";
 import { useAuthStore } from "../stores/auth.ts";
-import { TlsCard } from "../components/tls/TlsCard.js";
+import { AccessCard } from "../components/access/AccessCard.js";
 import {
   PHASE_RANK,
   UpdateProgressModal,
@@ -79,9 +79,9 @@ export function Settings() {
       <div className="max-w-md space-y-8">
         <section>
           <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider mb-4">
-            TLS
+            Access
           </h3>
-          <TlsCard />
+          <AccessCard />
         </section>
 
         <section>

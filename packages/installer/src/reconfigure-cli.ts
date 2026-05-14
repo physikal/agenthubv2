@@ -1,51 +1,57 @@
 #!/usr/bin/env node
 /**
- * `agenthub reconfigure-tls` CLI entry. Two modes:
- *   - interactive: launches the reduced TUI (reconfigure-app.tsx)
- *   - --non-interactive: reads env vars (same names as install) and runs
- *     runReconfigure directly
+ * `agenthub reconfigure-access` CLI entry. Two modes:
+ *   - interactive: launches the TUI (reconfigure-app.tsx)
+ *   - --non-interactive: reads env vars and runs runReconfigure directly
  *
  * Flags:
  *   --non-interactive       headless mode
  *   --no-rollback           don't restore prior override on probe failure
- *   --regen-cert            self-ca only: force leaf regeneration
+ *
+ * Non-interactive env vars:
+ *   AGENTHUB_ACCESS_MODE    "lan" | "public"  (required)
+ *   AGENTHUB_TLS_MODE       "public-alpn" | "dns-01"  (required when access=public)
+ *   AGENTHUB_TLS_EMAIL      email for Let's Encrypt  (required when access=public)
+ *   AGENTHUB_TLS_DNS_PROVIDER  lego provider name (required when tls=dns-01)
+ *   CF_DNS_API_TOKEN / AGENTHUB_CLOUDFLARE_API_TOKEN  (for cloudflare dns-01)
  */
 import { applyEnvOverrides, emptyConfig } from "./lib/config.js";
-import { resolveTlsMode } from "./lib/tls/resolve-mode.js";
+import { resolveAccessMode, resolvePublicTlsMode } from "./lib/access/resolve-mode.js";
 import { runReconfigure } from "./reconfigure.js";
 
 const args = process.argv.slice(2);
 const nonInteractive = args.includes("--non-interactive");
 const noRollback = args.includes("--no-rollback");
-const regenCert = args.includes("--regen-cert");
 
 async function runHeadless(): Promise<void> {
   const cfg = applyEnvOverrides(emptyConfig());
-  const resolved = resolveTlsMode(cfg.tlsMode, cfg.domain, process.env);
-  if (resolved === "none") {
+  const resolvedAccessMode = resolveAccessMode(cfg.accessMode, cfg.domain, process.env);
+
+  if (resolvedAccessMode === "lan" && cfg.domain === "localhost") {
     console.error(
-      "reconfigure-tls: localhost installs have no override to reconfigure. " +
-        "Change AGENTHUB_DOMAIN to a real hostname and set AGENTHUB_TLS_MODE.",
+      "reconfigure-access: localhost installs use lan mode by default. " +
+        "Change AGENTHUB_DOMAIN to a real hostname to reconfigure.",
     );
     process.exit(2);
   }
-  if (resolved === "self-ca" && !cfg.lanIp) {
-    const { detectLanIp } = await import("./lib/tls/lan-ip.js");
-    cfg.lanIp = detectLanIp();
-    console.log(`auto-detected LAN IP: ${cfg.lanIp}`);
-  }
+
+  const publicTlsMode =
+    resolvedAccessMode === "public"
+      ? resolvePublicTlsMode(cfg.tlsMode, process.env)
+      : undefined;
+
   try {
     await runReconfigure(
       {
-        mode: resolved,
+        accessMode: resolvedAccessMode,
+        ...(publicTlsMode !== undefined ? { publicTlsMode } : {}),
         domain: cfg.domain,
         tlsEmail: cfg.tlsEmail,
         tlsDnsProvider: cfg.tlsDnsProvider,
         tlsDnsEnvVars: cfg.tlsDnsEnvVars,
-        lanIp: cfg.lanIp,
       },
       (line) => console.log(line),
-      { noRollback, regenCert },
+      { noRollback },
     );
     console.log("reconfigure ok");
   } catch (err) {
@@ -56,7 +62,7 @@ async function runHeadless(): Promise<void> {
 
 async function runInteractive(): Promise<void> {
   const { default: launchReconfigureApp } = await import("./reconfigure-app.js");
-  await launchReconfigureApp({ noRollback, regenCert });
+  await launchReconfigureApp({ noRollback });
 }
 
 if (nonInteractive) {

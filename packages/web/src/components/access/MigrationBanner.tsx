@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { getHealth } from "../../lib/api.js";
-import { ReconfigureTlsModal } from "./ReconfigureTlsModal.js";
+import { ReconfigureAccessModal } from "./ReconfigureAccessModal.js";
 
 const DISMISS_KEY = "agenthub:tls-migration-banner-dismissed-v1";
 
@@ -31,15 +31,14 @@ export const MigrationBanner: React.FC = () => {
     <div className="migration-banner">
       <span>
         ⚠ TLS misconfigured — your site is serving Traefik's default
-        self-signed cert.
+        self-signed cert. Run <code>agenthub reconfigure-access</code> to fix.
       </span>
       <button onClick={() => setShowModal(true)}>Fix now</button>
       <button onClick={dismiss}>Dismiss</button>
 
       {showModal && (
-        <ReconfigureTlsModal
+        <ReconfigureAccessModal
           initialDomain={domain}
-          defaultLanIp=""
           onClose={() => {
             setShowModal(false);
             void getHealth().then((h) => {

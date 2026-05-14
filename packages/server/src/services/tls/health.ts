@@ -16,11 +16,12 @@ export interface TlsHealth {
     | "dns-01"
     | "self-ca"
     | "default-fallback"
+    | "lan"
     | "unknown";
   issuer: string;
   notBefore: string;
   notAfter: string;
-  daysToExpiry: number;
+  daysToExpiry: number | null;
   warnings: string[];
 }
 

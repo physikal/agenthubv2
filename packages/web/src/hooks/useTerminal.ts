@@ -14,6 +14,9 @@ export function useTerminal(options: UseTerminalOptions) {
   const fitRef = useRef<FitAddon | null>(null);
   const mountedRef = useRef(false);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const userClosedRef = useRef(false);
 
   const attach = useCallback(
     (el: HTMLDivElement | null) => {
@@ -51,65 +54,81 @@ export function useTerminal(options: UseTerminalOptions) {
       setTimeout(() => fit.fit(), 200);
       setTimeout(() => fit.fit(), 500);
 
-      // Connect to ttyd via portal proxy (binary WebSocket)
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/ws/sessions/${options.sessionId}/terminal`;
-      const ws = new WebSocket(wsUrl);
-      ws.binaryType = "arraybuffer";
-      wsRef.current = ws;
+      const connect = (): void => {
+        if (userClosedRef.current) return;
 
-      ws.addEventListener("open", () => {
-        fit.fit();
-        term.focus();
-      });
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const wsUrl = `${protocol}//${window.location.host}/ws/sessions/${options.sessionId}/terminal`;
+        const ws = new WebSocket(wsUrl);
+        ws.binaryType = "arraybuffer";
+        wsRef.current = ws;
 
-      let initialResizeSent = false;
-      ws.addEventListener("message", (event) => {
-        // Proxy strips ttyd type bytes — we receive raw terminal output
-        if (event.data instanceof ArrayBuffer) {
-          term.write(new Uint8Array(event.data));
-        } else {
-          term.write(event.data as string);
-        }
+        ws.addEventListener("open", () => {
+          reconnectAttemptRef.current = 0;
+          fit.fit();
+          term.focus();
+        });
 
-        // Send terminal dimensions after first message proves the
-        // full path (ttyd → proxy → browser) is live. Sending on WS
-        // open is too early — proxy→ttyd may not be connected yet.
-        if (!initialResizeSent) {
-          initialResizeSent = true;
+        // initialResizeSent is scoped per connection so the resize-jiggle
+        // fires again after each reconnect.
+        let initialResizeSent = false;
+        ws.addEventListener("message", (event) => {
+          // Proxy strips ttyd type bytes — we receive raw terminal output
+          if (event.data instanceof ArrayBuffer) {
+            term.write(new Uint8Array(event.data));
+          } else {
+            term.write(event.data as string);
+          }
 
-          const sendResize = (cols: number, rows: number): void => {
-            if (ws.readyState !== WebSocket.OPEN) return;
-            const payload = JSON.stringify({ columns: cols, rows });
-            const buf = new Uint8Array(payload.length + 1);
-            buf[0] = 0x31; // ASCII '1' = resize
-            for (let i = 0; i < payload.length; i++) {
-              buf[i + 1] = payload.charCodeAt(i);
-            }
-            ws.send(buf.buffer);
-          };
+          // Send terminal dimensions after first message proves the
+          // full path (ttyd → proxy → browser) is live. Sending on WS
+          // open is too early — proxy→ttyd may not be connected yet.
+          if (!initialResizeSent) {
+            initialResizeSent = true;
 
-          // Bounce resize after a delay to force SIGWINCH on dtach
-          // reattach. The two resizes must be in separate event-loop
-          // ticks so ttyd treats them as distinct PTY size changes —
-          // otherwise the kernel coalesces them and no SIGWINCH fires.
-          setTimeout(() => {
-            fit.fit();
-            sendResize(Math.max(term.cols - 1, 1), term.rows);
+            const sendResize = (cols: number, rows: number): void => {
+              if (ws.readyState !== WebSocket.OPEN) return;
+              const payload = JSON.stringify({ columns: cols, rows });
+              const buf = new Uint8Array(payload.length + 1);
+              buf[0] = 0x31; // ASCII '1' = resize
+              for (let i = 0; i < payload.length; i++) {
+                buf[i + 1] = payload.charCodeAt(i);
+              }
+              ws.send(buf.buffer);
+            };
+
+            // Bounce resize after a delay to force SIGWINCH on dtach
+            // reattach. The two resizes must be in separate event-loop
+            // ticks so ttyd treats them as distinct PTY size changes —
+            // otherwise the kernel coalesces them and no SIGWINCH fires.
             setTimeout(() => {
-              sendResize(term.cols, term.rows);
-            }, 100);
-          }, 150);
-        }
-      });
+              fit.fit();
+              sendResize(Math.max(term.cols - 1, 1), term.rows);
+              setTimeout(() => {
+                sendResize(term.cols, term.rows);
+              }, 100);
+            }, 150);
+          }
+        });
 
-      ws.addEventListener("close", () => {
-        term.write("\r\n\x1b[33m[disconnected]\x1b[0m\r\n");
-      });
+        ws.addEventListener("close", () => {
+          if (userClosedRef.current) {
+            term.write("\r\n\x1b[33m[disconnected]\x1b[0m\r\n");
+            return;
+          }
+          const attempt = reconnectAttemptRef.current;
+          const delay = Math.min(Math.pow(2, attempt) * 1000, 30000);
+          term.write(`\r\n\x1b[33m[reconnecting in ${delay / 1000}s...]\x1b[0m\r\n`);
+          reconnectAttemptRef.current = attempt + 1;
+          reconnectTimerRef.current = window.setTimeout(connect, delay);
+        });
+      };
 
-      // Terminal input → ttyd (type bytes are ASCII: '0'=input, '1'=resize)
+      // Terminal input → ttyd (type bytes are ASCII: '0'=input, '1'=resize).
+      // Handlers registered once; read wsRef.current so they work after reconnect.
       term.onData((data) => {
-        if (ws.readyState === WebSocket.OPEN) {
+        const ws = wsRef.current;
+        if (ws && ws.readyState === WebSocket.OPEN) {
           const buf = new Uint8Array(data.length + 1);
           buf[0] = 0x30; // ASCII '0' = input
           for (let i = 0; i < data.length; i++) {
@@ -121,7 +140,8 @@ export function useTerminal(options: UseTerminalOptions) {
 
       // Resize → ttyd
       term.onResize(({ cols, rows }) => {
-        if (ws.readyState === WebSocket.OPEN) {
+        const ws = wsRef.current;
+        if (ws && ws.readyState === WebSocket.OPEN) {
           const payload = JSON.stringify({ columns: cols, rows });
           const buf = new Uint8Array(payload.length + 1);
           buf[0] = 0x31; // ASCII '1' = resize
@@ -157,7 +177,8 @@ export function useTerminal(options: UseTerminalOptions) {
                         const path = `/tmp/uploads/${name}`;
                         term.write(`\r\n\x1b[32m[saved: ${path}]\x1b[0m\r\n`);
                         // Type the path into the terminal
-                        if (ws.readyState === WebSocket.OPEN) {
+                        const ws = wsRef.current;
+                        if (ws && ws.readyState === WebSocket.OPEN) {
                           const buf = new Uint8Array(path.length + 1);
                           buf[0] = 0x30;
                           for (let j = 0; j < path.length; j++) {
@@ -179,7 +200,8 @@ export function useTerminal(options: UseTerminalOptions) {
             }
             // No image — paste text
             void navigator.clipboard.readText().then((text) => {
-              if (text && ws.readyState === WebSocket.OPEN) {
+              const ws = wsRef.current;
+              if (text && ws && ws.readyState === WebSocket.OPEN) {
                 const buf = new Uint8Array(text.length + 1);
                 buf[0] = 0x30; // ASCII '0' = input
                 for (let i = 0; i < text.length; i++) {
@@ -209,7 +231,8 @@ export function useTerminal(options: UseTerminalOptions) {
           try {
             fit.fit();
             // Send a resize to ttyd to trigger a full screen redraw
-            if (ws.readyState === WebSocket.OPEN) {
+            const ws = wsRef.current;
+            if (ws && ws.readyState === WebSocket.OPEN) {
               const payload = JSON.stringify({ columns: term.cols, rows: term.rows });
               const rBuf = new Uint8Array(payload.length + 1);
               rBuf[0] = 0x31;
@@ -222,10 +245,13 @@ export function useTerminal(options: UseTerminalOptions) {
         });
       };
       document.addEventListener("visibilitychange", handleVisibility);
+
       cleanupRef.current = () => {
         observer.disconnect();
         document.removeEventListener("visibilitychange", handleVisibility);
       };
+
+      connect();
     },
     [options.sessionId],
   );
@@ -234,6 +260,13 @@ export function useTerminal(options: UseTerminalOptions) {
     return () => {
       mountedRef.current = false;
       cleanupRef.current?.();
+      // Mark user-closed BEFORE closing WS so the close handler
+      // short-circuits the reconnect loop rather than scheduling another.
+      userClosedRef.current = true;
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       wsRef.current?.close();
       termRef.current?.dispose();
       wsRef.current = null;

@@ -1,11 +1,14 @@
 import { spawn } from "node:child_process";
 
-export interface TlsReconfigureRequest {
-  mode: "public-alpn" | "dns-01" | "self-ca";
+export interface AccessReconfigureRequest {
+  accessMode: "lan" | "public";
+  /** Required when accessMode === "public". */
+  publicTlsMode?: "public-alpn" | "dns-01";
   tlsEmail?: string;
   dnsProvider?: string;
   dnsEnvVars?: Record<string, string>;
-  lanIp?: string;
+  noRollback?: boolean;
+  regenCert?: boolean;
 }
 
 /**
@@ -19,7 +22,7 @@ export interface TlsReconfigureRequest {
  * the host's compose dir.
  */
 export async function* runReconfigureContainer(
-  req: TlsReconfigureRequest,
+  req: AccessReconfigureRequest,
   noRollback: boolean,
   regenCert: boolean,
 ): AsyncIterable<string> {
@@ -27,19 +30,17 @@ export async function* runReconfigureContainer(
   if (!repoDir) {
     throw new Error(
       "AGENTHUB_REPO_DIR not set — this endpoint requires the install's compose dir to be bind-mounted via .env. " +
-        "Reinstall AgentHub or run `agenthub reconfigure-tls` from the host shell.",
+        "Reinstall AgentHub or run `agenthub reconfigure-access` from the host shell.",
     );
   }
 
-  const env: string[] = [
-    `AGENTHUB_TLS_MODE=${req.mode}`,
-  ];
+  const env: string[] = [`AGENTHUB_ACCESS_MODE=${req.accessMode}`];
+  if (req.publicTlsMode) env.push(`AGENTHUB_TLS_MODE=${req.publicTlsMode}`);
   if (req.tlsEmail) env.push(`AGENTHUB_TLS_EMAIL=${req.tlsEmail}`);
   if (req.dnsProvider) env.push(`AGENTHUB_TLS_DNS_PROVIDER=${req.dnsProvider}`);
   for (const [k, v] of Object.entries(req.dnsEnvVars ?? {})) {
     env.push(`${k}=${v}`);
   }
-  if (req.lanIp) env.push(`AGENTHUB_LAN_IP=${req.lanIp}`);
 
   const cliArgs = ["--non-interactive"];
   if (noRollback) cliArgs.push("--no-rollback");

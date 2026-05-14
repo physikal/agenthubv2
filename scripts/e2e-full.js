@@ -313,13 +313,25 @@ async function main() {
     check("session not active, skipping backup plumbing test", false, "session failed to reach active");
   }
 
-  console.log("\n=== 9. Session end ===");
+  console.log("\n=== 9. Scrollback replay (terminal WS buffer survives reconnect) ===");
+  if (sessStatus === "active" && sessId) {
+    try {
+      await testScrollbackReplay(ORIGIN, cookie, sessId);
+      check("scrollback replay: marker visible on reconnect", true);
+    } catch (e) {
+      check("scrollback replay: marker visible on reconnect", false, e.message);
+    }
+  } else {
+    check("scrollback replay: skipped (session not active)", false, "session failed to reach active");
+  }
+
+  console.log("\n=== 10. Session end ===");
   if (sessId) {
     const end = await req(`/api/sessions/${sessId}/end`, { method: "POST" });
     check("POST /api/sessions/:id/end → 200", end.status === 200);
   }
 
-  console.log("\n=== 10. Install-backup smoke (local-only) ===");
+  console.log("\n=== 11. Install-backup smoke (local-only) ===");
   // POST /api/admin/install-backup/run returns an SSE stream.
   // We consume it with the fetch ReadableStream API (available in Node 22).
   {
@@ -373,6 +385,126 @@ async function main() {
       console.log(`    bundle size: ${latest.bytes} bytes`);
     }
   }
+
+  // lan-http smoke — only when PUBLIC_URL is a plain http:// address.
+  const publicUrl = process.env.PUBLIC_URL ?? "";
+  if (publicUrl.startsWith("http://")) {
+    await testLanHttp(publicUrl);
+  }
+}
+
+// lan-http smoke test — only runs when PUBLIC_URL is a plain http:// URL.
+// Talks directly to PUBLIC_URL (Traefik front door) rather than localhost:3000,
+// so it validates that:
+//   • the health endpoint reports resolver=lan
+//   • login works over plain HTTP
+//   • the session_token cookie is NOT flagged Secure (which would break HTTP browsers)
+// The `ws` package is not available in the server container, so the ttyd WS
+// smoke is omitted here — cookie + health checks are the load-bearing assertions.
+async function testLanHttp(baseUrl) {
+  console.log(`\n=== lan-http smoke (PUBLIC_URL=${baseUrl}) ===`);
+
+  // 1. Health endpoint reports resolver=lan
+  let health;
+  try {
+    health = await fetch(`${baseUrl}/api/health`).then((r) => r.json());
+  } catch (e) {
+    check("lan-http: GET /api/health reachable", false, e.message);
+    return;
+  }
+  check("lan-http: GET /api/health → 200", typeof health === "object" && health !== null);
+  check(
+    "lan-http: tls.resolver === lan",
+    health.tls?.resolver === "lan",
+    `got ${health.tls?.resolver}`,
+  );
+
+  // 2. Login over plain HTTP and inspect Set-Cookie
+  let loginRes;
+  try {
+    loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: ADMIN_PW }),
+    });
+  } catch (e) {
+    check("lan-http: POST /api/auth/login reachable", false, e.message);
+    return;
+  }
+  check(
+    "lan-http: POST /api/auth/login → 200",
+    loginRes.status === 200,
+    `got ${loginRes.status}`,
+  );
+  const setCookie = loginRes.headers.get("set-cookie") ?? "";
+  check(
+    "lan-http: session_token cookie issued",
+    setCookie.includes("session_token="),
+    `set-cookie: ${setCookie}`,
+  );
+  check(
+    "lan-http: session_token cookie NOT Secure (plain HTTP browsers can read it)",
+    !setCookie.toLowerCase().includes("secure"),
+    `set-cookie: ${setCookie}`,
+  );
+
+  console.log("[e2e] lan-http: health + login + cookie attributes OK");
+}
+
+async function testScrollbackReplay(baseUrl, authCookie, sessionId) {
+  console.log("[e2e] scrollback replay test");
+  const wsProto = baseUrl.startsWith("https://") ? "wss://" : "ws://";
+  const wsHost = baseUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const wsUrl = `${wsProto}${wsHost}/ws/sessions/${sessionId}/terminal`;
+
+  // First connection: send a command and collect output.
+  const ws1 = new WebSocket(wsUrl, { headers: { Cookie: authCookie } });
+  await new Promise((resolve, reject) => {
+    ws1.addEventListener("open", resolve);
+    ws1.addEventListener("error", reject);
+  });
+
+  const marker = `HELLO_REPLAY_${Math.random().toString(36).slice(2, 10)}`;
+  const cmd = `echo ${marker}\n`;
+  const inBuf = new Uint8Array(cmd.length + 1);
+  inBuf[0] = 0x30; // type byte: ASCII '0' = terminal input
+  for (let i = 0; i < cmd.length; i++) inBuf[i + 1] = cmd.charCodeAt(i);
+  ws1.send(inBuf.buffer);
+
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`marker ${marker} not seen on first connect`)),
+      5000,
+    );
+    ws1.addEventListener("message", (e) => {
+      const text = Buffer.from(e.data).toString();
+      if (text.includes(marker)) { clearTimeout(timer); resolve(); }
+    });
+  });
+
+  ws1.close();
+  await new Promise((r) => setTimeout(r, 200));
+
+  // Second connection: expect the marker in the first batch of bytes (replay).
+  const ws2 = new WebSocket(wsUrl, { headers: { Cookie: authCookie } });
+  await new Promise((resolve, reject) => {
+    ws2.addEventListener("open", resolve);
+    ws2.addEventListener("error", reject);
+  });
+
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`marker ${marker} not in replay`)),
+      5000,
+    );
+    ws2.addEventListener("message", (e) => {
+      const text = Buffer.from(e.data).toString();
+      if (text.includes(marker)) { clearTimeout(timer); resolve(); }
+    });
+  });
+
+  ws2.close();
+  console.log(`[e2e] scrollback replay OK (marker ${marker})`);
 }
 
 // Run the main checks; always run cleanup even on failure so fixtures

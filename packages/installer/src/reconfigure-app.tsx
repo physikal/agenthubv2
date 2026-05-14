@@ -7,13 +7,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findComposeDir } from "./lib/compose.js";
 import { runReconfigure, type ReconfigureConfig, type ReconfigureOptions } from "./reconfigure.js";
+import type { AccessMode, PublicTlsMode } from "./lib/access/types.js";
 
 interface ParsedEnv {
   domain: string;
   tlsEmail: string;
   tlsDnsProvider: string;
   cfApiToken: string;
-  lanIp: string;
 }
 
 function readExistingEnv(composeDir: string): ParsedEnv {
@@ -28,22 +28,21 @@ function readExistingEnv(composeDir: string): ParsedEnv {
     tlsEmail: env["TLS_EMAIL"] ?? "",
     tlsDnsProvider: env["AGENTHUB_TLS_DNS_PROVIDER"] ?? "",
     cfApiToken: env["CF_DNS_API_TOKEN"] ?? "",
-    lanIp: env["AGENTHUB_LAN_IP"] ?? "",
   };
 }
 
-type Step = "strategy" | "email" | "dns-token" | "self-ca-ip" | "running" | "done";
+type Step = "access-mode" | "tls-strategy" | "email" | "dns-token" | "running" | "done";
 
 const ReconfigureApp: React.FC<{ opts: ReconfigureOptions }> = ({ opts }) => {
   const { exit } = useApp();
   const composeDir = findComposeDir();
   const initial = readExistingEnv(composeDir);
 
-  const [step, setStep] = useState<Step>(initial.domain === "localhost" ? "done" : "strategy");
-  const [mode, setMode] = useState<"public-alpn" | "dns-01" | "self-ca">("public-alpn");
+  const [step, setStep] = useState<Step>(initial.domain === "localhost" ? "done" : "access-mode");
+  const [accessMode, setAccessMode] = useState<AccessMode>("lan");
+  const [publicTlsMode, setPublicTlsMode] = useState<PublicTlsMode>("public-alpn");
   const [tlsEmail, setTlsEmail] = useState(initial.tlsEmail);
   const [cfApiToken, setCfApiToken] = useState(initial.cfApiToken);
-  const [lanIp, setLanIp] = useState(initial.lanIp);
   const [logs, setLogs] = useState<string[]>([]);
   const [error, setError] = useState("");
 
@@ -51,30 +50,59 @@ const ReconfigureApp: React.FC<{ opts: ReconfigureOptions }> = ({ opts }) => {
     return (
       <Box flexDirection="column" padding={1}>
         <Text color="red">
-          reconfigure-tls is not supported for localhost installs.
+          reconfigure-access is not supported for localhost installs.
         </Text>
         <ExitAfter exit={exit} />
       </Box>
     );
   }
 
-  if (step === "strategy") {
+  if (step === "access-mode") {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold>How will you access {initial.domain}?</Text>
+        <Text dimColor>Current domain: {initial.domain}</Text>
+        <Box marginTop={1}>
+          <SelectInput
+            items={[
+              { label: "LAN only — plain HTTP, no TLS setup required", value: "lan" },
+              { label: "Public internet — Let's Encrypt TLS", value: "public" },
+            ]}
+            onSelect={(item) => {
+              const v = item.value as AccessMode;
+              setAccessMode(v);
+              if (v === "lan") {
+                setStep("running");
+              } else {
+                setStep("tls-strategy");
+              }
+            }}
+          />
+        </Box>
+      </Box>
+    );
+  }
+
+  if (step === "tls-strategy") {
     return (
       <Box flexDirection="column" padding={1}>
         <Text bold>How should TLS work for {initial.domain}?</Text>
         <Box marginTop={1}>
           <SelectInput
             items={[
-              { label: "Public ACME (TLS-ALPN-01)", value: "public-alpn" },
-              { label: "DNS-01 (Cloudflare)", value: "dns-01" },
-              { label: "Self-signed CA", value: "self-ca" },
+              {
+                label: "Public ACME (TLS-ALPN-01) — needs port 443 reachable from internet",
+                value: "public-alpn",
+              },
+              {
+                label: "DNS-01 (Cloudflare) — works for internal-only hosts",
+                value: "dns-01",
+              },
             ]}
             onSelect={(item) => {
-              const v = item.value as typeof mode;
-              setMode(v);
-              if (v === "public-alpn") setStep("email");
-              else if (v === "dns-01") setStep("email");
-              else setStep("self-ca-ip");
+              const v = item.value as PublicTlsMode;
+              setPublicTlsMode(v);
+              setStep("email");
             }}
           />
         </Box>
@@ -93,7 +121,7 @@ const ReconfigureApp: React.FC<{ opts: ReconfigureOptions }> = ({ opts }) => {
             onChange={setTlsEmail}
             onSubmit={(v) => {
               setTlsEmail(v.trim());
-              setStep(mode === "dns-01" ? "dns-token" : "running");
+              setStep(publicTlsMode === "dns-01" ? "dns-token" : "running");
             }}
           />
         </Box>
@@ -121,39 +149,31 @@ const ReconfigureApp: React.FC<{ opts: ReconfigureOptions }> = ({ opts }) => {
     );
   }
 
-  if (step === "self-ca-ip") {
-    return (
-      <Box flexDirection="column" padding={1}>
-        <Text>LAN IPs (comma-separated):</Text>
-        <Box>
-          <Text color="cyan">{"> "}</Text>
-          <TextInput
-            value={lanIp}
-            onChange={setLanIp}
-            onSubmit={(v) => {
-              setLanIp(v.trim());
-              setStep("running");
-            }}
-          />
-        </Box>
-      </Box>
-    );
-  }
-
   if (step === "running") {
+    const cfg: ReconfigureConfig =
+      accessMode === "lan"
+        ? {
+            accessMode: "lan",
+            domain: initial.domain,
+            tlsEmail: "",
+            tlsDnsProvider: "",
+            tlsDnsEnvVars: {},
+          }
+        : {
+            accessMode: "public",
+            publicTlsMode,
+            domain: initial.domain,
+            tlsEmail,
+            tlsDnsProvider: publicTlsMode === "dns-01" ? "cloudflare" : "",
+            tlsDnsEnvVars:
+              publicTlsMode === "dns-01" && cfApiToken
+                ? { CF_DNS_API_TOKEN: cfApiToken }
+                : {},
+          };
+
     return (
       <RunningStep
-        cfg={{
-          mode,
-          domain: initial.domain,
-          tlsEmail,
-          tlsDnsProvider: mode === "dns-01" ? "cloudflare" : "",
-          tlsDnsEnvVars:
-            mode === "dns-01" && cfApiToken
-              ? { CF_DNS_API_TOKEN: cfApiToken }
-              : {},
-          lanIp,
-        }}
+        cfg={cfg}
         opts={opts}
         onLog={(line) => setLogs((cur) => [...cur.slice(-10), line])}
         onDone={(err) => {
@@ -204,7 +224,7 @@ const RunningStep: React.FC<{
   return (
     <Box flexDirection="column" padding={1}>
       <Text>
-        <Spinner type="dots" /> Applying TLS reconfiguration…
+        <Spinner type="dots" /> Applying access reconfiguration…
       </Text>
       {logs.map((l, i) => (
         <Text key={i} dimColor>{l}</Text>

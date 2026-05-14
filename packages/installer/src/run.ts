@@ -1,7 +1,6 @@
 import {
   existsSync,
   mkdirSync,
-  readFileSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -17,10 +16,12 @@ import {
   recreateService,
 } from "./lib/compose.js";
 import { bootstrapInfisical } from "./lib/infisical-bootstrap.js";
-import { renderTraefikOverride } from "./lib/tls/render-override.js";
-import { renderTraefikConfig } from "./lib/tls/render-traefik-config.js";
-import { renderTraefikDynamicConfig } from "./lib/tls/render-dynamic-config.js";
-import { resolveTlsMode } from "./lib/tls/resolve-mode.js";
+import {
+  renderTraefikStaticConfig,
+  renderTraefikOverride,
+  renderRedirectDynamic,
+} from "./lib/access/render-compose.js";
+import { resolveAccessMode, resolvePublicTlsMode } from "./lib/access/resolve-mode.js";
 
 export interface InstallArtifacts {
   url: string;
@@ -53,12 +54,11 @@ export async function runInstall(
 
   // Generate compose/dynamic/redirect.yml — Traefik's dynamic config
   // (http → https redirect router + middleware + stub service).
-  // Loaded via the file provider. Always emitted, all modes.
-  writeTraefikDynamicConfig(composeDir, onLog);
+  // Loaded via the file provider. Emitted for public mode only (lan = no HTTPS).
+  writeTraefikDynamicConfig(final, composeDir, onLog);
 
-  // Generate compose/traefik.override.yml — only the safely-mergeable
-  // bits (cert-resolver labels, DNS provider env vars, self-CA aux
-  // services). Localhost: no override file written (returns null).
+  // Generate compose/traefik.override.yml — cert-resolver labels + DNS
+  // provider env vars for public mode. lan mode: no override file written.
   writeTraefikOverride(final, composeDir, onLog);
 
   onLog("pulling images…");
@@ -131,31 +131,43 @@ function writeTraefikConfig(
   composeDir: string,
   onLog: (line: string) => void,
 ): void {
-  const resolved = resolveTlsMode(cfg.tlsMode, cfg.domain, process.env);
-  const yaml = renderTraefikConfig({
-    mode: resolved,
+  const accessMode = resolveAccessMode(cfg.accessMode, cfg.domain, process.env);
+  const publicTlsMode =
+    accessMode === "public"
+      ? resolvePublicTlsMode(cfg.tlsMode, process.env)
+      : undefined;
+  const yaml = renderTraefikStaticConfig({
+    accessMode,
     domain: cfg.domain,
+    publicTlsMode,
     tlsEmail: cfg.tlsEmail,
-    dnsProvider: cfg.tlsDnsProvider,
+    ...(cfg.tlsDnsProvider ? { dnsProvider: cfg.tlsDnsProvider } : {}),
+    dnsEnvVars: cfg.tlsDnsEnvVars,
   });
   const path = join(composeDir, "traefik.yml");
   writeFileSync(path, yaml, { mode: 0o644 });
-  onLog(`wrote ${path} (mode: ${resolved})`);
+  onLog(`wrote ${path} (mode: ${accessMode}${publicTlsMode ? `/${publicTlsMode}` : ""})`);
 }
 
 function writeTraefikDynamicConfig(
+  cfg: InstallConfig,
   composeDir: string,
   onLog: (line: string) => void,
 ): void {
+  const accessMode = resolveAccessMode(cfg.accessMode, cfg.domain, process.env);
   const dynamicDir = join(composeDir, "dynamic");
   if (!existsSync(dynamicDir)) {
-    // 0755 so Traefik (running as root in its container) can read; the
-    // self-CA init container also writes leaf.crt here in self-CA mode
-    // (mounted as :rw via the override).
+    // 0755 so Traefik (running as root in its container) can read.
     mkdirSync(dynamicDir, { recursive: true, mode: 0o755 });
   }
+  const yaml = renderRedirectDynamic({ accessMode });
+  // lan mode: no HTTPS redirect needed — omit the file entirely.
+  if (!yaml) {
+    onLog(`skipped redirect.yml (lan mode — no HTTPS redirect)`);
+    return;
+  }
   const path = join(dynamicDir, "redirect.yml");
-  writeFileSync(path, renderTraefikDynamicConfig(), { mode: 0o644 });
+  writeFileSync(path, yaml, { mode: 0o644 });
   onLog(`wrote ${path}`);
 }
 
@@ -164,12 +176,16 @@ function writeTraefikOverride(
   composeDir: string,
   onLog: (line: string) => void,
 ): void {
-  const resolved = resolveTlsMode(cfg.tlsMode, cfg.domain, process.env);
+  const accessMode = resolveAccessMode(cfg.accessMode, cfg.domain, process.env);
+  const publicTlsMode =
+    accessMode === "public"
+      ? resolvePublicTlsMode(cfg.tlsMode, process.env)
+      : undefined;
   const overridePath = join(composeDir, "traefik.override.yml");
-  if (resolved === "none") {
+  if (accessMode === "lan") {
     if (existsSync(overridePath)) {
       unlinkSync(overridePath);
-      onLog(`removed ${overridePath} (localhost install)`);
+      onLog(`removed ${overridePath} (lan install)`);
     }
     return;
   }
@@ -181,17 +197,15 @@ function writeTraefikOverride(
     dnsEnvVars[name] = `\${${name}}`;
   }
   const yaml = renderTraefikOverride({
-    mode: resolved,
+    accessMode,
     domain: cfg.domain,
+    publicTlsMode,
     tlsEmail: cfg.tlsEmail,
-    dnsProvider: cfg.tlsDnsProvider,
+    ...(cfg.tlsDnsProvider ? { dnsProvider: cfg.tlsDnsProvider } : {}),
     dnsEnvVars,
-    lanIp: cfg.lanIp,
   });
   if (!yaml) return;
   writeFileSync(overridePath, yaml, { mode: 0o644 });
-  onLog(`wrote ${overridePath} (mode: ${resolved})`);
+  onLog(`wrote ${overridePath} (mode: ${accessMode}${publicTlsMode ? `/${publicTlsMode}` : ""})`);
 }
 
-// Silence unused-import warning until headless.ts picks up readFileSync.
-void readFileSync;

@@ -1,47 +1,55 @@
 import React, { useRef, useState } from "react";
-import { streamTlsReconfigure } from "../../lib/api.js";
+import { streamAccessReconfigure, type AccessReconfigureRequest } from "../../lib/api.js";
 
 type Step =
+  | "access-mode"
   | "strategy"
   | "email"
   | "dns-provider"
   | "dns-token"
-  | "self-ca-ip"
   | "confirm"
   | "running"
   | "done";
 
-type Mode = "public-alpn" | "dns-01" | "self-ca";
+type AccessMode = "lan" | "public";
+type TlsMode = "public-alpn" | "dns-01";
 
 interface State {
-  mode: Mode | null;
+  accessMode: AccessMode | null;
+  mode: TlsMode | null;
   tlsEmail: string;
   dnsProvider: string;
   cfApiToken: string;
-  lanIp: string;
 }
 
-export const ReconfigureTlsModal: React.FC<{
+export const ReconfigureAccessModal: React.FC<{
   initialDomain: string;
-  defaultLanIp: string;
   onClose: () => void;
-}> = ({ initialDomain, defaultLanIp, onClose }) => {
-  const [step, setStep] = useState<Step>("strategy");
+}> = ({ initialDomain, onClose }) => {
+  const [step, setStep] = useState<Step>("access-mode");
   const [state, setState] = useState<State>({
+    accessMode: null,
     mode: null,
     tlsEmail: "",
     dnsProvider: "cloudflare",
     cfApiToken: "",
-    lanIp: defaultLanIp,
   });
   const [logs, setLogs] = useState<string[]>([]);
   const [error, setError] = useState<string>("");
   const abortRef = useRef<AbortController | null>(null);
 
-  const pickStrategy = (mode: Mode): void => {
+  const pickAccessMode = (accessMode: AccessMode): void => {
+    setState((s) => ({ ...s, accessMode }));
+    if (accessMode === "lan") {
+      setStep("confirm");
+    } else {
+      setStep("strategy");
+    }
+  };
+
+  const pickStrategy = (mode: TlsMode): void => {
     setState((s) => ({ ...s, mode }));
-    if (mode === "public-alpn" || mode === "dns-01") setStep("email");
-    else setStep("self-ca-ip");
+    setStep("email");
   };
 
   async function startReconfigure(): Promise<void> {
@@ -52,16 +60,17 @@ export const ReconfigureTlsModal: React.FC<{
       if (state.mode === "dns-01" && state.dnsProvider === "cloudflare") {
         dnsEnvVars["CF_DNS_API_TOKEN"] = state.cfApiToken;
       }
-      const stream = streamTlsReconfigure(
-        {
-          mode: state.mode!,
-          tlsEmail: state.tlsEmail,
-          ...(state.mode === "dns-01" ? { dnsProvider: state.dnsProvider } : {}),
-          ...(state.mode === "dns-01" ? { dnsEnvVars } : {}),
-          ...(state.mode === "self-ca" ? { lanIp: state.lanIp } : {}),
-        },
-        abortRef.current.signal,
-      );
+      const req: AccessReconfigureRequest =
+        state.accessMode === "lan"
+          ? { accessMode: "lan" }
+          : {
+              accessMode: "public",
+              publicTlsMode: state.mode!,
+              tlsEmail: state.tlsEmail,
+              ...(state.mode === "dns-01" ? { dnsProvider: state.dnsProvider } : {}),
+              ...(state.mode === "dns-01" ? { dnsEnvVars } : {}),
+            };
+      const stream = streamAccessReconfigure(req, abortRef.current.signal);
       for await (const ev of stream) {
         if (ev.event === "log") {
           setLogs((cur) => [...cur, ev.data]);
@@ -83,7 +92,20 @@ export const ReconfigureTlsModal: React.FC<{
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Reconfigure TLS for {initialDomain}</h2>
+        <h2>Reconfigure access for {initialDomain}</h2>
+
+        {step === "access-mode" && (
+          <div className="strategy-options">
+            <button onClick={() => pickAccessMode("lan")}>
+              <strong>LAN only</strong>
+              <p>HTTP access from your local network. No TLS required.</p>
+            </button>
+            <button onClick={() => pickAccessMode("public")}>
+              <strong>Public (HTTPS)</strong>
+              <p>Publicly reachable with a trusted TLS certificate.</p>
+            </button>
+          </div>
+        )}
 
         {step === "strategy" && (
           <div className="strategy-options">
@@ -94,10 +116,6 @@ export const ReconfigureTlsModal: React.FC<{
             <button onClick={() => pickStrategy("dns-01")}>
               <strong>DNS challenge</strong>
               <p>Let's Encrypt cert via your DNS provider's API. Use this for internal-only hosts.</p>
-            </button>
-            <button onClick={() => pickStrategy("self-ca")}>
-              <strong>Self-signed CA</strong>
-              <p>Private CA on this host. Each device imports the CA once.</p>
             </button>
           </div>
         )}
@@ -144,7 +162,7 @@ export const ReconfigureTlsModal: React.FC<{
             ) : (
               <p className="hint">
                 Other providers must be configured via{" "}
-                <code>agenthub reconfigure-tls</code> from the host shell.
+                <code>agenthub reconfigure-access</code> from the host shell.
                 Run with the appropriate lego env vars exported.
                 <button onClick={onClose}>Close</button>
               </p>
@@ -173,40 +191,30 @@ export const ReconfigureTlsModal: React.FC<{
           </div>
         )}
 
-        {step === "self-ca-ip" && (
-          <div className="form">
-            <label>
-              LAN IP(s) for cert SAN (comma-separated):
-              <input
-                type="text"
-                value={state.lanIp}
-                onChange={(e) =>
-                  setState((s) => ({ ...s, lanIp: e.target.value }))
-                }
-              />
-            </label>
-            <button onClick={() => setStep("confirm")}>Next</button>
-          </div>
-        )}
-
         {step === "confirm" && (
           <div className="confirm">
-            <p>Apply this TLS configuration?</p>
+            <p>Apply this access configuration?</p>
             <ul>
               <li>
-                Strategy: <strong>{state.mode}</strong>
+                Access mode: <strong>{state.accessMode}</strong>
               </li>
-              {state.mode !== "self-ca" && <li>Email: {state.tlsEmail}</li>}
+              {state.accessMode === "public" && (
+                <li>
+                  TLS strategy: <strong>{state.mode}</strong>
+                </li>
+              )}
+              {state.accessMode === "public" && <li>Email: {state.tlsEmail}</li>}
               {state.mode === "dns-01" && (
                 <li>Provider: {state.dnsProvider}</li>
               )}
-              {state.mode === "self-ca" && <li>LAN IP: {state.lanIp}</li>}
             </ul>
-            <p className="hint">
-              Traefik will be recreated. If the new cert can't be issued
-              within 90 seconds, the previous TLS config is restored
-              automatically.
-            </p>
+            {state.accessMode === "public" && (
+              <p className="hint">
+                Traefik will be recreated. If the new cert can't be issued
+                within 90 seconds, the previous TLS config is restored
+                automatically.
+              </p>
+            )}
             <button onClick={() => void startReconfigure()}>Apply</button>
             <button onClick={onClose}>Cancel</button>
           </div>
@@ -234,7 +242,7 @@ export const ReconfigureTlsModal: React.FC<{
             ) : (
               <>
                 <h3 className="success">Reconfigure complete</h3>
-                <p>Reload the page to pick up the new cert.</p>
+                <p>Reload the page to pick up the new configuration.</p>
               </>
             )}
             <button onClick={onClose}>Close</button>

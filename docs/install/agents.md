@@ -55,52 +55,58 @@ See [installer-flow.md](installer-flow.md) for the full step → env-var mapping
 | `AGENTHUB_DOMAIN` | hostname or `localhost` | Where AgentHub is reachable. `localhost` gives HTTP-only; any other value triggers Let's Encrypt. |
 | `AGENTHUB_ADMIN_PASSWORD` | any string, min 8 chars | AgentHub admin password. If omitted, a random one is generated and printed. |
 
-### Required when `AGENTHUB_DOMAIN != localhost`
+### Optional: access mode
+
+| Var | Default | Notes |
+|---|---|---|
+| `AGENTHUB_ACCESS_MODE` | `lan` | `lan` (HTTP-only, LAN access) or `public` (Let's Encrypt HTTPS). |
+
+`lan` mode needs no TLS vars. Omitting `AGENTHUB_ACCESS_MODE` defaults to `lan`.
+
+### Required when `ACCESS_MODE=public`
 
 | Var | |
 |---|---|
 | `AGENTHUB_TLS_EMAIL` | Email for Let's Encrypt cert expiry notifications. |
 
-### Optional: TLS strategy override
+### Optional when `ACCESS_MODE=public`
 
 | Var | Values | Notes |
 |---|---|---|
-| `AGENTHUB_TLS_MODE` | `auto` (default), `public-alpn`, `dns-01`, `self-ca` | Auto picks `dns-01` if a DNS provider is set, else `public-alpn`. |
-| `AGENTHUB_TLS_DNS_PROVIDER` | `cloudflare`, `route53`, … | Required when mode is `dns-01`. lego provider name. |
-| `AGENTHUB_CLOUDFLARE_API_TOKEN` | Cloudflare token | Convenience var for `dns-01` + Cloudflare. Mapped to `CF_DNS_API_TOKEN`. |
+| `AGENTHUB_TLS_MODE` | `public-alpn` (default), `dns-01` | Sub-mode. Only relevant when `ACCESS_MODE=public`. |
+| `AGENTHUB_TLS_DNS_PROVIDER` | `cloudflare`, `route53`, … | Required when `TLS_MODE=dns-01`. lego provider name. |
+| `AGENTHUB_CLOUDFLARE_API_TOKEN` | Cloudflare token | Convenience var for `dns-01` + Cloudflare. |
 
-For non-Cloudflare DNS providers, pre-export the lego-native env vars in your shell before running the installer; we'll forward them verbatim into Traefik's environment.
+For non-Cloudflare DNS providers, pre-export the lego-native env vars before running the installer.
 
-**Internal-only with Cloudflare DNS-01:**
+**LAN-only install (default, no TLS):**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh \
   | AGENTHUB_AUTO_INSTALL=true \
+    AGENTHUB_MODE=docker \
+    AGENTHUB_DOMAIN=192.168.4.10 \
+    AGENTHUB_ADMIN_PASSWORD=<pw> \
+    bash -s -- --non-interactive
+```
+
+**Public install with Cloudflare DNS-01:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh \
+  | AGENTHUB_AUTO_INSTALL=true \
+    AGENTHUB_MODE=docker \
     AGENTHUB_DOMAIN=agenthub.example.com \
-    AGENTHUB_TLS_EMAIL=ops@example.com \
+    AGENTHUB_ACCESS_MODE=public \
     AGENTHUB_TLS_MODE=dns-01 \
+    AGENTHUB_TLS_EMAIL=ops@example.com \
     AGENTHUB_TLS_DNS_PROVIDER=cloudflare \
     AGENTHUB_CLOUDFLARE_API_TOKEN=<token> \
     AGENTHUB_ADMIN_PASSWORD=<pw> \
     bash -s -- --non-interactive
 ```
 
-A pre-flight check validates the Cloudflare token + zone access before flipping config. Set `AGENTHUB_SKIP_PREFLIGHT=1` to bypass.
-
-**Internal-only with self-CA (no DNS / internet needed):**
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh \
-  | AGENTHUB_AUTO_INSTALL=true \
-    AGENTHUB_DOMAIN=agenthub.local \
-    AGENTHUB_TLS_MODE=self-ca \
-    AGENTHUB_ADMIN_PASSWORD=<pw> \
-    bash -s -- --non-interactive
-```
-
-After install, open `http://<domain>/install/ca` from each device on the LAN to import the CA cert. Then HTTPS to AgentHub will be trusted. The leaf cert covers `<domain>`, `*.<domain>`, and the host's auto-detected LAN IP — direct-IP access works without a hostname mismatch.
-
-Override the LAN IP with `AGENTHUB_LAN_IP=192.168.4.36,10.0.0.1` for multi-interface hosts.
+A pre-flight check validates the Cloudflare token and zone access before writing config. Set `AGENTHUB_SKIP_PREFLIGHT=1` to bypass.
 
 ### Required when `AGENTHUB_MODE=dokploy-remote`
 

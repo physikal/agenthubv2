@@ -12,7 +12,7 @@ import { Secrets } from "./pages/Secrets.tsx";
 import { Deployments } from "./pages/Deployments.tsx";
 import { Login } from "./pages/Login.tsx";
 import { useAuthStore } from "./stores/auth.ts";
-import { MigrationBanner } from "./components/tls/MigrationBanner.js";
+import { MigrationBanner } from "./components/access/MigrationBanner.js";
 
 function Layout() {
   return (
