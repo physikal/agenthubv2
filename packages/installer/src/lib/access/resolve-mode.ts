@@ -16,16 +16,14 @@ export function resolveAccessMode(
 }
 
 /**
- * Resolve the TLS sub-mode for `public` access mode. Auto-mode infers from
- * env: presence of a DNS provider var → dns-01, otherwise → public-alpn.
- * Explicit values pass through.
+ * Resolve the TLS sub-mode for `public` access mode. Passes through valid
+ * PublicTlsMode values. Falls back to `public-alpn` for unrecognised strings
+ * (e.g. legacy "auto" read from a pre-migration .env).
  */
 export function resolvePublicTlsMode(
   declaredTls: TlsMode,
-  env: Record<string, string | undefined>,
+  _env: Record<string, string | undefined>,
 ): PublicTlsMode {
-  if (declaredTls === "public-alpn") return "public-alpn";
   if (declaredTls === "dns-01") return "dns-01";
-  if (env["AGENTHUB_TLS_DNS_PROVIDER"]) return "dns-01";
   return "public-alpn";
 }

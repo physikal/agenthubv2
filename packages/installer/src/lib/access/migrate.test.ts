@@ -1,14 +1,34 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "fs";
+import {
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  mkdirSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { migrateAccessConfig } from "./migrate.js";
 
-function setupFixture(envContents: string, overrideContents?: string): string {
+function setupFixture(
+  envContents: string,
+  overrideContents?: string,
+  traefikYmlContents?: string,
+  redirectYmlContents?: string,
+): string {
   const dir = mkdtempSync(join(tmpdir(), "migrate-access-"));
   writeFileSync(join(dir, ".env"), envContents);
   if (overrideContents !== undefined) {
     writeFileSync(join(dir, "traefik.override.yml"), overrideContents);
+  }
+  if (traefikYmlContents !== undefined) {
+    writeFileSync(join(dir, "traefik.yml"), traefikYmlContents);
+  }
+  if (redirectYmlContents !== undefined) {
+    const dynamicDir = join(dir, "dynamic");
+    mkdirSync(dynamicDir, { recursive: true });
+    writeFileSync(join(dynamicDir, "redirect.yml"), redirectYmlContents);
   }
   return dir;
 }
@@ -108,6 +128,75 @@ describe("migrateAccessConfig", () => {
     const r = migrateAccessConfig(dir);
     expect(r.warnings.some((w) => w.includes("HSTS"))).toBe(true);
     expect(r.warnings.some((w) => w.includes("chrome://net-internals/#hsts"))).toBe(true);
+    rmSync(dir, { recursive: true });
+  });
+
+  it("self-ca → lan: regenerates traefik.yml as lan-only (no websecure, no certificatesResolvers)", () => {
+    // Simulate a VM 923 self-CA install with the stale self-CA traefik.yml.
+    const staleTraefikYml = [
+      "entryPoints:",
+      "  web:",
+      "    address: ':80'",
+      "  websecure:",
+      "    address: ':443'",
+      "certificatesResolvers:",
+      "  selfCA:",
+      "    acme:",
+      "      email: ops@example.com",
+    ].join("\n");
+    const dir = setupFixture(
+      [
+        "DOMAIN=agenthub.example.com",
+        "AGENTHUB_TLS_MODE=self-ca",
+        "AGENTHUB_LAN_IP=192.168.1.5",
+        "COMPOSE_FILE=docker-compose.yml:traefik.override.yml",
+      ].join("\n"),
+      "services:\n  traefik-self-ca-init:\n    image: alpine:3.20\n",
+      staleTraefikYml,
+      // pre-existing redirect.yml to confirm it is deleted
+      "http:\n  middlewares:\n    redirect-to-https:\n      redirectScheme:\n        scheme: https\n",
+    );
+
+    const r = migrateAccessConfig(dir);
+    expect(r.action).toBe("migrated-self-ca-to-lan");
+
+    // traefik.yml must be rewritten for lan mode
+    const traefikYml = readFileSync(join(dir, "traefik.yml"), "utf8");
+    expect(traefikYml).toContain("web:");
+    expect(traefikYml).not.toContain("websecure:");
+    expect(traefikYml).not.toContain("certificatesResolvers:");
+
+    // dynamic/redirect.yml must be deleted (no HTTPS on lan)
+    expect(existsSync(join(dir, "dynamic", "redirect.yml"))).toBe(false);
+
+    rmSync(dir, { recursive: true });
+  });
+
+  it("public-alpn → public+public-alpn: regenerates traefik.yml and redirect.yml", () => {
+    const dir = setupFixture(
+      [
+        "DOMAIN=agenthub.example.com",
+        "AGENTHUB_TLS_MODE=public-alpn",
+        "AGENTHUB_TLS_EMAIL=ops@example.com",
+        "COMPOSE_FILE=docker-compose.yml:traefik.override.yml",
+      ].join("\n"),
+    );
+
+    const r = migrateAccessConfig(dir);
+    expect(r.action).toBe("migrated-tls-to-public");
+
+    // traefik.yml must have websecure + certificatesResolvers for public mode
+    const traefikYml = readFileSync(join(dir, "traefik.yml"), "utf8");
+    expect(traefikYml).toContain("web:");
+    expect(traefikYml).toContain("websecure:");
+    expect(traefikYml).toContain("certificatesResolvers:");
+    expect(traefikYml).toContain("tlsChallenge:");
+
+    // dynamic/redirect.yml must exist for public mode
+    expect(existsSync(join(dir, "dynamic", "redirect.yml"))).toBe(true);
+    const redirectYml = readFileSync(join(dir, "dynamic", "redirect.yml"), "utf8");
+    expect(redirectYml).toContain("redirect-to-https:");
+
     rmSync(dir, { recursive: true });
   });
 });

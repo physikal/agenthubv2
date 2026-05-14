@@ -20,18 +20,13 @@ describe("resolveAccessMode", () => {
 });
 
 describe("resolvePublicTlsMode", () => {
-  it("returns 'dns-01' when AGENTHUB_TLS_DNS_PROVIDER is set", () => {
-    expect(resolvePublicTlsMode("auto", { AGENTHUB_TLS_DNS_PROVIDER: "cloudflare" }))
-      .toBe("dns-01");
-  });
-
-  it("returns 'public-alpn' by default in auto", () => {
-    expect(resolvePublicTlsMode("auto", {})).toBe("public-alpn");
-  });
-
-  it("honors explicit public-alpn", () => {
+  it("returns 'public-alpn' for public-alpn even when DNS provider is set", () => {
     expect(resolvePublicTlsMode("public-alpn", { AGENTHUB_TLS_DNS_PROVIDER: "cloudflare" }))
       .toBe("public-alpn");
+  });
+
+  it("returns 'public-alpn' as default", () => {
+    expect(resolvePublicTlsMode("public-alpn", {})).toBe("public-alpn");
   });
 
   it("honors explicit dns-01", () => {

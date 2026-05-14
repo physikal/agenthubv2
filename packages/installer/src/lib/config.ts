@@ -5,13 +5,8 @@ export type { AccessMode, PublicTlsMode } from "./access/types.js";
 
 export type ProvisionerMode = "docker" | "dokploy-remote";
 
-export type TlsMode = "auto" | "public-alpn" | "dns-01" | "self-ca";
-const VALID_TLS_MODES: readonly TlsMode[] = [
-  "auto",
-  "public-alpn",
-  "dns-01",
-  "self-ca",
-] as const;
+export type TlsMode = "public-alpn" | "dns-01";
+const VALID_TLS_MODES: readonly TlsMode[] = ["public-alpn", "dns-01"] as const;
 
 export interface InstallConfig {
   mode: ProvisionerMode;
@@ -63,12 +58,6 @@ export interface InstallConfig {
   accessMode: AccessMode;
   tlsDnsProvider: string;
   tlsDnsEnvVars: Record<string, string>;
-  /**
-   * Self-CA only: comma-separated list of IPs to include in the leaf cert SAN.
-   * Auto-detected by run.ts/headless when self-ca mode is selected and this
-   * is empty; user can override via AGENTHUB_LAN_IP or the TUI prompt.
-   */
-  lanIp: string;
 }
 
 export function emptyConfig(): InstallConfig {
@@ -94,11 +83,10 @@ export function emptyConfig(): InstallConfig {
     dokployEnvironmentId: "",
     serverImage: "ghcr.io/physikal/agenthubv2-server:latest",
     workspaceImage: "ghcr.io/physikal/agenthubv2-workspace:latest",
-    tlsMode: "auto",
+    tlsMode: "public-alpn",
     accessMode: "lan",
     tlsDnsProvider: "",
     tlsDnsEnvVars: {},
-    lanIp: "",
   };
 }
 
@@ -161,7 +149,6 @@ export function renderEnv(cfg: InstallConfig): string {
     `INFISICAL_ADMIN_PASSWORD=${cfg.infisicalAdminPassword}`,
     "",
     `AGENTHUB_ADMIN_PASSWORD=${cfg.adminPassword}`,
-    ...(cfg.lanIp ? [`AGENTHUB_LAN_IP=${cfg.lanIp}`] : []),
     ...(Object.keys(cfg.tlsDnsEnvVars).length > 0
       ? [
           "",
@@ -199,9 +186,6 @@ export function applyEnvOverrides(
   }
   if (env["AGENTHUB_ACCESS_MODE"]) {
     next.accessMode = env["AGENTHUB_ACCESS_MODE"] as AccessMode;
-  }
-  if (env["AGENTHUB_LAN_IP"]) {
-    next.lanIp = env["AGENTHUB_LAN_IP"];
   }
   if (env["AGENTHUB_TLS_DNS_PROVIDER"]) {
     next.tlsDnsProvider = env["AGENTHUB_TLS_DNS_PROVIDER"];
@@ -261,7 +245,7 @@ export function missingRequiredForHeadless(cfg: InstallConfig): string[] {
       `AGENTHUB_TLS_MODE (got '${cfg.tlsMode}'; valid: ${VALID_TLS_MODES.join(", ")})`,
     );
   }
-  if (cfg.tlsMode === "dns-01" || (cfg.tlsMode === "auto" && cfg.tlsDnsProvider)) {
+  if (cfg.tlsMode === "dns-01") {
     if (!cfg.tlsDnsProvider) {
       missing.push("AGENTHUB_TLS_DNS_PROVIDER");
     } else if (cfg.tlsDnsProvider === "cloudflare") {

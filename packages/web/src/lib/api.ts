@@ -1,7 +1,9 @@
-// ---- TLS admin (Plan 4) -------------------------------------------------
+// ---- Access/TLS admin ---------------------------------------------------
 
-export interface TlsReconfigureRequest {
-  mode: "public-alpn" | "dns-01" | "lan";
+export interface AccessReconfigureRequest {
+  accessMode: "lan" | "public";
+  /** Required when accessMode === "public". */
+  publicTlsMode?: "public-alpn" | "dns-01";
   tlsEmail?: string;
   dnsProvider?: string;
   dnsEnvVars?: Record<string, string>;
@@ -14,7 +16,7 @@ export interface TlsReconfigureRequest {
  * optional `signal` arg.
  */
 export async function* streamAccessReconfigure(
-  req: TlsReconfigureRequest,
+  req: AccessReconfigureRequest,
   signal?: AbortSignal,
 ): AsyncIterable<{ event: string; data: string }> {
   const init: RequestInit = {

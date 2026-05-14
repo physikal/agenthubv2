@@ -1,5 +1,5 @@
 import React, { useRef, useState } from "react";
-import { streamAccessReconfigure } from "../../lib/api.js";
+import { streamAccessReconfigure, type AccessReconfigureRequest } from "../../lib/api.js";
 
 type Step =
   | "access-mode"
@@ -60,16 +60,17 @@ export const ReconfigureAccessModal: React.FC<{
       if (state.mode === "dns-01" && state.dnsProvider === "cloudflare") {
         dnsEnvVars["CF_DNS_API_TOKEN"] = state.cfApiToken;
       }
-      const resolvedMode = state.accessMode === "lan" ? "lan" : state.mode!;
-      const stream = streamAccessReconfigure(
-        {
-          mode: resolvedMode,
-          tlsEmail: state.tlsEmail,
-          ...(state.mode === "dns-01" ? { dnsProvider: state.dnsProvider } : {}),
-          ...(state.mode === "dns-01" ? { dnsEnvVars } : {}),
-        },
-        abortRef.current.signal,
-      );
+      const req: AccessReconfigureRequest =
+        state.accessMode === "lan"
+          ? { accessMode: "lan" }
+          : {
+              accessMode: "public",
+              publicTlsMode: state.mode!,
+              tlsEmail: state.tlsEmail,
+              ...(state.mode === "dns-01" ? { dnsProvider: state.dnsProvider } : {}),
+              ...(state.mode === "dns-01" ? { dnsEnvVars } : {}),
+            };
+      const stream = streamAccessReconfigure(req, abortRef.current.signal);
       for await (const ev of stream) {
         if (ev.event === "log") {
           setLogs((cur) => [...cur, ev.data]);

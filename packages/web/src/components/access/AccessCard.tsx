@@ -72,11 +72,14 @@ export const AccessCard: React.FC = () => {
   }
 
   async function forceRenew(): Promise<void> {
+    // resolver is "public-alpn" or "dns-01" for public installs.
+    // The renew button is only rendered in the public branch (not in the lan
+    // branch above), so tls.resolver will always be a valid publicTlsMode here.
     const res = await fetch("/api/admin/access/renew", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ mode: tls!.resolver }),
+      body: JSON.stringify({ publicTlsMode: tls!.resolver }),
     });
     if (res.ok) await refresh();
   }

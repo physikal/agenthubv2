@@ -481,14 +481,14 @@ export function adminRoutes(sessionManager: SessionManager) {
     return c.json({ email, password });
   });
 
-  // POST /api/admin/access/reconfigure — apply new TLS config, stream progress as SSE
+  // POST /api/admin/access/reconfigure — apply new access/TLS config, stream progress as SSE
   app.post("/access/reconfigure", async (c) => {
     const body = await c.req.json<{
-      mode: "public-alpn" | "dns-01" | "self-ca";
+      accessMode: "lan" | "public";
+      publicTlsMode?: "public-alpn" | "dns-01";
       tlsEmail?: string;
       dnsProvider?: string;
       dnsEnvVars?: Record<string, string>;
-      lanIp?: string;
       noRollback?: boolean;
       regenCert?: boolean;
     }>();
@@ -502,7 +502,13 @@ export function adminRoutes(sessionManager: SessionManager) {
           "../services/tls/reconfigure.js"
         );
         for await (const line of runReconfigureContainer(
-          body,
+          {
+            accessMode: body.accessMode,
+            ...(body.publicTlsMode !== undefined ? { publicTlsMode: body.publicTlsMode } : {}),
+            ...(body.tlsEmail !== undefined ? { tlsEmail: body.tlsEmail } : {}),
+            ...(body.dnsProvider !== undefined ? { dnsProvider: body.dnsProvider } : {}),
+            ...(body.dnsEnvVars !== undefined ? { dnsEnvVars: body.dnsEnvVars } : {}),
+          },
           body.noRollback ?? false,
           body.regenCert ?? false,
         )) {
@@ -518,17 +524,15 @@ export function adminRoutes(sessionManager: SessionManager) {
     });
   });
 
-  // POST /api/admin/access/renew — force-renew the cert.
-  // Self-CA: REGEN=1 via reconfigure container. LE modes: same path; the
-  // reconfigure CLI re-applies the existing config and Traefik picks up
-  // renewal on restart.
+  // POST /api/admin/access/renew — force-renew the cert on public installs.
+  // Re-applies the existing config; Traefik picks up renewal on restart.
+  // The AccessCard only renders this button for public (non-lan) installs.
   app.post("/access/renew", async (c) => {
     const body = await c.req.json<{
-      mode: "public-alpn" | "dns-01" | "self-ca";
+      publicTlsMode: "public-alpn" | "dns-01";
       tlsEmail?: string;
       dnsProvider?: string;
       dnsEnvVars?: Record<string, string>;
-      lanIp?: string;
     }>();
     return streamSSE(c, async (stream) => {
       const safeWrite = (ev: { event: string; data: string }): void => {
@@ -539,9 +543,15 @@ export function adminRoutes(sessionManager: SessionManager) {
           "../services/tls/reconfigure.js"
         );
         for await (const line of runReconfigureContainer(
-          body,
+          {
+            accessMode: "public",
+            publicTlsMode: body.publicTlsMode,
+            ...(body.tlsEmail !== undefined ? { tlsEmail: body.tlsEmail } : {}),
+            ...(body.dnsProvider !== undefined ? { dnsProvider: body.dnsProvider } : {}),
+            ...(body.dnsEnvVars !== undefined ? { dnsEnvVars: body.dnsEnvVars } : {}),
+          },
           false,
-          body.mode === "self-ca",
+          false,
         )) {
           safeWrite({ event: "log", data: line });
         }

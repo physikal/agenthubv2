@@ -201,25 +201,10 @@ describe("renderEnv ACCESS_MODE + PUBLIC_URL", () => {
   });
 });
 
-describe("lanIp config", () => {
-  it("defaults to empty (filled by run.ts / headless if needed)", () => {
-    expect(emptyConfig().lanIp).toBe("");
-  });
-
-  it("AGENTHUB_LAN_IP override sets it", () => {
-    const cfg = applyEnvOverrides(emptyConfig(), {
-      AGENTHUB_LAN_IP: "10.0.0.5",
-    });
-    expect(cfg.lanIp).toBe("10.0.0.5");
-  });
-
-  it("renderEnv emits AGENTHUB_LAN_IP only when non-empty", () => {
-    expect(renderEnv({ ...emptyConfig(), lanIp: "10.0.0.5" })).toContain(
-      "AGENTHUB_LAN_IP=10.0.0.5",
-    );
-    expect(renderEnv({ ...emptyConfig(), lanIp: "" })).not.toContain(
-      "AGENTHUB_LAN_IP=",
-    );
+describe("AGENTHUB_LAN_IP env var", () => {
+  it("renderEnv does not emit AGENTHUB_LAN_IP (lanIp removed from config)", () => {
+    // lanIp was removed in the access-mode redesign; renderEnv must not emit it.
+    expect(renderEnv(emptyConfig())).not.toContain("AGENTHUB_LAN_IP=");
   });
 });
 
@@ -311,8 +296,8 @@ describe("applyEnvOverrides for other providers", () => {
 });
 
 describe("tlsMode", () => {
-  it("defaults to 'auto'", () => {
-    expect(emptyConfig().tlsMode).toBe("auto");
+  it("defaults to 'public-alpn'", () => {
+    expect(emptyConfig().tlsMode).toBe("public-alpn");
   });
 
   it("applies AGENTHUB_TLS_MODE override", () => {
@@ -327,7 +312,7 @@ describe("tlsMode", () => {
       AGENTHUB_TLS_MODE: "wat",
     });
     expect(missingRequiredForHeadless(cfg)).toContain(
-      "AGENTHUB_TLS_MODE (got 'wat'; valid: auto, public-alpn, dns-01, self-ca)",
+      "AGENTHUB_TLS_MODE (got 'wat'; valid: public-alpn, dns-01)",
     );
   });
 });
