@@ -552,6 +552,9 @@ export class SessionManager {
       }
     }
 
+    const { terminalBuffers } = await import("../ws/terminal-buffer.js");
+    terminalBuffers.free(sessionId);
+
     this.updateSession(sessionId, {
       status: "completed",
       statusDetail: "session ended",

@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { SessionManager } from "../services/session-manager.js";
 import { authenticateToken } from "../middleware/auth.js";
 import { isOriginAllowed } from "../middleware/origin.js";
+import { terminalBuffers } from "./terminal-buffer.js";
 
 const TTYD_PORT = 7681;
 /** Drop frames past this point. Bursty ttyd output (e.g. `cat large.log`) could
@@ -79,6 +80,12 @@ function handleBrowserConnection(
     return;
   }
 
+  // Replay buffered scrollback to the browser before any live ttyd traffic.
+  const replay = terminalBuffers.drain(sessionId);
+  if (replay.length > 0) {
+    browserWs.send(replay, { binary: true });
+  }
+
   const ttydUrl = `ws://${session.workspaceIp}:${String(TTYD_PORT)}/ws`;
   const ttydWs = new WebSocket(ttydUrl, ["tty"]);
 
@@ -89,7 +96,6 @@ function handleBrowserConnection(
   });
 
   ttydWs.on("message", (data, isBinary) => {
-    if (browserWs.readyState !== WebSocket.OPEN) return;
     if (!isBinary) return;
 
     const buf = Buffer.from(data as ArrayBuffer);
@@ -98,8 +104,14 @@ function handleBrowserConnection(
     // ttyd prefixes server→client messages with ASCII type byte:
     // '0' (0x30) = output, '1' (0x31) = title, '2' (0x32) = preferences
     if (buf[0] === 0x30) {
+      const payload = buf.subarray(1);
+      // Always append to the buffer, even if the browser is currently
+      // backpressured or closed — the buffer is the durable scrollback
+      // that survives reconnects, independent of the live WS state.
+      terminalBuffers.append(sessionId, payload);
+      if (browserWs.readyState !== WebSocket.OPEN) return;
       if (browserWs.bufferedAmount > BACKPRESSURE_BYTES) return;
-      browserWs.send(buf.subarray(1), { binary: true });
+      browserWs.send(payload, { binary: true });
     }
   });
 
