@@ -84,6 +84,11 @@ export default defineConfig({
           items: [
             { label: "The agenthub CLI", slug: "operators/cli" },
             { label: "Updates", slug: "operators/updates" },
+            { label: "Access modes (LAN / public)", slug: "operators/access-modes" },
+            { label: "Deployment topology", slug: "operators/deployment-topology" },
+            { label: "Install Backup", slug: "operators/install-backup" },
+            { label: "Workspace Backup", slug: "operators/workspace-backup" },
+            { label: "Disaster Recovery", slug: "operators/disaster-recovery" },
             { label: "Data & volumes", slug: "operators/data" },
             { label: "Troubleshooting", slug: "operators/troubleshooting" },
           ],

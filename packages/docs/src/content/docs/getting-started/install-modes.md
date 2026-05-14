@@ -1,11 +1,16 @@
 ---
 title: How the install works
-description: Three install modes, one installer, and what "provisioner" means.
+description: Provisioner modes, access modes, and what the installer actually does.
 ---
 
-AgentHub is delivered as a Docker Compose bundle plus an Ink (React-for-terminals) installer. You pick one **provisioner mode** at install time — that choice controls how AgentHub creates workspace containers for each session.
+AgentHub is delivered as a Docker Compose bundle plus an Ink (React-for-terminals) installer. You make two independent choices at install time:
 
-## The two modes
+1. **Provisioner mode** — how AgentHub spawns workspace containers (this page, next section).
+2. **Access mode** — how operators reach the install over the network (`lan` HTTP vs `public` HTTPS — see [Access modes](/docs/operators/access-modes/)).
+
+Both default to the sensible choice (`docker` + `lan`), and both can be changed post-install.
+
+## Provisioner modes
 
 | Mode | What it does | When to pick it |
 |---|---|---|
@@ -13,6 +18,16 @@ AgentHub is delivered as a Docker Compose bundle plus an Ink (React-for-terminal
 | `dokploy-remote` | Points AgentHub at a pre-existing Dokploy instance. | You already run Dokploy in production and want AgentHub to reuse it. |
 
 `docker` mode is simplest and is what most users should pick. It does mount `/var/run/docker.sock` into the server container, which is a real security surface. If you need a zero-socket posture, pick `dokploy-remote` — Dokploy owns the daemon access and AgentHub talks to it over HTTP.
+
+## Access modes
+
+`lan` (default) serves AgentHub on plain HTTP at `:80` — no TLS, no cert ceremony, accessible from your LAN. Right answer for ~99% of self-hosted installs.
+
+`public` opens `:443` for Let's Encrypt HTTPS. Two sub-modes:
+- `public-alpn` — TLS-ALPN-01 challenge. Needs port :443 reachable from the public internet.
+- `dns-01` — DNS-01 challenge via [lego](https://go-acme.github.io/lego/dns/). Works for internal-only hosts.
+
+The choice affects which ports the installer opens (`80` always; `443` only in public mode; `8443` always for the Infisical console). See [Access modes](/docs/operators/access-modes/) for the full setup. Post-install switching uses `agenthub reconfigure-access` — no reinstall needed.
 
 ## The installer
 
@@ -26,8 +41,8 @@ AgentHub is delivered as a Docker Compose bundle plus an Ink (React-for-terminal
 The TUI asks you (with defaults) for:
 
 - Provisioner mode (the two above)
-- Domain (`localhost` or your hostname)
-- TLS email (required for non-localhost domains — used by Let's Encrypt)
+- Domain (`localhost` or your hostname or LAN IP)
+- Access mode (`lan` or `public`; in public mode, the sub-mode + TLS email + optional DNS provider)
 - Admin password (leave blank to auto-generate)
 
 Then it:

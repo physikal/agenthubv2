@@ -77,7 +77,7 @@ Most common causes:
 
 ## Let's Encrypt cert won't issue
 
-Usually DNS hasn't propagated yet or port 80 isn't reachable from the public internet on your domain.
+You're in [`public` access mode](/docs/operators/access-modes/) with `public-alpn` and Let's Encrypt can't issue a cert. Usually DNS hasn't propagated yet or port 80 isn't reachable from the public internet on your domain.
 
 ```bash
 # From outside the host — confirm DNS points at you and port 80 reaches Traefik
@@ -87,7 +87,33 @@ curl -v http://your-domain/ 2>&1 | head -20
 docker compose -f compose/docker-compose.yml logs traefik --tail 50 | grep -iE 'acme|cert|error'
 ```
 
-Workaround for the impatient: reinstall with `AGENTHUB_DOMAIN=localhost` to skip Let's Encrypt entirely, then redo the install with your real domain once DNS is resolving.
+**Workaround for the impatient:** switch back to `lan` mode (HTTP-only) without reinstalling:
+
+```bash
+sudo agenthub reconfigure-access
+# Choose: lan
+```
+
+Then switch back to `public` when DNS / port 443 reachability is sorted. Or, if your host can't reach :443 from outside but you have a DNS provider API token, switch the public sub-mode to `dns-01`:
+
+```bash
+sudo AGENTHUB_ACCESS_MODE=public \
+     AGENTHUB_TLS_MODE=dns-01 \
+     AGENTHUB_TLS_EMAIL=ops@example.com \
+     AGENTHUB_TLS_DNS_PROVIDER=cloudflare \
+     AGENTHUB_CLOUDFLARE_API_TOKEN=<token> \
+     agenthub reconfigure-access --non-interactive
+```
+
+## Browser refuses to load `http://my-install/` after switching to lan mode
+
+You switched from `public` (or the old self-CA mode) to `lan`, and your browser keeps redirecting to `https://`. This is **HSTS pinning**: when your install served HTTPS, it advertised "always use HTTPS for this hostname for the next N months" via the Strict-Transport-Security response header. Browsers cache that for up to 6 months.
+
+Clear the HSTS pin per-browser:
+
+- **Chrome / Edge / Brave:** open `chrome://net-internals/#hsts`, scroll to "Delete domain security policies", type your hostname, click Delete. Then explicitly type `http://` in the address bar.
+- **Firefox:** History → Manage History → search for the hostname → right-click → Forget About This Site.
+- **Safari:** there's no in-app UI; either wait it out or remove the HSTS entry from `~/Library/Cookies/HSTS.plist` (close Safari first).
 
 ## `admin` login fails with the password I was printed
 

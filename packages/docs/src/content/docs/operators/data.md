@@ -7,19 +7,38 @@ Every bit of persistent state AgentHub manages lives in one of a small number of
 
 ## The volumes
 
-| Volume name | What's in it | Size at rest | When you'd back it up |
+| Volume name | What's in it | Size at rest | Covered by |
 |---|---|---|---|
-| `agenthub-data` | SQLite database (`/data/agenthub.db`) with users, sessions, deployments, infra configs, backup runs. | ~1–10 MB | Always. This is the platform's state. |
-| `agenthub-home-{userId}` | One per user. The user's `/home/coder` — code, credentials, configs, installed packages. | Grows with user data; typically 100 MB – 10 GB | Per-user, via the [Backups page](/docs/web-ui/backups/) — that's what it's for. |
-| `infisical-pg-data` | Infisical's Postgres — all secrets, audit log, org/project/identity config. | ~100 MB | Always. Losing this loses every provider credential. |
-| `infisical-redis-data` | Infisical's Redis cache. | ~5 MB | Optional — rebuilds from Postgres. |
-| `traefik-letsencrypt` | Let's Encrypt certificate storage. | ~100 KB | Optional — regenerates if you have TLS email + DNS. |
+| `agenthub-data` | SQLite database (`/data/agenthub.db`) with users, sessions, deployments, infra configs, backup runs. Also `/data/install-backups/` and `/data/workspace-backups/` directories. | ~1–10 MB (+ backup bundle sizes) | `agenthub backup-install` |
+| `agenthub-home-{userId}` | One per user. The user's `/home/coder` — code, credentials, configs, installed packages. | Grows with user data; typically 100 MB – 10 GB | `agenthub backup-workspace --user <name>` |
+| `infisical-pg-data` | Infisical's Postgres — all provider secrets, audit log, org/project/identity config. | ~100 MB | `agenthub backup-install` (dumped into the bundle) |
+| `infisical-redis-data` | Infisical's Redis cache. | ~5 MB | Rebuilds from Postgres — no backup needed. |
+| `traefik-letsencrypt` | Let's Encrypt certificate storage (public access mode only). | ~100 KB | Regenerates from ACME on first request — no backup needed. |
 
 Volumes are namespaced under the compose project `agenthub`, so actual Docker volume names are `agenthub_agenthub-data`, `agenthub_infisical-pg-data`, etc. Run `docker volume ls | grep agenthub` to see them.
 
-## Backing up AgentHub's own data
+## Backing up AgentHub
 
-The user-facing Backups feature handles **user home directories** (`agenthub-home-*`). For everything else — SQLite, Infisical's Postgres, Let's Encrypt — back up Docker volumes directly:
+Two CLI verbs cover everything that matters:
+
+```bash
+# Install state — compose/.env + SQLite + Infisical Postgres dump,
+# bundled together. Auto-runs before every `agenthub update`.
+sudo agenthub backup-install
+
+# Per-user workspace — one user's /home/coder volume as tar.zst.
+sudo agenthub backup-workspace --user alice
+# Or all users in one go:
+sudo agenthub backup-workspace --all
+```
+
+Both write to `/data/install-backups/` and `/data/workspace-backups/` locally, and push to Backblaze B2 (or any S3-compatible backend) if you've configured one. See [Install Backup](/docs/operators/install-backup/) for B2/S3 setup + retention.
+
+For a true cross-VM migration (dead host → fresh box), run both and follow the [Disaster Recovery](/docs/operators/disaster-recovery/) walkthrough.
+
+### Raw access (if you need it)
+
+The CLI verbs are the right path for almost everyone. If you have a non-standard need (snapshot to an unusual backend the rclone-driven CLI doesn't support, or just want a one-off file copy), reach into the volumes directly:
 
 ```bash
 # SQLite (platform state)
@@ -31,11 +50,11 @@ docker run --rm -v agenthub_infisical-pg-data:/data -v $(pwd):/backup alpine \
   tar czf /backup/infisical-pg-data-$(date +%F).tgz -C /data .
 ```
 
-Store these offsite (S3, B2, whatever). Restore by reversing the tar into a **fresh** volume of the same name, with the containers stopped.
+Restore by reversing the tar into a **fresh** volume of the same name, with the containers stopped.
 
 ### Important: Infisical encryption key
 
-Infisical encrypts secret values using the `INFISICAL_ENCRYPTION_KEY` from `compose/.env`. If you restore `infisical-pg-data` to a new host without also restoring that key, every secret becomes unrecoverable gibberish. **Back up `compose/.env` alongside the volumes.** Treat it with the same care as the encryption key itself — it contains every random secret the installer generated.
+Infisical encrypts secret values using the `INFISICAL_ENCRYPTION_KEY` from `compose/.env`. If you restore `infisical-pg-data` to a new host without also restoring that key, every secret becomes unrecoverable gibberish. `agenthub backup-install` includes `compose/.env` in the bundle so this is handled automatically — only the raw-access recipe above needs you to back up `.env` separately.
 
 ## What's on the host filesystem
 
@@ -44,8 +63,8 @@ Outside of Docker volumes, AgentHub writes to:
 | Path | Purpose |
 |---|---|
 | `<install-dir>` | The git checkout. The server has it mounted rw at `/repo` so it can run git commands for the Version panel and spawn the updater. |
-| `<install-dir>/compose/.env` | Secrets for compose. Mode 0600. Back this up. |
-| `/usr/local/bin/agenthub` | The operator CLI. Regenerable — reinstalls on `./scripts/install.sh`. |
+| `<install-dir>/compose/.env` | Secrets for compose. Mode 0600. Included in `agenthub backup-install` bundles. |
+| `/usr/local/bin/agenthub` | The operator CLI. Auto-installed by `agenthub update`. |
 | `/etc/agenthub/config` | Points the CLI at the install dir. Regenerable. |
 
 If `<install-dir>` has uncommitted changes, `git pull` during an update will conflict. Either commit them, stash them, or hard-reset — the install dir is treated as code, not data.
@@ -73,4 +92,4 @@ Not data, exactly, but relevant to capacity planning:
 - **traefik** — ~40 MB idle.
 - **Per workspace container** — 300–800 MB idle. Under active agent load (big prompts, long outputs), peaks at 1–2 GB.
 
-With 5 active sessions you're looking at ~3–5 GB total. Plan host sizing accordingly.
+With 5 active sessions you're looking at ~3–5 GB total. Plan host sizing accordingly — the README's recommended `8 GB RAM` accommodates 5–7 simultaneous sessions comfortably.
