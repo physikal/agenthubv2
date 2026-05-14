@@ -121,6 +121,7 @@ export function renderEnv(cfg: InstallConfig): string {
     `DOMAIN=${cfg.domain}`,
     `AGENTHUB_ACCESS_MODE=${cfg.accessMode}`,
     `AGENTHUB_PUBLIC_URL=${cfg.accessMode === "public" ? "https" : "http"}://${cfg.domain}`,
+    `AGENTHUB_TRAEFIK_ENTRYPOINT=${cfg.accessMode === "public" ? "websecure" : "web"}`,
     `TLS_EMAIL=${cfg.tlsEmail}`,
     `AGENTHUB_HOST_RULE=${hostRule}`,
     `AGENTHUB_PUBLIC_HOST=${cfg.publicHost}`,

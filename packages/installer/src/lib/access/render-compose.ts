@@ -107,7 +107,12 @@ export function renderTraefikOverride(input: RenderInput): string | null {
       ports: ["80:80", "443:443", "8443:8443"],
     },
     "agenthub-server": {
-      labels: ["traefik.http.routers.agenthub.tls.certresolver=le"],
+      // Public mode: enable TLS on the router (base compose omits this so
+      // lan mode stays on plain web entrypoint) AND attach the cert resolver.
+      labels: [
+        "traefik.http.routers.agenthub.tls=true",
+        "traefik.http.routers.agenthub.tls.certresolver=le",
+      ],
     },
   };
 

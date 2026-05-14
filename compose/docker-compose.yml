@@ -202,10 +202,13 @@ services:
     labels:
       - traefik.enable=true
       - traefik.http.routers.agenthub.rule=${AGENTHUB_HOST_RULE}
-      - traefik.http.routers.agenthub.entrypoints=websecure
-      # Cert resolver attached via traefik.override.yml when in an ACME mode.
-      # Localhost installs omit it so Traefik serves its default cert.
-      - traefik.http.routers.agenthub.tls=true
+      # Per-mode entrypoint: lan → :80 (web), public → :443 (websecure).
+      # renderEnv emits AGENTHUB_TRAEFIK_ENTRYPOINT; falls back to web for
+      # safety on installs that pre-date the access-mode redesign.
+      - traefik.http.routers.agenthub.entrypoints=${AGENTHUB_TRAEFIK_ENTRYPOINT:-web}
+      # TLS (`tls=true` + optional cert resolver) is attached via
+      # traefik.override.yml in public mode only. lan mode keeps the
+      # router on the plain web entrypoint with no TLS.
       - traefik.http.services.agenthub.loadbalancer.server.port=3000
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]

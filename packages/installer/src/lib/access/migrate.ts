@@ -99,13 +99,21 @@ export function migrateAccessConfig(composeDir: string): MigrateResult {
   }
 
   const domain = env.get("DOMAIN") ?? "localhost";
-  const oldMode = env.get("AGENTHUB_TLS_MODE") ?? "auto";
+  // Some pre-PR-#75 installs ran in self-CA mode without an explicit
+  // AGENTHUB_TLS_MODE=self-ca line in .env — the mode was implied by the
+  // presence of AGENTHUB_LAN_IP (self-CA only). Treat that as self-ca for
+  // migration purposes; otherwise an "auto" default would route them to
+  // the wrong (public) path.
+  const oldMode =
+    env.get("AGENTHUB_TLS_MODE") ??
+    (env.has("AGENTHUB_LAN_IP") ? "self-ca" : "auto");
 
   // Localhost → lan
   if (domain === "localhost") {
     env.set("AGENTHUB_ACCESS_MODE", "lan");
     env.set("AGENTHUB_PUBLIC_URL", "http://localhost");
     env.delete("AGENTHUB_TLS_MODE");
+    env.delete("AGENTHUB_LAN_IP");
     env.delete("COMPOSE_FILE");
     writeFileSync(envPath, renderDotEnv(env));
     applyLanTraefikFiles(composeDir, domain);
