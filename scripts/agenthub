@@ -430,6 +430,12 @@ cmd_update() {
   msg "pulling + rebuilding"
   local old_sha="$local_sha"
 
+  # Snapshot install state before any destructive steps. Best-effort: a
+  # failed backup prints a warning but does not abort the update.
+  if ! backup_install_auto; then
+    warn "auto-backup failed — continuing update (check: agenthub logs)"
+  fi
+
   git reset --hard origin/main --quiet
 
   # Single-pass update under the currently-running CLI. No self-update
@@ -569,6 +575,20 @@ cmd_restore_install() {
     "${from_args[@]}" \
     ${force} \
     ${dry_run}
+}
+
+# Best-effort auto-backup, called by cmd_update before destructive steps.
+# Returns 1 (without aborting) when the server is not yet running.
+backup_install_auto() {
+  local ctr
+  ctr="$(server_container_name)"
+  if ! $SUDO docker inspect "$ctr" --format '{{.State.Running}}' 2>/dev/null | grep -q 'true'; then
+    warn "server container not running — skipping auto-backup"
+    return 1
+  fi
+  local sha_short
+  sha_short="$(git -C "$AGENTHUB_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  cmd_backup_install --note "auto-backup before update to ${sha_short}"
 }
 
 cmd_logs() {
