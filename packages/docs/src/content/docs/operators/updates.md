@@ -27,15 +27,16 @@ Same code path. See [The agenthub CLI](/docs/operators/cli/).
 
 ## What each update actually does
 
-1. **Git pull** inside the install's checkout (`/repo` mount in the server container).
-2. **Detect image drift.** Each `:local` Docker image carries an `org.agenthub.git-sha` label baked at build time. The CLI diffs that label against `HEAD` for each image's input paths — any commit between them that touches those paths flags the image stale.
-3. **`docker build --build-arg GIT_SHA=$(git rev-parse HEAD)`** for any image whose context moved. The new build inherits the new label so the next update knows what's fresh.
-4. **`docker compose up -d`** to apply compose-file changes without recreating containers.
-5. **`docker compose up -d --force-recreate agenthub-server`** to swap in the new server image.
-6. **`verify_server_image`** asserts the running container's image ID actually matches `agenthubv2-server:local`. If compose silently no-ops the recreate (a real failure mode pre-PR-#57), this step dies loudly with a pointer back to the recreate command.
-7. **DB migrations** run on server boot (Drizzle handles this — it's fast, idempotent, and fails loudly).
-8. **Health probe** polls `/api/health` for up to 60 seconds and only returns green when the served `sha` field matches `git rev-parse HEAD`. End-to-end proof the new image is handling traffic.
-9. **Self-update the CLI** if `scripts/agenthub` changed — installed *last*, no re-exec, since the rebuild + recreate ran fine under the previously-installed CLI.
+1. **Auto-backup (best-effort).** Runs `agenthub backup-install` before any destructive step. Bundles `compose/.env` + SQLite + Infisical Postgres into `/data/install-backups/install-<domain>-<ts>.tar.gz` and pushes to remote storage if configured. A failed backup prints a warning but doesn't abort — the update continues. See [Install Backup](/docs/operators/install-backup/).
+2. **Git pull** inside the install's checkout (`/repo` mount in the server container).
+3. **Detect image drift.** Each `:local` Docker image carries an `org.agenthub.git-sha` label baked at build time. The CLI diffs that label against `HEAD` for each image's input paths — any commit between them that touches those paths flags the image stale.
+4. **`docker build --build-arg GIT_SHA=$(git rev-parse HEAD)`** for any image whose context moved. The new build inherits the new label so the next update knows what's fresh.
+5. **`docker compose up -d`** to apply compose-file changes without recreating containers.
+6. **`docker compose up -d --force-recreate agenthub-server`** to swap in the new server image.
+7. **`verify_server_image`** asserts the running container's image ID actually matches `agenthubv2-server:local`. If compose silently no-ops the recreate, this step dies loudly with a pointer back to the recreate command.
+8. **DB migrations** run on server boot (Drizzle handles this — it's fast, idempotent, and fails loudly).
+9. **Front-door probe** polls `/api/health` for up to 60 seconds — http :80 in `lan` mode, https :443 in `public` mode — and confirms the served `sha` field matches `git rev-parse HEAD`. Advisory only; a probe failure prints a warning but doesn't roll back (verify_server_image above is authoritative).
+10. **Self-update the CLI** if `scripts/agenthub` changed — installed *last*, no re-exec, since the rebuild + recreate ran fine under the previously-installed CLI.
 
 ## What can go wrong
 
@@ -58,7 +59,9 @@ Inside active workspace sessions: your terminal reconnects on its own once the s
 
 ## Rolling back
 
-If an update breaks something, roll back with git:
+Two paths, depending on what broke.
+
+**Code-only rollback (no DB schema change):** roll back with git.
 
 ```bash
 cd <install-dir>
@@ -68,7 +71,15 @@ agenthub update
 
 The update flow is strictly idempotent — running it with an older SHA rebuilds on that older SHA. Data in volumes is unaffected.
 
-**Migrations are generally forward-only**, though — if the new version added a column, rolling back removes it. Plan accordingly before applying a migration to production data.
+**Restore the auto-backup that fired before the update.** When `agenthub update` runs, step 1 produces an install-state bundle. If a migration changed schema or destroyed data, restore that bundle:
+
+```bash
+sudo agenthub restore-install --snapshot latest
+```
+
+This re-applies `compose/.env`, SQLite, and Infisical Postgres exactly as they were before the update — including any rows the breaking migration touched. See [Disaster Recovery](/docs/operators/disaster-recovery/).
+
+**Migrations are generally forward-only**, so git-rollback alone may not work if a column was added; the auto-backup restore is the safe path.
 
 ## Pinning a version
 

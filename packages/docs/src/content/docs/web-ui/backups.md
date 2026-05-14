@@ -3,7 +3,19 @@ title: Backups
 description: Snapshot /home/coder to Backblaze B2 and restore on demand.
 ---
 
-**Backups** is a simple page for shipping `/home/coder` from your active session to a Backblaze B2 bucket and pulling it back on demand. It's operations-only: you set up the B2 credentials once on the [Integrations page](/docs/web-ui/integrations/), and this page is the button to run the backup.
+**Backups** is a simple page for shipping `/home/coder` from your active session to a Backblaze B2 bucket and pulling it back on demand. It's the per-user, in-session backup surface — you set up the B2 credentials once on the [Integrations page](/docs/web-ui/integrations/), and this page is the button to run the backup.
+
+:::tip[Three backup scopes]
+AgentHub has three independent backup paths. Pick the one that matches what you're protecting:
+
+| Scope | Surface | Use case |
+|---|---|---|
+| **Per-user, in-session** | **This page** (Backups) | "I want to save my current shell's files to my own B2 bucket." Runs inside the active session via the agent daemon. |
+| **Operator, install state** | Settings → Admin → Install Backup, or `agenthub backup-install` | "I want to back up the platform itself — users, secrets, configs — for disaster recovery." Bundles `compose/.env` + SQLite + Infisical Postgres. |
+| **Operator, workspace volume** | `agenthub backup-workspace --user <name>` | "I want to snapshot a user's `/home/coder` from outside their session (no session required)." Operator-side counterpart to this page. |
+
+Same operator can use all three. See [Install Backup](/docs/operators/install-backup/), [Workspace Backup](/docs/operators/workspace-backup/), and [Disaster Recovery](/docs/operators/disaster-recovery/) for the operator-scope flows.
+:::
 
 ## Prerequisites
 
@@ -59,4 +71,4 @@ The cost is the "requires an active session" constraint. If that bites you, star
 
 ## What about AgentHub's own data?
 
-This page backs up user home directories, not the platform itself. To back up AgentHub's SQLite database, Infisical's Postgres, or the Traefik cert store, use standard Docker volume tooling. See [Data & volumes](/docs/operators/data/).
+This page backs up user home directories from inside the session. For the platform itself (users, secrets, configs), admins should use the **Install Backup** card under Settings → Admin, or the `agenthub backup-install` CLI verb. See [Data & volumes](/docs/operators/data/) and [Install Backup](/docs/operators/install-backup/).

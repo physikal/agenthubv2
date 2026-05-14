@@ -48,6 +48,29 @@ Same code path as `agenthub update` from the host shell — both spawn the same 
 
 See [Updates](/docs/operators/updates/) for the failure modes.
 
+## Access (admin only)
+
+The **Access** card shows the current access mode (`lan` or `public`) and TLS resolver, plus a **Reconfigure** button that walks you through switching modes without dropping back to the shell. The same flow is available via `agenthub reconfigure-access` on the host.
+
+- **Mode** — `lan` means plain HTTP on `:80`, no TLS. `public` means Let's Encrypt HTTPS via `public-alpn` (port :443 reachable from the internet) or `dns-01` (DNS provider API token).
+- **Resolver / Issuer / Expiry** — only meaningful in `public` mode. In `lan` mode these are empty.
+
+The card also surfaces a **migration banner** when your install was created on a deprecated TLS mode that the current code no longer supports (e.g., the removed `self-ca` mode); clicking it walks you through the one-step migration to `lan` or `public`.
+
+See [Access modes](/docs/operators/access-modes/) for the lan-vs-public choice.
+
+## Install Backup (admin only)
+
+The **Install Backup** card under Admin lets admins configure where install-state bundles get pushed (Backblaze B2 or any S3-compatible: Cloudflare R2, MinIO, Wasabi, Storj, AWS S3), trigger one-off backups, view history, and run dry-run + apply restores.
+
+- **B2 Configuration** — paste your Key ID, Application Key, bucket name, and path prefix. Click **Test connection** to confirm rclone can reach the bucket.
+- **Retention** — keep the N most recent bundles; older ones are pruned from both local and remote storage after each successful run. Default: 10.
+- **Run backup now** — produces a `tar.gz` of `compose/.env` + SQLite + Infisical Postgres, written locally to `/data/install-backups/` and pushed to remote storage if configured.
+- **History** — last 50 backup + restore runs. Local bundles are downloadable from this table.
+- **Restore from backup** — dry-run first to surface conflicts (existing users, active sessions, encryption-key mismatch), then apply. Restore runs in a one-shot temp container so the live stack can restart cleanly.
+
+Same code paths as `agenthub backup-install` / `agenthub restore-install` from the host. See [Install Backup](/docs/operators/install-backup/) for the full setup walkthrough.
+
 ## Where this data lives
 
 - **Account fields** — SQLite `users` table.

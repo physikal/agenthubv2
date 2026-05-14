@@ -7,7 +7,7 @@ This is the fast path. It assumes the install finished without errors — if som
 
 ## 1. Log in
 
-Browse to the URL the installer printed (e.g. `http://localhost` or `https://your-domain.example.com`). You'll see the AgentHub login.
+Browse to the URL the installer printed (e.g. `http://localhost` in the default `lan` access mode, or `https://your-domain.example.com` if you picked `public` mode at install time). You'll see the AgentHub login.
 
 - **Username:** `admin`
 - **Password:** whatever the installer printed, also in `compose/.env` as `AGENTHUB_ADMIN_PASSWORD`
@@ -70,7 +70,7 @@ prints a URL like `https://your-host/api/sessions/{id}/preview/port/3000/` that 
 
 ## 6. Persistence you can rely on
 
-- **Close the browser tab.** The shell keeps running inside the container. Reopen the session, your history is intact.
+- **Close the browser tab.** The shell keeps running inside the container. Reopen the session — the terminal also replays the last ~256 KB of scrollback so you can see the recent context, not just a blank prompt.
 - **End the session.** The container is torn down but `/home/coder` is kept on its volume. A new session restores the same files.
 - **Restart the host.** `docker compose up -d` brings everything back, including your volumes.
 

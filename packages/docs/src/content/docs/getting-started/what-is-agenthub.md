@@ -9,12 +9,14 @@ AgentHub is a self-hosted platform that lets you drive a coding agent from your 
 
 After install you have one Docker Compose stack:
 
-- **Traefik** on ports 80 / 443 / 8443 — reverse proxy + TLS
+- **Traefik** — reverse proxy. Default `lan` access mode opens host ports `80` (AgentHub) + `8443` (Infisical console). `public` access mode also opens `443` (Let's Encrypt HTTPS). All three ports are operator-customizable via env vars.
 - **agenthub-server** — the React web UI and the Hono API backing it
-- **infisical** + its Postgres and Redis — the bundled secret store
+- **infisical** + its Postgres and Redis — the bundled secret store (you can also [bring your own Infisical](https://github.com/physikal/agenthubv2/blob/main/docs/install/agents.md#using-an-external-infisical-instance))
 - One **workspace container per active session** — spun up on demand, torn down when you click *End session*
 
 All of that runs on the one box you installed on. There's no control plane, no external registry, no phoning home.
+
+See [Access modes](/docs/operators/access-modes/) for the lan-vs-public choice.
 
 ## What a session is
 
