@@ -37,7 +37,7 @@ cd agenthubv2
 
 When install finishes you'll see **two** admin credential sets — one for AgentHub, one for the bundled Infisical secret store. Both are also written to `compose/.env`. If you lose the Infisical password, log in to the AgentHub Secrets page and click "Reveal Infisical admin login" to recover it.
 
-**Ports opened**: 80 (HTTP→HTTPS redirect), 443 (AgentHub), 8443 (Infisical console).
+**Ports opened**: 80 (AgentHub — plain HTTP in the default lan access mode), 443 (only opened when you opt into public access mode for Let's Encrypt), 8443 (Infisical console). See [docs/install/access-modes.md](docs/install/access-modes.md) for the lan-vs-public choice.
 
 Full install docs: [docs/install/humans.md](docs/install/humans.md) · [docs/install/agents.md](docs/install/agents.md) · [docs/install/installer-flow.md](docs/install/installer-flow.md) · [docs/troubleshooting.md](docs/troubleshooting.md)
 
@@ -50,8 +50,9 @@ Browser (React + xterm.js)
   │  WebSocket + REST, cookie-auth
   ▼
 ┌───────────────────────── docker compose bundle ─────────────────────────┐
-│  traefik (:80 → :443, :8443)                                            │
-│    ├─▶ :443  agenthub-server (Hono + SPA)                               │
+│  traefik (:80 always; :443 only in public access mode; :8443)           │
+│    ├─▶ :80   agenthub-server (Hono + SPA)  ← default in lan mode        │
+│    │   or :443 in public mode (LE cert via public-alpn or dns-01)       │
 │    │          ├─ SQLite      (users, sessions, integrations)            │
 │    │          ├─ Infisical   (Cloudflare tokens, B2 keys, DO tokens…)   │
 │    │          └─ Docker / Dokploy driver                                │

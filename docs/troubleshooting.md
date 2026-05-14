@@ -192,7 +192,7 @@ docker compose -f compose/docker-compose.yml up -d --force-recreate agenthub-ser
 Run `agenthub status`. If you see `TLS WARN serving Traefik default cert`, your install fell through to Traefik's built-in self-signed cert. Fix:
 
 ```bash
-agenthub reconfigure-tls
+agenthub reconfigure-access
 ```
 
 Or click [Fix now] in the migration banner that appears at the top of the admin UI. The Settings page also has a TLS card with [Reconfigure TLS] / [Force renew] / [Test] buttons.
