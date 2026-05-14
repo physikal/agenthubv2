@@ -12,8 +12,8 @@ describe("explainAcmeFailure", () => {
     expect(msg).toMatch(/port 443|DNS A record|ISP/i);
   });
 
-  it("returns self-ca hint", () => {
-    expect(explainAcmeFailure("self-ca")).toMatch(/init/i);
+  it("returns public access mode hints", () => {
+    expect(explainAcmeFailure("public")).toMatch(/port 443|DNS A record|ACME/i);
   });
 
   it("returns generic hint for unknown mode", () => {

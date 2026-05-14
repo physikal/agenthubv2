@@ -8,6 +8,7 @@ import {
   type InstallConfig,
   type ProvisionerMode,
 } from "./lib/config.js";
+import type { AccessMode } from "./lib/access/types.js";
 import { checkPrereqs, type PrereqResult } from "./lib/prereq.js";
 import { runInstall, type InstallArtifacts } from "./run.js";
 
@@ -16,10 +17,10 @@ type Step =
   | "prereq"
   | "mode"
   | "domain"
+  | "access-mode"
   | "tls-strategy"
   | "tls-email"
   | "tls-dns"
-  | "tls-self-ca"
   | "dokploy-remote"
   | "admin"
   | "confirm"
@@ -120,9 +121,28 @@ export const App: React.FC = () => {
         onSubmit={(v) => {
           const next = { ...cfg, domain: v.trim() || "localhost" };
           setCfg(next);
-          setStep(next.domain === "localhost" ? "admin" : "tls-strategy");
+          setStep(next.domain === "localhost" ? "admin" : "access-mode");
         }}
       />
+    );
+  }
+
+  if (step === "access-mode") {
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold>How will you access this install?</Text>
+        <Text dimColor>The default is "LAN only" — zero TLS setup.</Text>
+        <SelectInput
+          items={[
+            { label: "I'll only access from my LAN (no TLS setup)", value: "lan" },
+            { label: "I want my host directly reachable on the public internet (Let's Encrypt)", value: "public" },
+          ]}
+          onSelect={(item) => {
+            setCfg((c) => ({ ...c, accessMode: item.value as AccessMode }));
+            setStep(item.value === "lan" ? "admin" : "tls-strategy");
+          }}
+        />
+      </Box>
     );
   }
 
@@ -143,20 +163,11 @@ export const App: React.FC = () => {
                   "DNS challenge — Let's Encrypt cert via your DNS provider's API. Use this for internal-only hosts.",
                 value: "dns-01",
               },
-              {
-                label:
-                  "Self-signed CA — generate a private CA on this host. (Plan 3 — not yet wired up.)",
-                value: "self-ca",
-              },
             ]}
             onSelect={(item) => {
-              const tlsMode = item.value as "public-alpn" | "dns-01" | "self-ca";
+              const tlsMode = item.value as "public-alpn" | "dns-01";
               setCfg({ ...cfg, tlsMode });
-              if (tlsMode === "self-ca") {
-                setStep("tls-self-ca");
-              } else {
-                setStep("tls-email");
-              }
+              setStep("tls-email");
             }}
           />
         </Box>
@@ -195,18 +206,6 @@ export const App: React.FC = () => {
         onAbort={(msg) => {
           setError(msg);
           setStep("done");
-        }}
-      />
-    );
-  }
-
-  if (step === "tls-self-ca") {
-    return (
-      <TlsSelfCaStep
-        cfg={cfg}
-        onDone={(next) => {
-          setCfg(next);
-          setStep(cfg.mode === "dokploy-remote" ? "dokploy-remote" : "admin");
         }}
       />
     );
@@ -465,81 +464,6 @@ const TlsDnsStep: React.FC<{
                 tlsDnsEnvVars: { ...cfg.tlsDnsEnvVars, ...present },
               });
             })();
-          }}
-        />
-      </Box>
-    </Box>
-  );
-};
-
-const TlsSelfCaStep: React.FC<{
-  cfg: InstallConfig;
-  onDone: (next: InstallConfig) => void;
-}> = ({ cfg, onDone }) => {
-  // Lazy lookup so we don't pull node:os into the initial bundle.
-  const [detected, setDetected] = useState<string>("");
-  const [picking, setPicking] = useState<"choose" | "edit">("choose");
-  const [override, setOverride] = useState("");
-
-  useEffect(() => {
-    void (async () => {
-      const { detectLanIp } = await import("./lib/tls/lan-ip.js");
-      const ip = detectLanIp();
-      setDetected(ip);
-      setOverride(ip);
-    })();
-  }, []);
-
-  if (!detected) {
-    return (
-      <Box flexDirection="column" padding={1}>
-        <Text>
-          <Spinner type="dots" /> detecting LAN IP…
-        </Text>
-      </Box>
-    );
-  }
-
-  if (picking === "choose") {
-    return (
-      <Box flexDirection="column" padding={1}>
-        <Text bold>Self-CA leaf cert SAN</Text>
-        <Text>Detected LAN IP: <Text color="cyan">{detected}</Text></Text>
-        <Text>
-          Cert will cover{" "}
-          <Text color="cyan">{cfg.domain}</Text>,{" "}
-          <Text color="cyan">*.{cfg.domain}</Text>, and the LAN IP above —
-          so direct-IP access works without a hostname mismatch.
-        </Text>
-        <Box marginTop={1}>
-          <SelectInput
-            items={[
-              { label: `Use detected IP (${detected})`, value: "use" },
-              { label: "Enter different IP / list (comma-separated)", value: "edit" },
-            ]}
-            onSelect={(item) => {
-              if (item.value === "use") {
-                onDone({ ...cfg, lanIp: detected });
-              } else {
-                setPicking("edit");
-              }
-            }}
-          />
-        </Box>
-      </Box>
-    );
-  }
-
-  return (
-    <Box flexDirection="column" padding={1}>
-      <Text>LAN IPs (comma-separated, e.g. 192.168.4.36,10.0.0.1):</Text>
-      <Box>
-        <Text color="cyan">{"> "}</Text>
-        <TextInput
-          value={override}
-          onChange={setOverride}
-          onSubmit={(v) => {
-            onDone({ ...cfg, lanIp: v.trim() || detected });
           }}
         />
       </Box>

@@ -150,14 +150,25 @@ describe("missingRequiredForHeadless", () => {
 });
 
 describe("renderEnv COMPOSE_FILE", () => {
-  it("omits COMPOSE_FILE for localhost installs", () => {
-    const cfg = { ...emptyConfig(), domain: "localhost" };
+  it("omits COMPOSE_FILE for lan mode installs", () => {
+    const cfg = { ...emptyConfig(), accessMode: "lan" as const, domain: "192.168.1.5" };
     const env = renderEnv(cfg);
     expect(env).not.toContain("COMPOSE_FILE=");
   });
 
-  it("sets COMPOSE_FILE for non-localhost installs", () => {
-    const cfg = { ...emptyConfig(), domain: "foo.com", tlsEmail: "x@y.com" };
+  it("omits COMPOSE_FILE for localhost (lan mode)", () => {
+    const cfg = { ...emptyConfig(), accessMode: "lan" as const, domain: "localhost" };
+    const env = renderEnv(cfg);
+    expect(env).not.toContain("COMPOSE_FILE=");
+  });
+
+  it("sets COMPOSE_FILE for public mode installs", () => {
+    const cfg = {
+      ...emptyConfig(),
+      accessMode: "public" as const,
+      domain: "foo.com",
+      tlsEmail: "x@y.com",
+    };
     const env = renderEnv(cfg);
     expect(env).toContain(
       "COMPOSE_FILE=docker-compose.yml:traefik.override.yml",
@@ -165,25 +176,35 @@ describe("renderEnv COMPOSE_FILE", () => {
   });
 });
 
-describe("lanIp config", () => {
-  it("defaults to empty (filled by run.ts / headless if needed)", () => {
-    expect(emptyConfig().lanIp).toBe("");
+describe("renderEnv ACCESS_MODE + PUBLIC_URL", () => {
+  it("lan mode: PUBLIC_URL is http; no COMPOSE_FILE override", () => {
+    const env = renderEnv({ ...emptyConfig(), accessMode: "lan", domain: "192.168.1.5" });
+    expect(env).toContain("AGENTHUB_ACCESS_MODE=lan");
+    expect(env).toContain("AGENTHUB_PUBLIC_URL=http://192.168.1.5");
+    expect(env).not.toContain("COMPOSE_FILE=");
   });
 
-  it("AGENTHUB_LAN_IP override sets it", () => {
-    const cfg = applyEnvOverrides(emptyConfig(), {
-      AGENTHUB_LAN_IP: "10.0.0.5",
+  it("public mode: PUBLIC_URL is https; COMPOSE_FILE includes override", () => {
+    const env = renderEnv({
+      ...emptyConfig(),
+      accessMode: "public",
+      domain: "agenthub.example.com",
     });
-    expect(cfg.lanIp).toBe("10.0.0.5");
+    expect(env).toContain("AGENTHUB_ACCESS_MODE=public");
+    expect(env).toContain("AGENTHUB_PUBLIC_URL=https://agenthub.example.com");
+    expect(env).toContain("COMPOSE_FILE=docker-compose.yml:traefik.override.yml");
   });
 
-  it("renderEnv emits AGENTHUB_LAN_IP only when non-empty", () => {
-    expect(renderEnv({ ...emptyConfig(), lanIp: "10.0.0.5" })).toContain(
-      "AGENTHUB_LAN_IP=10.0.0.5",
-    );
-    expect(renderEnv({ ...emptyConfig(), lanIp: "" })).not.toContain(
-      "AGENTHUB_LAN_IP=",
-    );
+  it("localhost still maps to lan", () => {
+    const env = renderEnv({ ...emptyConfig(), accessMode: "lan", domain: "localhost" });
+    expect(env).toContain("AGENTHUB_PUBLIC_URL=http://localhost");
+  });
+});
+
+describe("AGENTHUB_LAN_IP env var", () => {
+  it("renderEnv does not emit AGENTHUB_LAN_IP (lanIp removed from config)", () => {
+    // lanIp was removed in the access-mode redesign; renderEnv must not emit it.
+    expect(renderEnv(emptyConfig())).not.toContain("AGENTHUB_LAN_IP=");
   });
 });
 
@@ -275,8 +296,8 @@ describe("applyEnvOverrides for other providers", () => {
 });
 
 describe("tlsMode", () => {
-  it("defaults to 'auto'", () => {
-    expect(emptyConfig().tlsMode).toBe("auto");
+  it("defaults to 'public-alpn'", () => {
+    expect(emptyConfig().tlsMode).toBe("public-alpn");
   });
 
   it("applies AGENTHUB_TLS_MODE override", () => {
@@ -291,7 +312,29 @@ describe("tlsMode", () => {
       AGENTHUB_TLS_MODE: "wat",
     });
     expect(missingRequiredForHeadless(cfg)).toContain(
-      "AGENTHUB_TLS_MODE (got 'wat'; valid: auto, public-alpn, dns-01, self-ca)",
+      "AGENTHUB_TLS_MODE (got 'wat'; valid: public-alpn, dns-01)",
     );
+  });
+});
+
+describe("accessMode", () => {
+  it("defaults to 'lan'", () => {
+    expect(emptyConfig().accessMode).toBe("lan");
+  });
+
+  it("applies AGENTHUB_ACCESS_MODE override", () => {
+    const cfg = applyEnvOverrides(emptyConfig(), {
+      AGENTHUB_ACCESS_MODE: "public",
+    });
+    expect(cfg.accessMode).toBe("public");
+  });
+
+  it("rejects unknown access mode at validation", () => {
+    const cfg = applyEnvOverrides(emptyConfig(), {
+      AGENTHUB_ACCESS_MODE: "bogus",
+    });
+    expect(
+      missingRequiredForHeadless(cfg).some((m) => m.startsWith("AGENTHUB_ACCESS_MODE")),
+    ).toBe(true);
   });
 });

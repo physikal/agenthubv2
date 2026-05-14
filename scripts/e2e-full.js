@@ -318,6 +318,70 @@ async function main() {
     const end = await req(`/api/sessions/${sessId}/end`, { method: "POST" });
     check("POST /api/sessions/:id/end → 200", end.status === 200);
   }
+
+  // lan-http smoke — only when PUBLIC_URL is a plain http:// address.
+  const publicUrl = process.env.PUBLIC_URL ?? "";
+  if (publicUrl.startsWith("http://")) {
+    await testLanHttp(publicUrl);
+  }
+}
+
+// lan-http smoke test — only runs when PUBLIC_URL is a plain http:// URL.
+// Talks directly to PUBLIC_URL (Traefik front door) rather than localhost:3000,
+// so it validates that:
+//   • the health endpoint reports resolver=lan
+//   • login works over plain HTTP
+//   • the session_token cookie is NOT flagged Secure (which would break HTTP browsers)
+// The `ws` package is not available in the server container, so the ttyd WS
+// smoke is omitted here — cookie + health checks are the load-bearing assertions.
+async function testLanHttp(baseUrl) {
+  console.log(`\n=== lan-http smoke (PUBLIC_URL=${baseUrl}) ===`);
+
+  // 1. Health endpoint reports resolver=lan
+  let health;
+  try {
+    health = await fetch(`${baseUrl}/api/health`).then((r) => r.json());
+  } catch (e) {
+    check("lan-http: GET /api/health reachable", false, e.message);
+    return;
+  }
+  check("lan-http: GET /api/health → 200", typeof health === "object" && health !== null);
+  check(
+    "lan-http: tls.resolver === lan",
+    health.tls?.resolver === "lan",
+    `got ${health.tls?.resolver}`,
+  );
+
+  // 2. Login over plain HTTP and inspect Set-Cookie
+  let loginRes;
+  try {
+    loginRes = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: ADMIN_PW }),
+    });
+  } catch (e) {
+    check("lan-http: POST /api/auth/login reachable", false, e.message);
+    return;
+  }
+  check(
+    "lan-http: POST /api/auth/login → 200",
+    loginRes.status === 200,
+    `got ${loginRes.status}`,
+  );
+  const setCookie = loginRes.headers.get("set-cookie") ?? "";
+  check(
+    "lan-http: session_token cookie issued",
+    setCookie.includes("session_token="),
+    `set-cookie: ${setCookie}`,
+  );
+  check(
+    "lan-http: session_token cookie NOT Secure (plain HTTP browsers can read it)",
+    !setCookie.toLowerCase().includes("secure"),
+    `set-cookie: ${setCookie}`,
+  );
+
+  console.log("[e2e] lan-http: health + login + cookie attributes OK");
 }
 
 // Run the main checks; always run cleanup even on failure so fixtures

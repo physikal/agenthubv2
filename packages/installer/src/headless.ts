@@ -6,10 +6,10 @@ import {
 } from "./lib/config.js";
 import { runInstall } from "./run.js";
 import { randomPassword } from "./lib/secrets.js";
-import { resolveTlsMode, type ResolvedTlsMode } from "./lib/tls/resolve-mode.js";
+import { resolveAccessMode } from "./lib/access/resolve-mode.js";
+import type { AccessMode } from "./lib/access/types.js";
 import { probeServingCert } from "./lib/tls/probe-cert.js";
 import { preflightDns01 } from "./lib/tls/preflight.js";
-import { detectLanIp } from "./lib/tls/lan-ip.js";
 
 /**
  * Non-interactive install. Reads every answer from env vars (AGENTHUB_MODE,
@@ -24,28 +24,27 @@ import { detectLanIp } from "./lib/tls/lan-ip.js";
 
 /**
  * Front-door probe. Two-stage:
- *   1. Reachability — `curl --resolve` against Traefik's :443 (sidesteps DNS).
- *      ACME modes get up to 90s because DNS-01 propagation + cert issuance
- *      can take 60s+; self-ca is instant; localhost is short.
+ *   1. Reachability — curl against Traefik (sidesteps DNS via --resolve on
+ *      https, or direct for lan mode which uses plain http).
+ *      Public ACME modes get up to 90s because DNS-01 propagation + cert
+ *      issuance can take 60s+; lan mode is short.
  *   2. Cert validity — read the serving cert via `openssl s_client` and fail
  *      loudly if Traefik is serving its built-in `TRAEFIK DEFAULT CERT` (the
  *      silent-fallback bug this whole effort exists to kill).
+ *      Skipped for lan mode — plain HTTP, no cert to check.
  */
 async function probeFrontDoor(
   domain: string,
-  resolvedMode: ResolvedTlsMode,
+  accessMode: AccessMode,
 ): Promise<void> {
-  const url = `https://${domain}/api/health`;
-  const args = [
-    "-ksf",
-    "-m", "5",
-    "--resolve", `${domain}:443:127.0.0.1`,
-    url,
-  ];
+  const protocol = accessMode === "lan" ? "http" : "https";
+  const probeUrl = `${protocol}://${domain}/api/health`;
+  const args =
+    accessMode === "lan"
+      ? ["-sf", "-m", "5", probeUrl]
+      : ["-ksf", "-m", "5", "--resolve", `${domain}:443:127.0.0.1`, probeUrl];
   let lastErr = "timeout";
-  const reachableMs = resolvedMode === "self-ca" ? 15_000
-    : resolvedMode === "none" ? 30_000
-    : 90_000;
+  const reachableMs = accessMode === "lan" ? 30_000 : 90_000;
   const deadline = Date.now() + reachableMs;
   let reachable = false;
   while (Date.now() < deadline) {
@@ -61,48 +60,44 @@ async function probeFrontDoor(
   }
   if (!reachable) {
     throw new Error(
-      `Install completed but ${url} is unreachable through the front-door proxy. ` +
+      `Install completed but ${probeUrl} is unreachable through the front-door proxy. ` +
         `Check 'docker logs agenthub-traefik-1' and 'docker logs agenthub-agenthub-server-1'. ` +
         `Last curl error: ${lastErr}`,
     );
   }
 
-  // Localhost installs intentionally use Traefik's default cert — skip the
-  // cert-validity gate. Every other mode must serve a real cert.
-  if (resolvedMode === "none") return;
+  // LAN installs use plain HTTP — no cert to probe.
+  if (accessMode === "lan") return;
 
   let cert;
   try {
     cert = probeServingCert("127.0.0.1", 443, domain);
   } catch (err) {
     throw new Error(
-      `Install completed and ${url} is reachable, but cert probe failed: ${
+      `Install completed and ${probeUrl} is reachable, but cert probe failed: ${
         err instanceof Error ? err.message : "unknown"
       }. Check 'docker logs agenthub-traefik-1 | grep -iE "acme|tls"' for hints.`,
     );
   }
   if (cert.isTraefikDefault) {
-    const ackChallenge = resolvedMode === "self-ca"
-      ? "Self-CA initialization did not complete."
-      : `ACME ${resolvedMode === "public-alpn" ? "TLS-ALPN-01" : "DNS-01"} did not complete.`;
     throw new Error(
       `Install completed but Traefik is serving its default self-signed cert ` +
-        `for ${domain}. ${ackChallenge} ` +
+        `for ${domain}. ACME challenge did not complete. ` +
         `Check 'docker logs agenthub-traefik-1 | grep -iE "acme|tls"' for the reason. ` +
-        explainAcmeFailure(resolvedMode),
+        explainAcmeFailure(accessMode),
     );
   }
 }
 
-export function explainAcmeFailure(mode: ResolvedTlsMode | string): string {
+export function explainAcmeFailure(mode: AccessMode | string): string {
   if (mode === "dns-01") {
     return "Common causes: wrong API token, token lacks the right zone, propagation timeout.";
   }
   if (mode === "public-alpn") {
     return "Common causes: port 443 not reachable from the public internet, DNS A record missing or wrong, ISP blocks inbound :443.";
   }
-  if (mode === "self-ca") {
-    return "Common causes: traefik-self-ca-init container failed — check its logs.";
+  if (mode === "public") {
+    return "Common causes: port 443 not reachable from the public internet, DNS A record missing or wrong, or ACME challenge timeout.";
   }
   return `unexpected mode '${mode}' — please file a bug.`;
 }
@@ -118,19 +113,13 @@ export async function runHeadless(): Promise<void> {
     process.exit(2);
   }
 
-  const resolvedMode = resolveTlsMode(cfg.tlsMode, cfg.domain, process.env);
-
-  // self-CA needs a LAN IP for the leaf cert SAN. Auto-detect when not set.
-  if (resolvedMode === "self-ca" && !cfg.lanIp) {
-    cfg.lanIp = detectLanIp();
-    console.log(`[self-ca] auto-detected LAN IP: ${cfg.lanIp}`);
-  }
+  const resolvedAccessMode = resolveAccessMode(cfg.accessMode, cfg.domain, process.env);
 
   // DNS-01 pre-flight (Cloudflare token check). Catches the most common
   // failure mode at the env-var layer instead of the 90s ACME-timeout layer.
   // Skippable via AGENTHUB_SKIP_PREFLIGHT=1 for users who know better than
   // the check (e.g. testing offline or a non-Cloudflare provider).
-  if (resolvedMode === "dns-01" && !process.env["AGENTHUB_SKIP_PREFLIGHT"]) {
+  if (cfg.tlsMode === "dns-01" && !process.env["AGENTHUB_SKIP_PREFLIGHT"]) {
     console.log("running DNS-01 pre-flight…");
     const pf = await preflightDns01(cfg.tlsDnsProvider, cfg.domain, cfg.tlsDnsEnvVars);
     if (!pf.ok) {
@@ -148,7 +137,7 @@ export async function runHeadless(): Promise<void> {
   try {
     const art = await runInstall(cfg, (line) => console.log(line));
     console.log("verifying front-door routing via Traefik…");
-    await probeFrontDoor(cfg.domain, resolvedMode);
+    await probeFrontDoor(cfg.domain, resolvedAccessMode);
     console.log("");
     console.log(`AgentHub is up at ${art.url}`);
     console.log(`  Admin user:     admin`);
@@ -158,12 +147,6 @@ export async function runHeadless(): Promise<void> {
     console.log(`  Admin email:    ${art.infisicalAdminEmail}`);
     console.log(`  Admin password: ${art.infisicalAdminPassword}`);
     console.log("");
-    if (resolvedMode === "self-ca") {
-      console.log(
-        `Devices on your LAN: open http://${cfg.domain}/install/ca to trust the CA.`,
-      );
-      console.log("");
-    }
     console.log("Save these credentials — they are also written to .env.");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

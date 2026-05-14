@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react";
 import {
   getHealth,
-  tlsTest,
+  accessTest,
   type TlsHealthResponse,
 } from "../../lib/api.js";
-import { ReconfigureTlsModal } from "./ReconfigureTlsModal.js";
+import { ReconfigureAccessModal } from "./ReconfigureAccessModal.js";
 
 function statusIcon(tls: TlsHealthResponse): "ok" | "warn" | "error" {
   if (!tls.ok) return "error";
@@ -12,7 +12,7 @@ function statusIcon(tls: TlsHealthResponse): "ok" | "warn" | "error" {
   return "ok";
 }
 
-export const TlsCard: React.FC = () => {
+export const AccessCard: React.FC = () => {
   const [tls, setTls] = useState<TlsHealthResponse | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -30,8 +30,31 @@ export const TlsCard: React.FC = () => {
   if (!tls) {
     return (
       <div className="card">
-        <h3>TLS</h3>
-        <p className="muted">No TLS data (localhost install or probe pending).</p>
+        <h3>Access</h3>
+        <p className="muted">No access data (localhost install or probe pending).</p>
+      </div>
+    );
+  }
+
+  if (tls.resolver === "lan") {
+    return (
+      <div className="card">
+        <h3>Access</h3>
+        <p className="muted">
+          LAN-only access via <code>http://{tls.domain}</code>. No TLS configured.
+        </p>
+        <div className="actions">
+          <button onClick={() => setShowModal(true)}>Switch mode</button>
+        </div>
+        {showModal && (
+          <ReconfigureAccessModal
+            initialDomain={tls.domain}
+              onClose={() => {
+              setShowModal(false);
+              void refresh();
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -41,7 +64,7 @@ export const TlsCard: React.FC = () => {
   async function runTest(): Promise<void> {
     setTesting(true);
     try {
-      const r = await tlsTest();
+      const r = await accessTest();
       setTestResult(r as unknown as TlsHealthResponse);
     } finally {
       setTesting(false);
@@ -49,18 +72,21 @@ export const TlsCard: React.FC = () => {
   }
 
   async function forceRenew(): Promise<void> {
-    const res = await fetch("/api/admin/tls/renew", {
+    // resolver is "public-alpn" or "dns-01" for public installs.
+    // The renew button is only rendered in the public branch (not in the lan
+    // branch above), so tls.resolver will always be a valid publicTlsMode here.
+    const res = await fetch("/api/admin/access/renew", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ mode: tls!.resolver }),
+      body: JSON.stringify({ publicTlsMode: tls!.resolver }),
     });
     if (res.ok) await refresh();
   }
 
   return (
     <div className="card">
-      <h3>TLS</h3>
+      <h3>Access</h3>
 
       <div className={`status status-${icon}`}>
         {icon === "ok" ? "✓" : icon === "warn" ? "⚠" : "✗"}{" "}
@@ -71,9 +97,11 @@ export const TlsCard: React.FC = () => {
       <p>
         Valid for <code>{tls.domain}</code>
         <br />
-        {tls.daysToExpiry >= 0
-          ? `Expires in ${tls.daysToExpiry} day${tls.daysToExpiry === 1 ? "" : "s"}`
-          : `Expired ${-tls.daysToExpiry} days ago`}
+        {tls.daysToExpiry === null
+          ? "N/A"
+          : tls.daysToExpiry >= 0
+            ? `Expires in ${tls.daysToExpiry} day${tls.daysToExpiry === 1 ? "" : "s"}`
+            : `Expired ${-tls.daysToExpiry} days ago`}
       </p>
 
       {tls.warnings.length > 0 && (
@@ -85,7 +113,7 @@ export const TlsCard: React.FC = () => {
       )}
 
       <div className="actions">
-        <button onClick={() => setShowModal(true)}>Reconfigure TLS</button>
+        <button onClick={() => setShowModal(true)}>Reconfigure access</button>
         <button onClick={() => void forceRenew()}>Force renew</button>
         <button onClick={() => void runTest()} disabled={testing}>
           {testing ? "Testing…" : "Test"}
@@ -100,9 +128,8 @@ export const TlsCard: React.FC = () => {
       )}
 
       {showModal && (
-        <ReconfigureTlsModal
+        <ReconfigureAccessModal
           initialDomain={tls.domain}
-          defaultLanIp=""
           onClose={() => {
             setShowModal(false);
             void refresh();

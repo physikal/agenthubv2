@@ -199,17 +199,14 @@ Or click [Fix now] in the migration banner that appears at the top of the admin 
 
 ### Cert is valid but expiring soon (< 14 days)
 
-`agenthub status` will surface this with `TLS WARN ... — Nd remaining (expiring soon)`. ACME modes auto-renew via Traefik on each restart; self-CA auto-renews via the `traefik-self-ca-renew` sidecar daily. To force renewal now:
+`agenthub status` will surface this with `TLS WARN ... — Nd remaining (expiring soon)`. ACME modes auto-renew via Traefik on each restart. To force renewal now:
 
 ```bash
-# Self-CA: regenerates the leaf, CA root unchanged
-agenthub reconfigure-tls --regen-cert --non-interactive
-
-# LE modes: re-applying the same config triggers Traefik renewal on restart
-agenthub reconfigure-tls --non-interactive
+# Re-applying the same config triggers Traefik renewal on restart
+agenthub reconfigure-access --non-interactive
 ```
 
-Or click [Force renew] in the Settings TLS card.
+Or click [Force renew] in the Settings Access card.
 
 ### Cloudflare DNS-01 failing
 
@@ -222,15 +219,9 @@ curl -H "Authorization: Bearer $CF_DNS_API_TOKEN" \
 
 Should return your zone in `result`. If empty: re-create the token with `Zone:Read` + `DNS:Edit` permissions on the right zone.
 
-### Self-CA leaf doesn't match my LAN IP
+### LAN IP changed and install is unreachable
 
-You moved the box, or auto-detection picked the wrong interface. Override:
-
-```bash
-AGENTHUB_TLS_MODE=self-ca \
-AGENTHUB_LAN_IP=<correct-ip-or-comma-list> \
-agenthub reconfigure-tls --regen-cert --non-interactive
-```
+You moved the box. For LAN-mode installs, update your DNS or hosts file to point the domain to the new IP. For public installs, update your DNS A record and run `agenthub reconfigure-access --non-interactive` to restart Traefik with the correct config.
 
 ### Pre-fix install (before TLS Plan 1)
 

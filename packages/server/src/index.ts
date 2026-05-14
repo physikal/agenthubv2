@@ -93,12 +93,24 @@ app.route("/api/auth", authRoutes());
 const SERVER_GIT_SHA = process.env["AGENTHUB_GIT_SHA"] ?? "unknown";
 const SERVER_STARTED_AT = new Date().toISOString();
 app.get("/api/health", async (c) => {
-  // TLS health probe runs only for non-localhost installs. Probe failure
-  // is reflected via tls.warnings — never crashes the health endpoint.
+  // TLS health probe: skip for lan mode and localhost — no cert to probe.
+  // Probe failure is reflected via tls.warnings — never crashes the endpoint.
   const domain =
     process.env["AGENTHUB_DOMAIN"] ?? process.env["DOMAIN"] ?? "localhost";
+  const accessMode = process.env["AGENTHUB_ACCESS_MODE"] ?? "lan";
   let tls = null;
-  if (domain !== "localhost") {
+  if (accessMode === "lan" || domain === "localhost") {
+    tls = {
+      ok: true,
+      domain,
+      resolver: "lan" as const,
+      issuer: "",
+      notBefore: "",
+      notAfter: "",
+      daysToExpiry: null,
+      warnings: [],
+    };
+  } else {
     try {
       const { getTlsHealth } = await import("./services/tls/health.js");
       tls = getTlsHealth(domain);

@@ -32,15 +32,13 @@ services:
       - --configfile=/etc/traefik/traefik.yml
     ports:
       - "80:80"
-      - "443:443"
       - "8443:8443"
+      # :443 is added by traefik.override.yml in public access mode only.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik-letsencrypt:/letsencrypt
       - ./traefik.yml:/etc/traefik/traefik.yml:ro
-      # Dynamic config: redirect.yml (always) + self-ca.yml + leaf
-      # cert files (self-CA mode only — written by traefik-self-ca-init
-      # via a :rw mount in the override).
+      # Dynamic config: redirect.yml (public mode only — http→https redirect).
       - ./dynamic:/etc/traefik/dynamic:ro
     networks:
       - agenthub
@@ -130,7 +128,10 @@ services:
       DOMAIN: ${DOMAIN}
 
       # Public URLs (CORS + .agenthub-env export)
-      AGENTHUB_PUBLIC_URL: https://${DOMAIN}
+      # renderEnv emits AGENTHUB_PUBLIC_URL with the correct scheme (http for
+      # lan, https for public). Fall back to https://${DOMAIN} for safety on
+      # installs that pre-date the access-mode redesign and haven't migrated yet.
+      AGENTHUB_PUBLIC_URL: ${AGENTHUB_PUBLIC_URL:-https://${DOMAIN}}
       AGENTHUB_PORTAL_URL: http://agenthub-server:3000
 
       # Hostname stamped into local-docker deploy URLs. Falls back to DOMAIN

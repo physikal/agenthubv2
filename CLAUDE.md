@@ -51,37 +51,40 @@ The codebase has **two** swappable driver abstractions that are easy to confuse:
 
 Both layers support Docker and Dokploy, but they are **separate code paths with separate drivers**. One install can run outer=`docker` and inner=`digitalocean` simultaneously. When adding hosting support, figure out which layer you're in before touching either directory. Full walkthrough in `docs/architecture.md`.
 
-### TLS strategy surface (PRs #62 + #65-#69, 2026-05-06)
+### Access mode surface (PR #73 spec, 2026-05-13)
 
-**Four modes** drive Traefik's cert resolver, picked at install or via `agenthub reconfigure-tls`:
-- `auto` (default) — `localhost` → no resolver (default cert); else `dns-01` if `AGENTHUB_TLS_DNS_PROVIDER` set, else `public-alpn`
-- `public-alpn` — Let's Encrypt via TLS-ALPN-01 (today's behavior; needs port 443 reachable from public internet)
-- `dns-01` — Let's Encrypt via DNS-01 (works for internal-only hosts; Cloudflare in TUI, lego env vars for ~80 other providers)
-- `self-ca` — private CA generated on-host with openssl, leaf SAN covers domain + wildcard + LAN IP, daily auto-renew sidecar, CA distributed via `http://<domain>/install/ca`
+**Two modes** today, picked at install or via `agenthub reconfigure-access`:
+- `lan` (default) — HTTP on :80, no TLS, no cert. Right choice for ~99% of installs.
+- `public` — Let's Encrypt HTTPS. Sub-modes: `public-alpn` (port 443 reachable from internet) or `dns-01` (DNS API token, Cloudflare first-class, ~80 others via lego env vars).
 
-**Compose layout:** the base `compose/docker-compose.yml` carries Traefik's core CLI flags (entrypoints, providers.docker, http→https redirect). TLS-mode-specific config goes into `compose/traefik.override.yml` as **`environment:` (TRAEFIK_*-prefixed env vars)**, NOT a `command:` array. **This is load-bearing**: docker-compose merges `command:` lists by REPLACING — putting TLS flags in `command:` clobbers the base Traefik config and breaks every label-based router. PR #69 fixed exactly that bug; the unit tests now assert `traefik.command === undefined` for every override mode as a regression guard. `.env` carries `COMPOSE_FILE=docker-compose.yml:traefik.override.yml` for non-localhost installs (auto-set by installer + `agenthub reconfigure-tls`).
+`tunnel` (Cloudflare Tunnel) is deferred to a follow-up PR.
 
-**TLS probe parsing:** `openssl s_client -showcerts` does NOT emit `notBefore=…`/`notAfter=…` lines (it emits `NotBefore: …; NotAfter: …` on a single line). Both `packages/installer/src/lib/tls/probe-cert.ts` and `packages/server/src/services/tls/health.ts` PIPE s_client output through `openssl x509 -noout -subject -issuer -dates` to get the canonical key=value form their regex parsers expect. Don't shortcut to a single openssl call — PR #69 fixed exactly that.
+Self-CA mode is gone. `agenthub update` auto-migrates old installs: `self-ca` → `lan`; `public-alpn`/`dns-01`/`auto` → `public`.
 
-**Loud-failure gate** (`packages/installer/src/headless.ts` `probeFrontDoor`): after install, the cert is read via the piped openssl probe above and the install fails (exit 3) if Traefik is serving its built-in `CN=TRAEFIK DEFAULT CERT`. **Never** silently fall back — if you're touching the install flow, preserve this gate.
+**Compose layout:** `compose/docker-compose.yml` is TLS-agnostic. The `:443` port binding and `websecure` entrypoint live only in the generated per-mode config — they are NOT in the base file. **Load-bearing**: docker-compose's `ports:` list merge REPLACES the base list, so the override must restate ALL ports (80 + 443) when adding 443 — otherwise :80 disappears from the running container. The unit tests assert this.
 
-**Reconfigure semantics:** `agenthub reconfigure-tls` snapshots `traefik.override.yml.prev` before writing the new override; restores on probe failure unless `--no-rollback`. `--regen-cert` (self-CA only) re-runs `traefik-self-ca-init` with `REGEN=1`. Web UI hits the same code path via `POST /api/admin/tls/reconfigure` (SSE-streamed).
+**Headless env var contract:**
 
-**TLS health surface** is read-once-cache-60s via `openssl s_client` from inside the agenthub-server container. Surfaces:
-- `GET /api/health` adds a `tls: { ok, resolver, issuer, daysToExpiry, warnings }` field
-- Settings → TLS card (`packages/web/src/components/tls/TlsCard.tsx`)
-- Top-of-app `MigrationBanner` when `resolver === 'default-fallback'`
-- `agenthub status` adds a TLS line
+| Var | Default | Notes |
+|---|---|---|
+| `AGENTHUB_ACCESS_MODE` | `lan` | `lan` or `public` |
+| `AGENTHUB_TLS_MODE` | `public-alpn` | Only when `ACCESS_MODE=public` |
+| `AGENTHUB_TLS_EMAIL` | — | Required when `ACCESS_MODE=public` |
+| `AGENTHUB_TLS_DNS_PROVIDER` | — | Required when `TLS_MODE=dns-01` |
+
+**Reconfigure semantics:** `agenthub reconfigure-access` (interactive or headless via env vars). Old verb `agenthub reconfigure-tls` is a deprecated alias — keep working for one release. Web UI hits `POST /api/admin/access/reconfigure` (SSE-streamed).
+
+**Access health surface:** `GET /api/health` reports `access: { mode, resolver, ok, ... }`. Settings → Access card (`packages/web/src/components/access/AccessCard.tsx`). `agenthub status` shows access mode.
 
 **Where the code lives:**
-- `packages/installer/src/lib/tls/` — render-override, resolve-mode, probe-cert, lego-providers, lan-ip, preflight, migrate
+- `packages/installer/src/lib/access/` — types, resolve-mode, render-compose, migrate
 - `packages/installer/src/{reconfigure,reconfigure-cli,reconfigure-app}.{ts,tsx}` — reconfigure flow
-- `packages/server/src/services/tls/{health,reconfigure}.ts` — health probe + reconfigure-via-updater-container
-- `packages/web/src/components/tls/{TlsCard,MigrationBanner,ReconfigureTlsModal}.tsx` — UI
-- `scripts/self-ca-{init,renew}.sh` — alpine-container scripts
-- `compose/static/install-ca/` — platform-aware trust-instructions page
+- `packages/server/src/services/tls/{health,reconfigure}.ts` — health probe + reconfigure-via-updater-container (internal dir kept as `tls/`; public routes are `/api/admin/access/*`)
+- `packages/web/src/components/access/{AccessCard,MigrationBanner,ReconfigureAccessModal}.tsx` — UI
 
-**Authoritative reference:** `docs/superpowers/specs/2026-05-05-flexible-tls-install-design.md` and the five plans at `docs/superpowers/plans/2026-05-05-tls-plan-{1..5}-*.md`. User-facing: `docs/install/tls-modes.md`.
+**HSTS gotcha:** PR #74 disabled Hono's `secureHeaders()` HSTS emission. Browsers that visited the install pre-#74 on HTTPS may be HSTS-pinned for ~6 months and will refuse plain `http://` after migration to `lan` mode. Operator fix: Chrome `chrome://net-internals/#hsts` → Delete domain; Firefox "Forget About This Site".
+
+**Authoritative reference:** `docs/superpowers/specs/2026-05-13-lan-first-tls-default.md`. User-facing: `docs/install/access-modes.md`.
 
 ### Other decisions
 - **Provisioner driver abstraction** (`packages/server/src/services/provisioner/`) — swappable at install time. Adding a new driver means implementing one interface. See `docs/architecture.md`.
@@ -107,8 +110,8 @@ INFISICAL_ADMIN_EMAIL, INFISICAL_ADMIN_PASSWORD
 See `compose/.env.example` for the full list with comments.
 
 ## Common gotchas
-- **TLS override flags are env vars, not a `command:` array.** docker-compose's `command:` merge REPLACES the base list — putting `--certificatesresolvers.*` flags there strips Traefik's `--providers.docker=true` + entrypoints from the running container (PR #69). All TLS config goes in `services.traefik.environment:` as `TRAEFIK_*`-prefixed vars; the override file is generated; don't hand-edit it either — use `agenthub reconfigure-tls`.
-- **TLS-mode-aware `probeFrontDoor` exits 3 on default cert** — if you write a new install path, route through `probeFrontDoor(domain, resolvedMode)` from `headless.ts` so the loud-failure gate fires.
+- **`ports:` list override REPLACES, not extends.** docker-compose merges `ports:` by replacement. The public-mode override must restate both `:80:80` and `:443:443` — listing only `:443:443` silently drops :80 from the running container. The unit tests guard this.
+- **`probeFrontDoor` in lan mode probes HTTP, not HTTPS** — if you write a new install path, pass the resolved access mode to `probeFrontDoor` from `headless.ts` so it probes the right protocol.
 - ttyd requires `{"AuthToken":""}` after WS connect — blank terminal without it.
 - ttyd type bytes are ASCII (`'0'` = 0x30), not binary (0x00) — input silently ignored if wrong.
 - Infisical needs Postgres migration on first boot — installer waits up to 180s for `/api/status` before running `infisical bootstrap`.
