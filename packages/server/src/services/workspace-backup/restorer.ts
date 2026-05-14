@@ -8,6 +8,7 @@ import {
   dockerVolumeRemove,
   volumeNameForUser,
 } from "./volume.js";
+import { getDataVolumeName } from "./bundler.js";
 
 const execFileAsync = promisify(execFile);
 const SIDECAR_IMAGE = process.env["AGENTHUB_SERVER_IMAGE"] ?? "agenthubv2-server:local";
@@ -51,11 +52,19 @@ export async function restoreWorkspace(opts: RestoreOptions): Promise<{ extracte
     await dockerVolumeCreate(volume);
   }
 
-  // Sidecar streams: zstd -d /dst/file.tar.zst → tar -x into /dst (volume).
-  // Skip the manifest entry — it's metadata, not part of /home/coder.
-  // Filename passes through an env var (not sh -c interpolation) so an
-  // operator-supplied bundle path can't break out of the quoted string.
+  // Sidecar streams: zstd -d /data-mount/.../file.tar.zst → tar -x into
+  // /dst (the user workspace volume). The bundle file lives in the
+  // server's own /data volume (mounted at /data-mount via the named
+  // volume). Filename passes through an env var (not sh -c
+  // interpolation) so an operator-supplied bundle path can't break
+  // out of the quoted string. opts.bundlePath is the server-visible
+  // path (under /data/...) — translate to /data-mount for the sidecar.
+  if (!opts.bundlePath.startsWith("/data/")) {
+    throw new Error(`restorer bundlePath must be under /data/, got ${opts.bundlePath}`);
+  }
+  const dataVol = await getDataVolumeName();
   const filename = basename(opts.bundlePath);
+  const sidecarDir = dirname(opts.bundlePath).replace(/^\/data\//, "/data-mount/");
   try {
     await execFileAsync(
       "docker",
@@ -65,17 +74,19 @@ export async function restoreWorkspace(opts: RestoreOptions): Promise<{ extracte
         "-v",
         `${volume}:/dst`,
         "-v",
-        `${dirname(opts.bundlePath)}:/bundles:ro`,
+        `${dataVol}:/data-mount:ro`,
         "--network",
         "none",
         "-e",
         `BUNDLE_FILENAME=${filename}`,
+        "-e",
+        `SIDECAR_DIR=${sidecarDir}`,
         SIDECAR_IMAGE,
         "sh",
         "-c",
         [
           "set -eu",
-          'zstd -dc "/bundles/$BUNDLE_FILENAME" | tar x -C /dst --exclude=./agenthub-workspace-manifest.json',
+          'zstd -dc "$SIDECAR_DIR/$BUNDLE_FILENAME" | tar x -C /dst --exclude=./agenthub-workspace-manifest.json',
         ].join(" && "),
       ],
       { timeout: 1800_000, maxBuffer: 16 * 1024 * 1024 },

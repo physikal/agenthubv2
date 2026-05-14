@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdirSync, statSync } from "node:fs";
-import { dirname } from "node:path";
+import { hostname } from "node:os";
 import { promisify } from "node:util";
 import {
   bundleFilename,
@@ -13,6 +13,37 @@ import { volumeNameForUser } from "./volume.js";
 const execFileAsync = promisify(execFile);
 
 const SIDECAR_IMAGE = process.env["AGENTHUB_SERVER_IMAGE"] ?? "agenthubv2-server:local";
+
+/**
+ * Resolve the docker-named data volume that this server container has
+ * mounted at /data. The sidecar mounts it by name so its `/dst` is the
+ * same filesystem the server sees at `/data` — no host-path translation
+ * needed and no docker-in-docker shenanigans.
+ *
+ * Cached for the process lifetime.
+ */
+let dataVolumeCache: string | null = null;
+export async function getDataVolumeName(): Promise<string> {
+  if (dataVolumeCache) return dataVolumeCache;
+  const { stdout } = await execFileAsync(
+    "docker",
+    [
+      "inspect",
+      "--format",
+      '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}',
+      hostname(),
+    ],
+    { timeout: 5_000 },
+  );
+  const name = stdout.trim();
+  if (!name) {
+    throw new Error(
+      `could not resolve data volume name (looking for /data mount on container ${hostname()})`,
+    );
+  }
+  dataVolumeCache = name;
+  return name;
+}
 
 interface BundleInput {
   userId: string;
@@ -33,7 +64,15 @@ interface BundleInput {
  */
 export async function bundleWorkspace(input: BundleInput): Promise<WorkspaceBackupResult> {
   const volume = volumeNameForUser(input.userId);
+  const dataVol = await getDataVolumeName();
+  // input.destDir is the server-container-visible path (under /data/...).
+  // The sidecar can't see that path directly — it sees the same content at
+  // the same path via the named data volume mounted at /dst.
+  if (!input.destDir.startsWith("/data/")) {
+    throw new Error(`bundler destDir must be under /data/, got ${input.destDir}`);
+  }
   mkdirSync(input.destDir, { recursive: true });
+  const sidecarDest = input.destDir.replace(/^\/data\//, "/dst/").replace(/\/+$/, "");
 
   const createdAt = new Date().toISOString();
   const filename = bundleFilename(input.userId, createdAt);
@@ -65,27 +104,29 @@ export async function bundleWorkspace(input: BundleInput): Promise<WorkspaceBack
         "-v",
         `${volume}:/src:ro`,
         "-v",
-        `${dirname(bundlePath)}:/dst`,
+        `${dataVol}:/dst`,
         "--network",
         "none",
         "-e",
         `MANIFEST_JSON=${manifestJson}`,
         "-e",
         `BUNDLE_FILENAME=${filename}`,
+        "-e",
+        `SIDECAR_DEST=${sidecarDest}`,
         SIDECAR_IMAGE,
         "sh",
         "-c",
         [
           "set -eu",
-          "mkdir -p /work",
+          'mkdir -p "$SIDECAR_DEST" /work',
           "printf '%s' \"$MANIFEST_JSON\" > /work/agenthub-workspace-manifest.json",
-          // tar streams stdout → zstd → /dst/$BUNDLE_FILENAME
+          // tar streams stdout → zstd → $SIDECAR_DEST/$BUNDLE_FILENAME
           // --warning=no-file-changed lets the user's session write to the
           // volume mid-snapshot without aborting tar.
           "(cd /work && tar c --warning=no-file-changed agenthub-workspace-manifest.json) > /tmp/header.tar",
           // Now append the volume contents to the manifest header tar.
           "tar -rf /tmp/header.tar -C /src --warning=no-file-changed .",
-          'zstd -T0 -19 < /tmp/header.tar > "/dst/$BUNDLE_FILENAME"',
+          'zstd -T0 -19 < /tmp/header.tar > "$SIDECAR_DEST/$BUNDLE_FILENAME"',
         ].join(" && "),
       ],
       { timeout: 1800_000, maxBuffer: 16 * 1024 * 1024 },

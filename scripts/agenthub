@@ -529,7 +529,7 @@ cmd_backup_install() {
   fi
 
   msg "running backup inside $ctr"
-  $SUDO docker exec "$ctr" \
+  $SUDO docker exec -i "$ctr" \
     node --input-type=module <<EOF
 import { runBackup } from "/app/packages/server/dist/services/install-backup/runner.js";
 runBackup(${runner_args}).then((r) => {
@@ -618,7 +618,7 @@ cmd_backup_workspace() {
     esac
   done
   if [[ -z "$user" && "$all" -eq 0 ]]; then
-    die "backup-workspace requires --user <uuid|email> or --all"
+    die "backup-workspace requires --user <uuid|username> or --all"
   fi
 
   local ctr; ctr="$(server_container_name)"
@@ -635,7 +635,10 @@ cmd_backup_workspace() {
   [[ -n "$note" ]] && note_arg="\"${note//\"/\\\"}\""
 
   msg "running workspace backup inside $ctr"
-  $SUDO docker exec "$ctr" \
+  # -w /app/packages/server so node resolves drizzle-orm from the
+  # server package's node_modules (the dist js does too, but our
+  # heredoc imports drizzle-orm directly for the user lookup).
+  $SUDO docker exec -i -w /app/packages/server "$ctr" \
     node --input-type=module <<EOF
 import { db, schema } from "/app/packages/server/dist/db/index.js";
 import { runWorkspaceBackup } from "/app/packages/server/dist/services/workspace-backup/runner.js";
@@ -649,14 +652,14 @@ const note = ${note_arg};
 
 let users;
 if (all) {
-  users = db.select({ id: schema.users.id, email: schema.users.email }).from(schema.users).all();
+  users = db.select({ id: schema.users.id, email: schema.users.username }).from(schema.users).all();
 } else {
-  users = db.select({ id: schema.users.id, email: schema.users.email })
+  users = db.select({ id: schema.users.id, email: schema.users.username })
     .from(schema.users)
-    .where(or(eq(schema.users.id, target), eq(schema.users.email, target)))
+    .where(or(eq(schema.users.id, target), eq(schema.users.username, target)))
     .all();
   if (users.length === 0) {
-    process.stderr.write(\`no user matched id-or-email: \${target}\n\`);
+    process.stderr.write(\`no user matched id-or-username: \${target}\n\`);
     process.exit(1);
   }
 }
@@ -666,11 +669,11 @@ if (!b2 && !noB2) process.stdout.write("[backup] no B2 configured — local-only
 let okCount = 0;
 let failCount = 0;
 for (const u of users) {
-  process.stdout.write(\`[backup] === user \${u.email} (\${u.id}) ===\n\`);
+  process.stdout.write(\`[backup] === user \${u.username} (\${u.id}) ===\n\`);
   try {
     const args = {
       userId: u.id,
-      userEmail: u.email,
+      userEmail: u.username,
       workspaceImageSha: process.env.WORKSPACE_IMAGE_SHA ?? null,
       trigger: "cli",
       b2,
@@ -704,7 +707,7 @@ cmd_restore_workspace() {
       *) die "unknown flag: $1" ;;
     esac
   done
-  [[ -n "$user" ]] || die "restore-workspace requires --user <uuid|email>"
+  [[ -n "$user" ]] || die "restore-workspace requires --user <uuid|username>"
   if [[ -z "$from" && -z "$snapshot" ]]; then
     die "restore-workspace requires --from <local-path> or --snapshot <latest|filename>"
   fi
@@ -719,7 +722,7 @@ cmd_restore_workspace() {
   local force_arg="false"; [[ -n "$force" ]] && force_arg="true"
 
   msg "running workspace restore inside $ctr"
-  $SUDO docker exec "$ctr" \
+  $SUDO docker exec -i -w /app/packages/server "$ctr" \
     node --input-type=module <<EOF
 import { db, schema } from "/app/packages/server/dist/db/index.js";
 import { runWorkspaceRestore } from "/app/packages/server/dist/services/workspace-backup/runner.js";
@@ -727,12 +730,12 @@ import { loadB2Config } from "/app/packages/server/dist/services/install-backup/
 import { eq, or } from "drizzle-orm";
 
 const target = ${user_arg};
-const u = db.select({ id: schema.users.id, email: schema.users.email })
+const u = db.select({ id: schema.users.id, email: schema.users.username })
   .from(schema.users)
-  .where(or(eq(schema.users.id, target), eq(schema.users.email, target)))
+  .where(or(eq(schema.users.id, target), eq(schema.users.username, target)))
   .get();
 if (!u) {
-  process.stderr.write(\`no user matched id-or-email: \${target}\n\`);
+  process.stderr.write(\`no user matched id-or-username: \${target}\n\`);
   process.exit(1);
 }
 const b2 = await loadB2Config().catch(() => null);
@@ -784,10 +787,10 @@ Commands:
                          Flags: --from <path|b2://...>, --snapshot <latest|ts>,
                          --force, --dry-run
   backup-workspace       Snapshot a user's /home/coder docker volume to a
-                         tar.zst bundle. Flags: --user <uuid|email> or --all,
-                         --local-only, --note <msg>
+                         tar.zst bundle. Flags: --user <uuid|username> or
+                         --all, --local-only, --note <msg>
   restore-workspace      Extract a workspace bundle into the user's volume.
-                         Flags: --user <uuid|email>, --from <local-path>
+                         Flags: --user <uuid|username>, --from <local-path>
                          OR --snapshot <latest|filename>, --force
   reconfigure-access [...] Change access mode (lan/public) and TLS strategy.
                          Interactive by default; --non-interactive reads
