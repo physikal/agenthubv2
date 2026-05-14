@@ -288,16 +288,28 @@ probe_front_door() {
     # If the label is absent ("unknown" / "<no value>" / empty), fall back
     # to the legacy-image branch which treats any 200 as green.
   fi
+  # Pick the right scheme/port for the install's access mode. Pre-PR #75
+  # this was always https:443 (self-CA / public-alpn / dns-01 all used TLS).
+  # Post-PR #75 lan-mode installs serve plain HTTP on :80 and probe-on-443
+  # always fails → install_new_cli below was getting skipped silently.
+  local access_mode scheme port
+  access_mode="$(grep -E '^AGENTHUB_ACCESS_MODE=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
+  if [[ "$access_mode" == "lan" || ( -z "$access_mode" && "$domain" == "localhost" ) ]]; then
+    scheme="http"; port=80
+  else
+    scheme="https"; port=443
+  fi
+
   local deadline=$((SECONDS + 60))
   local body served=""
   while [[ "$SECONDS" -lt "$deadline" ]]; do
-    body="$(curl -ksf -m 5 --resolve "${domain}:443:127.0.0.1" \
-      "https://${domain}/api/health" 2>/dev/null || true)"
+    body="$(curl -ksf -m 5 --resolve "${domain}:${port}:127.0.0.1" \
+      "${scheme}://${domain}/api/health" 2>/dev/null || true)"
     if [[ -n "$body" ]]; then
       served="$(echo "$body" | grep -oE '"sha":"[^"]+"' | head -1 | cut -d'"' -f4)"
       # Legacy image: no SHA field or literal "unknown". 200 is the best signal.
       if [[ -z "$served" || "$served" == "unknown" || -z "$expected" ]]; then
-        ok "front-door probe green: https://${domain}/api/health"
+        ok "front-door probe green: ${scheme}://${domain}/api/health"
         return 0
       fi
       if [[ "$served" == "$expected" ]]; then
@@ -308,7 +320,13 @@ probe_front_door() {
     sleep 2
   done
   warn "front-door did not converge to ${expected:0:7} within 60s (last served: ${served:-<no response>}). Inspect: docker logs agenthub-agenthub-server-1"
-  return 1
+  # Return 0 so the rest of cmd_update (install_new_cli, ok message) still
+  # runs. verify_server_image above is the authoritative recreate check;
+  # probe_front_door is an additional advisory. Old behavior: return 1 →
+  # set -e killed install_new_cli, leaving operators with a stale CLI and
+  # a working server, and no clear way to recover. Operator can still see
+  # the warn line + inspect docker logs.
+  return 0
 }
 
 # Bring compose/.env forward across schema changes. Any ${VAR} the compose
@@ -535,6 +553,7 @@ import { runBackup } from "/app/packages/server/dist/services/install-backup/run
 runBackup(${runner_args}).then((r) => {
   process.stdout.write("[backup] done: " + r.localPath + " (" + (r.bytes ?? 0) + " bytes)\n");
   if (r.b2Path) process.stdout.write("[backup] B2: " + r.b2Path + "\n");
+  process.exit(0);
 }).catch((err) => {
   process.stderr.write("[backup] FAILED: " + (err.message ?? err) + "\n");
   process.exit(1);
