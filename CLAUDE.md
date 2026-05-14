@@ -86,6 +86,25 @@ Self-CA mode is gone. `agenthub update` auto-migrates old installs: `self-ca` �
 
 **Authoritative reference:** `docs/superpowers/specs/2026-05-13-lan-first-tls-default.md`. User-facing: `docs/install/access-modes.md`.
 
+### Install backup surface (slice 4b)
+
+Operator-scoped backup of `compose/.env` + `/data/agenthub.db` + Infisical Postgres dump as a single tar.gz bundle. CLI: `agenthub backup-install` / `restore-install`. Web UI: Settings → Admin → Install Backup. Auto-backs-up before every `agenthub update` (best-effort, non-blocking).
+
+**Bundle is UNENCRYPTED** — relies on B2 bucket ACLs + filesystem perms. Operator-explicit security choice. Encryption is a future opt-in (separate spec). If a host is compromised, rotate all secrets in `compose/.env` + the B2 key used for backups.
+
+**Where code lives:**
+- `packages/server/src/services/install-backup/` — bundler, restorer, conflict, retention, B2 client, runner
+- `packages/server/src/routes/admin-install-backup.ts` — 8 endpoints; `/run` and `/restore/run` are SSE-streamed
+- `packages/web/src/pages/admin/InstallBackup.tsx` + `packages/web/src/components/install-backup/*`
+- `scripts/agenthub` — `backup-install` + `restore-install` verbs
+- `scripts/restore-install.js` — entrypoint for the one-shot temp restore container
+
+**Restore-from-fresh-VM flow:** the `restore-install` verb spawns a temp container (same server image) that mounts `/data`, `/repo`, and `docker.sock`. This avoids the chicken-and-egg of "the server we're restoring is the one running the restore." The temp container stops/starts the live stack as part of `applyRestore`.
+
+**Conflict guard:** before applying, `buildConflictReport` checks for existing users, active sessions, and encryption-key mismatch. Without `--force`, a non-fresh target is rejected. The web UI shows conflicts from the dry-run validate step before enabling the Restore button.
+
+**Spec:** `docs/superpowers/specs/2026-05-13-install-backup-restore.md`. Operator doc: `docs/operations/install-backup.md`.
+
 ### Other decisions
 - **Provisioner driver abstraction** (`packages/server/src/services/provisioner/`) — swappable at install time. Adding a new driver means implementing one interface. See `docs/architecture.md`.
 - **Docker driver mounts `/var/run/docker.sock`** — gated by `AGENTHUB_ALLOW_SOCKET_MOUNT=true`. The installer wires this automatically for `docker` mode. Users who need zero-socket-mount pick `dokploy-remote` where Dokploy owns the daemon.

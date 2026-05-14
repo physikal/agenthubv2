@@ -162,6 +162,31 @@ export function initDb(): void {
       created_at INTEGER NOT NULL,
       used_at INTEGER
     );
+
+    CREATE TABLE IF NOT EXISTS install_backup_config (
+      id INTEGER PRIMARY KEY,
+      b2_key_id TEXT,
+      b2_bucket TEXT,
+      b2_path_prefix TEXT DEFAULT 'installs/',
+      retention_keep_last INTEGER DEFAULT 10,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS install_backup_runs (
+      id TEXT PRIMARY KEY,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      status TEXT NOT NULL,
+      bytes INTEGER,
+      local_path TEXT,
+      b2_path TEXT,
+      trigger TEXT NOT NULL,
+      error TEXT,
+      note TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_install_backup_runs_started
+      ON install_backup_runs(started_at);
   `);
 
   // Idempotent schema migrations for existing installs — SQLite has no

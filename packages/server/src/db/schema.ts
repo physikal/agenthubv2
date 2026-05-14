@@ -260,6 +260,36 @@ export const githubInstallState = sqliteTable("github_install_state", {
   usedAt: integer("used_at", { mode: "timestamp" }),
 });
 
+/**
+ * Singleton config row for install-state backup. Only id=1 ever exists;
+ * enforced in code via insertOrUpdate by id=1.
+ */
+export const installBackupConfig = sqliteTable("install_backup_config", {
+  id: integer("id").primaryKey(), // singleton: only id=1 ever exists
+  b2KeyId: text("b2_key_id"),
+  b2Bucket: text("b2_bucket"),
+  b2PathPrefix: text("b2_path_prefix").default("installs/"),
+  retentionKeepLast: integer("retention_keep_last").default(10),
+  updatedAt: text("updated_at").notNull(),
+});
+
+/**
+ * One row per install-state backup run (create or restore). Provides audit
+ * history for the Install Backup admin page.
+ */
+export const installBackupRuns = sqliteTable("install_backup_runs", {
+  id: text("id").primaryKey(), // UUID
+  startedAt: text("started_at").notNull(),
+  finishedAt: text("finished_at"),
+  status: text("status", { enum: ["running", "ok", "failed"] }).notNull(),
+  bytes: integer("bytes"),
+  localPath: text("local_path"),
+  b2Path: text("b2_path"),
+  trigger: text("trigger", { enum: ["manual", "auto-update", "cli"] }).notNull(),
+  error: text("error"),
+  note: text("note"),
+});
+
 export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
@@ -274,3 +304,6 @@ export type NewGithubInstallation = typeof githubInstallations.$inferInsert;
 export type GithubInstallState = typeof githubInstallState.$inferSelect;
 export type UserPackage = typeof userPackages.$inferSelect;
 export type UserPackageStatus = NonNullable<UserPackage["status"]>;
+export type InstallBackupConfig = typeof installBackupConfig.$inferSelect;
+export type InstallBackupRun = typeof installBackupRuns.$inferSelect;
+export type NewInstallBackupRun = typeof installBackupRuns.$inferInsert;

@@ -23,6 +23,7 @@ import {
   githubIntegrationRoutes,
   githubWebhookRoutes,
 } from "./routes/github-integration.js";
+import { installBackupRoutes } from "./routes/admin-install-backup.js";
 import { ALLOWED_ORIGINS, isOriginAllowed } from "./middleware/origin.js";
 import { setupTerminalProxy } from "./ws/terminal-proxy.js";
 import { setupPreviewProxy } from "./ws/preview-proxy.js";
@@ -160,6 +161,7 @@ app.route("/api", deployRoutes());
 app.use("/api/admin/*", adminMiddleware);
 app.route("/api/admin", adminRoutes(sessionManager));
 app.route("/api/admin/github-app", githubAppManifestRoutes());
+app.route("/api/admin/install-backup", installBackupRoutes());
 
 if (process.env["NODE_ENV"] === "production") {
   // Static assets for the React SPA + the Starlight docs site (the latter
