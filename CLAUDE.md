@@ -86,7 +86,7 @@ Self-CA mode is gone. `agenthub update` auto-migrates old installs: `self-ca` �
 
 **Authoritative reference:** `docs/install/access-modes.md` + the PR #75 description (commit `6739441`).
 
-### Install backup surface (slice 4b)
+### Install backup surface
 
 Operator-scoped backup of `compose/.env` + `/data/agenthub.db` + Infisical Postgres dump as a single tar.gz bundle. CLI: `agenthub backup-install` / `restore-install`. Web UI: Settings → Admin → Install Backup. Auto-backs-up before every `agenthub update` (best-effort, non-blocking).
 
