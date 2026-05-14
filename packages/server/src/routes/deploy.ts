@@ -20,6 +20,7 @@ import {
   isLanOnlyHost,
 } from "../services/deployers/dokploy-api.js";
 import { lookupZoneName } from "../services/dns/cloudflare.js";
+import { resolveAgenthubHost } from "../services/public-host.js";
 
 interface DeployBody {
   name: string;
@@ -288,7 +289,7 @@ export function deployRoutes() {
     const localInfra = infras.find((i) => i.provider === "local-docker");
     if (localInfra) {
       if (src.hasDockerfile || src.hasCompose) {
-        const host = process.env["AGENTHUB_PUBLIC_HOST"] || "<agenthub-host>";
+        const host = resolveAgenthubHost("<agenthub-host>");
         viable.push({
           id: "local",
           label: "Local Docker (zero setup)",

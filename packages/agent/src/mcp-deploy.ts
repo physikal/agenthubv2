@@ -395,7 +395,10 @@ async function handleToolCall(
       }
 
       const lines = deployments.map((d) => {
-        const url = d.url ?? (d.domain ? `https://${d.domain}` : "(no URL)");
+        // Server is authoritative for the stored URL — its scheme/port match
+        // the actual binding (lan-mode http, public-mode https, custom port).
+        // Synthesizing https://${domain} as a fallback misleads in lan mode.
+        const url = d.url ?? (d.domain ? `(URL pending — ${d.domain})` : "(no URL)");
         const detail = d.status === "failed" && d.statusDetail
           ? ` — ${d.statusDetail}`
           : "";
