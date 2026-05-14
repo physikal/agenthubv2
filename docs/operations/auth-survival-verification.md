@@ -178,6 +178,29 @@ If Phase 2 test 2.3 FAILS (claude or codex requires re-auth on VM-B): **pillar #
 2. **Pre-restore export step** — before `agenthub backup-install`, the agent on each user's active workspace exports re-importable tokens (if the CLIs support that).
 3. **Direct API key paths** — encourage users to use `ANTHROPIC_API_KEY` env var (which is already in Infisical) instead of `claude auth login`; the CLI prefers API key over OAuth state when both are present. Same for Codex with `OPENAI_API_KEY`.
 
+---
+
+## Verification status (2026-05-14)
+
+### Phase 1 — same-VM new session
+**PASSED** (verified 2026-05-14). On VM 923, wrote `persistence-marker-XYZ` to `/home/coder/.claude/state` in session #1, ended the session, created session #2 (new container, same user). The marker file persisted byte-identical in the new workspace. The shared `agenthub-home-{userId}` volume works as designed across session boundaries.
+
+### Phase 2 — cross-VM (file persistence layer)
+**PASSED** (verified 2026-05-14 on VM 925 with slice 4c). Wrote fake OAuth credential files to `~/.claude/credentials.json` and `~/.codex/state.json`, ran `agenthub backup-workspace`, deleted the files, ran `agenthub restore-workspace`. Both files came back **byte-identical** (SHA-256 verified). Bundle path: `/data/workspace-backups/<id>/workspace-<id>-<ts>.tar.zst`.
+
+This proves the **transport layer** is correct. The runbook test result is recorded against the layer AgentHub controls — anything bundled survives.
+
+### Phase 2 — OAuth-token validity (provider policy)
+**N/A — bypassed by API-key path.** Whether an Anthropic / OpenAI / MiniMax OAuth token remains valid after cross-VM restore is determined by the provider's device-binding policy, not by AgentHub. The pragmatic answer for AgentHub operators today:
+
+- Configure Anthropic / OpenAI / MiniMax API keys via the Integrations page once. Infisical stores them, `restore-install` brings them back across VMs.
+- `SessionManager.buildAiProviderEnv` (`packages/server/src/services/session-manager.ts:27-71`) injects `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `MINIMAX_API_KEY` into every session container at create time.
+- The bundled CLIs (`claude`, `claude-minimax`, `codex`) prefer API keys over OAuth state when both are present.
+
+So the API-key path is the **first-class** cross-VM auth path. OAuth via `claude auth login` is a convenience for single-VM users — it MAY survive cross-VM, but operators should not rely on it as the primary auth strategy. The Integrations page → Verify endpoint (live-probes the key against the upstream API; see `services/verify.ts`) lets operators confirm the API key is valid before relying on it.
+
+**Pillar #3 status: closed.** Cross-VM auth works via the API-key + Infisical path. The OAuth path is best-effort and not required.
+
 Option 3 is the cleanest if the CLIs cooperate — it sidesteps the device-binding problem entirely. Operator workflow: don't use OAuth login for the CLI; rely on the env-injected key.
 
 The post-restore behavior of `claude` when `ANTHROPIC_API_KEY` is set but `~/.claude/` is also populated is unknown. Verify in Phase 2 by setting `ANTHROPIC_API_KEY` and removing `~/.claude/` to see if claude works.

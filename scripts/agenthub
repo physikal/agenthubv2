@@ -529,7 +529,7 @@ cmd_backup_install() {
   fi
 
   msg "running backup inside $ctr"
-  $SUDO docker exec "$ctr" \
+  $SUDO docker exec -i "$ctr" \
     node --input-type=module <<EOF
 import { runBackup } from "/app/packages/server/dist/services/install-backup/runner.js";
 runBackup(${runner_args}).then((r) => {
@@ -603,6 +603,163 @@ backup_install_auto() {
   cmd_backup_install --note "auto-backup before update to ${sha_short}"
 }
 
+cmd_backup_workspace() {
+  local user=""
+  local all=0
+  local local_only=0
+  local note=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --user)        user="$2"; shift 2 ;;
+      --all)         all=1; shift ;;
+      --local-only|--no-b2) local_only=1; shift ;;
+      --note)        note="$2"; shift 2 ;;
+      *) die "unknown flag: $1" ;;
+    esac
+  done
+  if [[ -z "$user" && "$all" -eq 0 ]]; then
+    die "backup-workspace requires --user <uuid|username> or --all"
+  fi
+
+  local ctr; ctr="$(server_container_name)"
+  if ! $SUDO docker inspect "$ctr" --format '{{.State.Running}}' 2>/dev/null | grep -q 'true'; then
+    die "server container '$ctr' is not running — start the stack first"
+  fi
+  local no_b2_arg="false"
+  [[ "$local_only" -eq 1 ]] && no_b2_arg="true"
+  local all_arg="false"
+  [[ "$all" -eq 1 ]] && all_arg="true"
+  local user_arg="null"
+  [[ -n "$user" ]] && user_arg="\"${user//\"/\\\"}\""
+  local note_arg="null"
+  [[ -n "$note" ]] && note_arg="\"${note//\"/\\\"}\""
+
+  msg "running workspace backup inside $ctr"
+  # -w /app/packages/server so node resolves drizzle-orm from the
+  # server package's node_modules (the dist js does too, but our
+  # heredoc imports drizzle-orm directly for the user lookup).
+  $SUDO docker exec -i -w /app/packages/server "$ctr" \
+    node --input-type=module <<EOF
+import { db, schema } from "/app/packages/server/dist/db/index.js";
+import { runWorkspaceBackup } from "/app/packages/server/dist/services/workspace-backup/runner.js";
+import { loadB2Config } from "/app/packages/server/dist/services/install-backup/runner.js";
+import { eq, or } from "drizzle-orm";
+
+const all = ${all_arg};
+const target = ${user_arg};
+const noB2 = ${no_b2_arg};
+const note = ${note_arg};
+
+let users;
+if (all) {
+  users = db.select({ id: schema.users.id, username: schema.users.username }).from(schema.users).all();
+} else {
+  users = db.select({ id: schema.users.id, username: schema.users.username })
+    .from(schema.users)
+    .where(or(eq(schema.users.id, target), eq(schema.users.username, target)))
+    .all();
+  if (users.length === 0) {
+    process.stderr.write(\`no user matched id-or-username: \${target}\n\`);
+    process.exit(1);
+  }
+}
+const b2 = noB2 ? null : await loadB2Config().catch(() => null);
+if (!b2 && !noB2) process.stdout.write("[backup] no B2 configured — local-only bundle(s)\n");
+
+let okCount = 0;
+let failCount = 0;
+for (const u of users) {
+  process.stdout.write(\`[backup] === user \${u.username} (\${u.id}) ===\n\`);
+  try {
+    const args = {
+      userId: u.id,
+      userEmail: u.username,
+      workspaceImageSha: process.env.WORKSPACE_IMAGE_SHA ?? null,
+      trigger: "cli",
+      b2,
+      onLog: (l) => process.stdout.write(l + "\n"),
+    };
+    if (note) args.note = note;
+    const r = await runWorkspaceBackup(args);
+    okCount++;
+    process.stdout.write(\`[backup] ok: \${r.bundlePath} (\${r.bytes} bytes)\${r.b2Path ? " → " + r.b2Path : ""}\n\`);
+  } catch (err) {
+    failCount++;
+    process.stderr.write(\`[backup] FAILED for \${u.id}: \${err.message ?? err}\n\`);
+  }
+}
+process.stdout.write(\`[backup] summary: \${okCount} ok, \${failCount} failed\n\`);
+process.exit(failCount > 0 ? 1 : 0);
+EOF
+}
+
+cmd_restore_workspace() {
+  local user=""
+  local from=""
+  local snapshot=""
+  local force=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --user)     user="$2";     shift 2 ;;
+      --from)     from="$2";     shift 2 ;;
+      --snapshot) snapshot="$2"; shift 2 ;;
+      --force)    force="true";  shift ;;
+      *) die "unknown flag: $1" ;;
+    esac
+  done
+  [[ -n "$user" ]] || die "restore-workspace requires --user <uuid|username>"
+  if [[ -z "$from" && -z "$snapshot" ]]; then
+    die "restore-workspace requires --from <local-path> or --snapshot <latest|filename>"
+  fi
+
+  local ctr; ctr="$(server_container_name)"
+  if ! $SUDO docker inspect "$ctr" --format '{{.State.Running}}' 2>/dev/null | grep -q 'true'; then
+    die "server container '$ctr' is not running — start the stack first"
+  fi
+  local user_arg="\"${user//\"/\\\"}\""
+  local from_arg="null"; [[ -n "$from"     ]] && from_arg="\"${from//\"/\\\"}\""
+  local snap_arg="null"; [[ -n "$snapshot" ]] && snap_arg="\"${snapshot//\"/\\\"}\""
+  local force_arg="false"; [[ -n "$force" ]] && force_arg="true"
+
+  msg "running workspace restore inside $ctr"
+  $SUDO docker exec -i -w /app/packages/server "$ctr" \
+    node --input-type=module <<EOF
+import { db, schema } from "/app/packages/server/dist/db/index.js";
+import { runWorkspaceRestore } from "/app/packages/server/dist/services/workspace-backup/runner.js";
+import { loadB2Config } from "/app/packages/server/dist/services/install-backup/runner.js";
+import { eq, or } from "drizzle-orm";
+
+const target = ${user_arg};
+const u = db.select({ id: schema.users.id, username: schema.users.username })
+  .from(schema.users)
+  .where(or(eq(schema.users.id, target), eq(schema.users.username, target)))
+  .get();
+if (!u) {
+  process.stderr.write(\`no user matched id-or-username: \${target}\n\`);
+  process.exit(1);
+}
+const b2 = await loadB2Config().catch(() => null);
+const localBundlePath = ${from_arg};
+const b2Snapshot = ${snap_arg};
+const args = {
+  userId: u.id,
+  b2,
+  force: ${force_arg},
+  onLog: (l) => process.stdout.write(l + "\n"),
+};
+if (localBundlePath) args.localBundlePath = localBundlePath;
+if (b2Snapshot) args.b2Snapshot = b2Snapshot;
+try {
+  const r = await runWorkspaceRestore(args);
+  process.stdout.write(\`[restore] done: \${r.source} → \${r.extractedBytes} bytes on volume\n\`);
+  process.exit(0);
+} catch (err) {
+  process.stderr.write(\`[restore] FAILED: \${err.message ?? err}\n\`);
+  process.exit(1);
+}
+EOF
+}
+
 cmd_logs() {
   local svc="${1:-agenthub-server}"
   compose logs -f --tail=100 "$svc"
@@ -630,6 +787,12 @@ Commands:
   restore-install        Restore a bundle (runs in a temp container).
                          Flags: --from <path|b2://...>, --snapshot <latest|ts>,
                          --force, --dry-run
+  backup-workspace       Snapshot a user's /home/coder docker volume to a
+                         tar.zst bundle. Flags: --user <uuid|username> or
+                         --all, --local-only, --note <msg>
+  restore-workspace      Extract a workspace bundle into the user's volume.
+                         Flags: --user <uuid|username>, --from <local-path>
+                         OR --snapshot <latest|filename>, --force
   reconfigure-access [...] Change access mode (lan/public) and TLS strategy.
                          Interactive by default; --non-interactive reads
                          AGENTHUB_ACCESS_MODE + AGENTHUB_TLS_MODE env vars.
@@ -647,8 +810,10 @@ EOF
 
 case "${1:-}" in
   update)          shift; cmd_update "$@" ;;
-  backup-install)  shift; cmd_backup_install "$@" ;;
-  restore-install) shift; cmd_restore_install "$@" ;;
+  backup-install)    shift; cmd_backup_install "$@" ;;
+  restore-install)   shift; cmd_restore_install "$@" ;;
+  backup-workspace)  shift; cmd_backup_workspace "$@" ;;
+  restore-workspace) shift; cmd_restore_workspace "$@" ;;
   reconfigure-access)
     shift
     cli="$AGENTHUB_DIR/packages/installer/dist/reconfigure-cli.js"
