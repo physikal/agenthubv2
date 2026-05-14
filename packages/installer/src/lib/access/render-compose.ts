@@ -104,7 +104,16 @@ export function renderTraefikOverride(input: RenderInput): string | null {
 
   const services: Record<string, unknown> = {
     traefik: {
-      ports: ["80:80", "443:443", "8443:8443"],
+      // Host-side ports are templated so operators can co-locate AgentHub
+      // with other services. Container-side ports stay at Traefik's standard
+      // 80/443/8443 (the Traefik static config in traefik.yml binds those).
+      // docker-compose's ports: list merge REPLACES the base — must restate
+      // all three when adding :443 in public mode.
+      ports: [
+        "${AGENTHUB_HTTP_PORT:-80}:80",
+        "${AGENTHUB_HTTPS_PORT:-443}:443",
+        "${AGENTHUB_INFISICAL_PORT:-8443}:8443",
+      ],
     },
     "agenthub-server": {
       // Public mode: enable TLS on the router (base compose omits this so

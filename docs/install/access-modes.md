@@ -39,10 +39,10 @@ DNS-01 challenge. LE proves domain ownership via a TXT record that Traefik (via 
 
 **Required:**
 - `AGENTHUB_TLS_EMAIL`
-- `AGENTHUB_TLS_DNS_PROVIDER` — lego provider name (`cloudflare`, `route53`, `digitalocean`, `hetzner`, …)
+- `AGENTHUB_TLS_DNS_PROVIDER` — lego provider name. Common: `cloudflare`, `route53`, `digitalocean`, `hetzner`, `gandi`, `linode`, `desec`, `namecheap`. Full list (~80 providers) at <https://go-acme.github.io/lego/dns/>.
 - Provider API token:
-  - Cloudflare: `AGENTHUB_CLOUDFLARE_API_TOKEN`
-  - Others: export the lego-native env vars before installing (see lego docs)
+  - Cloudflare: `AGENTHUB_CLOUDFLARE_API_TOKEN` (AgentHub remaps this to the lego-native `CF_DNS_API_TOKEN`)
+  - Others: export the lego-native env vars (`AWS_ACCESS_KEY_ID` for Route 53, `DO_AUTH_TOKEN` for DigitalOcean, etc.) before running the installer. AgentHub forwards them verbatim into the Traefik container. Provider-specific var names: <https://go-acme.github.io/lego/dns/>
 
 A pre-flight check validates the Cloudflare token and zone access before writing config. Bypass with `AGENTHUB_SKIP_PREFLIGHT=1`.
 
@@ -74,10 +74,22 @@ AGENTHUB_CLOUDFLARE_API_TOKEN=<token> \
 agenthub reconfigure-access --non-interactive
 ```
 
+## Customizing exposed ports
+
+By default Traefik binds host ports `80` (always), `443` (public mode only), and `8443` (Infisical console). Override via `compose/.env` if you need to co-locate AgentHub with another web service on the same box:
+
+```
+AGENTHUB_HTTP_PORT=8080
+AGENTHUB_HTTPS_PORT=8443     # public mode only; conflicts with default 8443 below — pick non-overlapping ports
+AGENTHUB_INFISICAL_PORT=9443
+```
+
+Container-side ports are always Traefik's standard `80`/`443`/`8443` — only the host mapping changes. After editing `.env`, run `agenthub restart` to apply.
+
 ## Migration from self-CA
 
 Self-CA mode was removed. If your install was running self-CA, `agenthub update` migrates it automatically to `lan` mode (HTTP-only). The cert and CA-distribution sidecar are removed.
 
-**HSTS caveat:** Browsers that visited the install *before* PR #74 may be HSTS-pinned to HTTPS for up to 6 months. After migration to `lan` mode those browsers will refuse `http://`. Fix:
+**HSTS caveat:** Browsers that previously visited the install over HTTPS may be HSTS-pinned for up to 6 months. After migration to `lan` mode those browsers will refuse `http://`. Fix:
 - Chrome: `chrome://net-internals/#hsts` → Delete domain
 - Firefox: History → "Forget About This Site" for the hostname

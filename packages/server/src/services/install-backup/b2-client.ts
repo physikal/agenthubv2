@@ -5,6 +5,26 @@ import { join } from "path";
 import type { B2Config } from "./types.js";
 
 export function buildRcloneConfig(c: B2Config): string {
+  // The remote name stays "b2" regardless of backend type so callers
+  // (b2Push/b2Pull/b2List/b2Delete) don't need to know which backend
+  // they're talking to. Section name is opaque to the user.
+  if (c.backend === "s3") {
+    const lines = [
+      "[b2]",
+      "type = s3",
+      // "Other" tells rclone "this isn't AWS itself — accept user-provided
+      // endpoint without trying AWS-specific behavior." Works for R2,
+      // MinIO, Wasabi, Storj, Backblaze S3-compat endpoint.
+      "provider = Other",
+      `access_key_id = ${c.keyId}`,
+      `secret_access_key = ${c.appKey}`,
+      `region = ${c.region ?? "auto"}`,
+    ];
+    if (c.endpoint) lines.push(`endpoint = ${c.endpoint}`);
+    lines.push("hard_delete = true", "");
+    return lines.join("\n");
+  }
+  // Default: native Backblaze B2.
   return [
     "[b2]",
     "type = b2",

@@ -77,7 +77,7 @@ const TOOLS = [
         },
         domain: {
           type: "string" as const,
-          description: "Domain for the app (e.g. 'myapp.physhlab.com'). Optional — omit for internal-only.",
+          description: "Domain for the app (e.g. 'myapp.example.com'). Optional — omit for internal-only.",
         },
         source_path: {
           type: "string" as const,
@@ -123,7 +123,7 @@ const TOOLS = [
         },
         dns_name: {
           type: "string" as const,
-          description: "Name of the Cloudflare DNS config to use for domain records (e.g. 'cf-physhlab'). If omitted, uses the first available Cloudflare config.",
+          description: "Name of the Cloudflare DNS config to use for domain records (e.g. 'cf-prod'). If omitted, uses the first available Cloudflare config.",
         },
       },
       required: ["name"],

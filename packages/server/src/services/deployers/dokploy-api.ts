@@ -71,7 +71,7 @@ export function resolveDokployConfig(merged: Record<string, unknown>): DokployCo
  * Derive the externally-reachable host for this Dokploy instance. Priority:
  *   1. Explicit `publicHost` field on the infra config.
  *   2. Hostname parsed from `baseUrl` (e.g. `http://dokploy.example.com:3000`
- *      → `dokploy.example.com`, `http://192.168.5.50:3000` → `192.168.5.50`).
+ *      → `dokploy.example.com`, `http://10.0.0.50:3000` → `10.0.0.50`).
  *
  * Returns `{ host, source }` so callers can surface *why* they got the value
  * they did — useful in the `choose_domain` MCP prompt so the operator

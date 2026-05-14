@@ -173,7 +173,7 @@ Infisical's Postgres is in `agenthub_infisical-pg-data`. Backup separately; rest
 
 ### How do I rotate Infisical creds?
 
-Log into `https://secrets.<domain>/` as the Infisical admin, create a new machine identity + universal-auth secret, paste into `compose/.env`:
+Log into `https://<your-host>:8443/` as the Infisical admin (credentials are in `compose/.env` as `INFISICAL_ADMIN_EMAIL` / `INFISICAL_ADMIN_PASSWORD`), create a new machine identity + universal-auth secret, paste into `compose/.env`:
 
 ```
 INFISICAL_CLIENT_ID=<new>

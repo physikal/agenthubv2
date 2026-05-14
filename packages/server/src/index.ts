@@ -89,8 +89,8 @@ app.route("/api/auth", authRoutes());
 // → ENV AGENTHUB_GIT_SHA (see docker/Dockerfile.server). The update
 // script (scripts/agenthub probe_front_door) polls this endpoint to
 // confirm the newly-built container is actually serving traffic
-// post-recreate, closing the silent-failure gap that stranded VM 915
-// on a ghost dangling image in April 2026.
+// post-recreate, closing a class of silent-failure where compose
+// recreated a container against a stale dangling image.
 const SERVER_GIT_SHA = process.env["AGENTHUB_GIT_SHA"] ?? "unknown";
 const SERVER_STARTED_AT = new Date().toISOString();
 app.get("/api/health", async (c) => {

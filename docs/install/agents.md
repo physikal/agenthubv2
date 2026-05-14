@@ -85,7 +85,7 @@ For non-Cloudflare DNS providers, pre-export the lego-native env vars before run
 curl -fsSL https://raw.githubusercontent.com/physikal/agenthubv2/main/scripts/quick-install.sh \
   | AGENTHUB_AUTO_INSTALL=true \
     AGENTHUB_MODE=docker \
-    AGENTHUB_DOMAIN=192.168.4.10 \
+    AGENTHUB_DOMAIN=10.0.0.10 \
     AGENTHUB_ADMIN_PASSWORD=<pw> \
     bash -s -- --non-interactive
 ```
@@ -123,8 +123,28 @@ A pre-flight check validates the Cloudflare token and zone access before writing
 |---|---|---|
 | `AGENTHUB_SERVER_IMAGE` | `agenthubv2-server:local` (built by install.sh) | Pin to a published tag (e.g. `ghcr.io/physikal/agenthubv2-server:v2.0.0`). |
 | `AGENTHUB_WORKSPACE_IMAGE` | `agenthubv2-workspace:local` (built by install.sh) | Pin to a published workspace-image tag. |
+| `AGENTHUB_HTTP_PORT` | `80` | Host port mapped to Traefik's `:80`. Override when co-locating with another web service. |
+| `AGENTHUB_HTTPS_PORT` | `443` | Host port mapped to Traefik's `:443` (public access mode only). |
+| `AGENTHUB_INFISICAL_PORT` | `8443` | Host port mapped to the Infisical admin console. |
+| `AGENTHUB_MAX_ACTIVE_SESSIONS` | `3` | Max concurrent active sessions per non-admin user. |
+| `AGENTHUB_INFISICAL_EXTERNAL` | unset | Set to `true` / `1` to skip the bundled-Infisical bootstrap; bring your own (see below). |
 
 Everything else (Infisical DB/Redis passwords, encryption keys, auth secrets) is generated randomly per install and written to `compose/.env`. The Infisical admin password is also auto-generated and printed to stdout — capture it before your process exits.
+
+### Using an external Infisical instance
+
+By default the installer bootstraps the bundled Infisical container with a new admin user, organization, project, and machine identity. To point AgentHub at an existing Infisical instance (self-hosted elsewhere, or Infisical Cloud) instead:
+
+1. In your existing Infisical, create a project named `agenthub` (or anything — you'll supply the ID) and a machine identity with universal-auth credentials. Grant the identity read/write on the project's `prod` environment (or set `INFISICAL_ENVIRONMENT` to whatever environment slug you use).
+2. Set these env vars **before** running the installer:
+   - `AGENTHUB_INFISICAL_EXTERNAL=true`
+   - `INFISICAL_URL=https://app.infisical.com` (or your self-hosted URL)
+   - `INFISICAL_PROJECT_ID=<project id>`
+   - `INFISICAL_CLIENT_ID=<machine identity client id>`
+   - `INFISICAL_CLIENT_SECRET=<machine identity client secret>`
+3. Optionally disable the bundled Infisical containers by removing the `infisical`, `infisical-postgres`, and `infisical-redis` services from your `compose/docker-compose.yml` after install (they'll idle without affecting the server).
+
+The installer skips bootstrap when `AGENTHUB_INFISICAL_EXTERNAL=true`, validates the four `INFISICAL_*` vars are set, and brings the server up against the external store. The Secrets page's "Reveal Infisical login" flow shows empty values on this path — your own Infisical admin login is unchanged.
 
 ## Minimal flow (bash)
 

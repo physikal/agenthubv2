@@ -22,12 +22,19 @@ export async function loadB2Config(): Promise<B2Config | null> {
   if (!store.configured) return null;
   const appKey = await store.getSecret(SYSTEM_SECRET_PATH, B2_APP_KEY_NAME);
   if (!appKey) return null;
-  return {
+  const cfg: B2Config = {
     keyId: row.b2KeyId,
     appKey,
     bucket: row.b2Bucket,
     pathPrefix: row.b2PathPrefix ?? "installs/",
   };
+  // Backend defaults to "b2" when the column is null (back-compat).
+  if (row.backend === "s3") {
+    cfg.backend = "s3";
+    if (row.endpoint) cfg.endpoint = row.endpoint;
+    if (row.region) cfg.region = row.region;
+  }
+  return cfg;
 }
 
 export async function saveB2AppKey(appKey: string): Promise<void> {

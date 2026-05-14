@@ -114,13 +114,23 @@ detect_distro() {
          ;;
     esac
   elif [[ "$(uname -s)" == "Darwin" ]]; then
-    DISTRO=macos
-    DISTRO_FAMILY=macos
+    die "macOS isn't supported by quick-install.sh — the installer auto-provisions
+Linux packages and the bundled Traefik/compose stack expects Linux Docker
+semantics. If you really want to try it, install Docker Desktop + Node 22 +
+pnpm manually, clone the repo, and run ./scripts/install.sh — your mileage
+may vary on volume permissions and the docker.sock mount."
   fi
   if [[ -z "$DISTRO_FAMILY" ]]; then
     die "Unsupported OS ($DISTRO). Supported: Debian/Ubuntu, Fedora/RHEL/Rocky, Arch, Alpine.
 Install Docker + Node 22 + pnpm manually, then re-run scripts/install.sh."
   fi
+  case "$DISTRO_FAMILY" in
+    debian) ;;
+    rhel|arch|alpine)
+      warn "$DISTRO_FAMILY support is best-effort — verified on Debian/Ubuntu."
+      warn "File issues at https://github.com/physikal/agenthubv2/issues if anything breaks."
+      ;;
+  esac
   msg "detected: $DISTRO ($DISTRO_FAMILY)"
 }
 

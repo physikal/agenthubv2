@@ -6,7 +6,15 @@ import type { AuthUser } from "../middleware/auth.js";
 const MAX_NAME_LEN = 100;
 const MAX_REPO_LEN = 2000;
 const MAX_PROMPT_LEN = 5000;
-const MAX_ACTIVE_SESSIONS = 3;
+// Per-non-admin-user active session ceiling. Admins are exempt. Operators
+// can raise this via AGENTHUB_MAX_ACTIVE_SESSIONS in compose/.env (set to
+// a high number like 999 to effectively disable). Negative / non-numeric
+// values fall back to the default.
+const MAX_ACTIVE_SESSIONS = (() => {
+  const raw = process.env["AGENTHUB_MAX_ACTIVE_SESSIONS"];
+  const parsed = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 3;
+})();
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10MB
 const MAX_UPLOAD_BASE64 = Math.ceil(MAX_UPLOAD_BYTES * 4 / 3);
 

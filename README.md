@@ -1,4 +1,6 @@
-# AgentHub v2
+# AgentHub
+
+> **Status: beta.** Active development; the `agenthub update` command handles migrations between releases automatically. Breaking changes between releases are still possible — pin a tag in production.
 
 Self-hostable web platform for running coding-agent sessions in isolated containers. Log in through the browser, spin up a workspace with Claude Code / OpenCode / MiniMax pre-installed, and let the agent deploy its own workloads through the bundled `agentdeploy` MCP.
 
@@ -6,7 +8,19 @@ Runs on **one host with Docker**. One command, ~5 minutes, you're running.
 
 ## Install
 
-**Requirements:** any supported Linux host with sudo access, internet, 4 GB RAM, 20 GB disk. The installer auto-provisions git, Docker, Docker Compose plugin, Node 22, and pnpm if they're missing. Supported distros: Debian/Ubuntu, Fedora/RHEL/Rocky/Alma, Arch, Alpine.
+**Minimum hardware**: 4 GB RAM, 2 vCPU, 20 GB disk.
+**Recommended**: 8 GB RAM, 2-4 vCPU, 40 GB disk for comfortable single-user use; 16 GB for small teams. Each active session container adds ~600 MB.
+
+**Supported hosts**: Debian / Ubuntu (tested), Fedora / RHEL / Rocky / Alma (best-effort), Arch (best-effort), Alpine (best-effort). The installer auto-detects the distro family and provisions git, Docker, Docker Compose plugin, Node 22, and pnpm if missing. **macOS / Windows / WSL2 are not currently supported** — install Docker + Node 22 + pnpm manually and run `./scripts/install.sh` only if you know what you're doing.
+
+**Firewall**: open `tcp/80` always; `tcp/443` if you opt into public access mode; `tcp/8443` for the Infisical admin console.
+
+```bash
+# UFW (Debian/Ubuntu)
+sudo ufw allow 80/tcp && sudo ufw allow 8443/tcp
+# firewalld (Fedora/RHEL)
+sudo firewall-cmd --add-port=80/tcp --add-port=8443/tcp --permanent && sudo firewall-cmd --reload
+```
 
 ### One-liner
 
@@ -39,9 +53,9 @@ When install finishes you'll see **two** admin credential sets — one for Agent
 
 **Ports opened**: 80 (AgentHub — plain HTTP in the default lan access mode), 443 (only opened when you opt into public access mode for Let's Encrypt), 8443 (Infisical console). See [docs/install/access-modes.md](docs/install/access-modes.md) for the lan-vs-public choice.
 
-Full install docs: [docs/install/humans.md](docs/install/humans.md) · [docs/install/agents.md](docs/install/agents.md) · [docs/install/installer-flow.md](docs/install/installer-flow.md) · [docs/troubleshooting.md](docs/troubleshooting.md)
+Full install docs: [docs/install/humans.md](docs/install/humans.md) · [docs/install/agents.md](docs/install/agents.md) · [docs/install/installer-flow.md](docs/install/installer-flow.md) · [docs/troubleshooting.md](docs/troubleshooting.md) · [docs/operations/disaster-recovery.md](docs/operations/disaster-recovery.md)
 
-The complete **user manual** is also bundled with every install at `/docs` — browse to `https://<your-host>/docs/` after install, or click **Docs** in the sidebar.
+The complete **user manual** is also bundled with every install at `/docs` — browse to `http://<your-host>/docs/` after install (HTTPS if you picked public access mode), or click **Docs** in the sidebar.
 
 ## What's in the box
 
@@ -65,15 +79,15 @@ Browser (React + xterm.js)
 **Web UI pages** (after login):
 - **Sessions** — active workspace containers + terminal
 - **Deployments** — apps the agent has deployed
-- **Integrations** — Cloudflare DNS, DigitalOcean, Docker host, Dokploy, Backblaze B2 (one page, typed forms, secrets in Infisical)
+- **Integrations** — Cloudflare DNS, DigitalOcean, Docker host, Dokploy, Backblaze B2, AI provider keys (one page, typed forms, secrets in Infisical, **click Verify to live-probe**)
 - **Backups** — snapshot save/restore + history
 - **Secrets** — link to the bundled Infisical admin console for folders/environments/audit log
 - **Settings** — account, password, and (admin-only) **Version** panel with one-click update pulled from GitHub
 
 **Operator CLI** (installed to `/usr/local/bin/agenthub`):
-`agenthub update` · `agenthub status` · `agenthub logs` · `agenthub restart` · `agenthub version`. Same flow the web UI's Update button triggers — one code path.
+`agenthub update` · `agenthub status` · `agenthub logs` · `agenthub restart` · `agenthub version` · `agenthub backup-install` / `agenthub restore-install` · `agenthub backup-workspace` / `agenthub restore-workspace`. Same flow the web UI buttons trigger — one code path.
 
-Inside each workspace, `agentdeploy` MCP lets the agent deploy *its* apps to: Docker host over SSH · DigitalOcean (droplet + Docker + Traefik) · Dokploy (API, no SSH). Plus Cloudflare DNS automation and optional Backblaze B2 backups (per-user, run from inside the workspace via the agent daemon — backups require an active session so the agent can reach `/home/coder`).
+Inside each workspace, `agentdeploy` MCP lets the agent deploy *its* apps to: Docker host over SSH · DigitalOcean (droplet + Docker + Traefik) · Dokploy (API, no SSH). Plus Cloudflare DNS automation and Backblaze B2 backups.
 
 ## Install modes
 

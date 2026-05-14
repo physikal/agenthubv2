@@ -10,7 +10,7 @@ const traefikDefault: ParsedTlsCert = {
   notAfter: new Date("2027-04-25"),
 };
 const validLE: ParsedTlsCert = {
-  subjectCN: "agenthub.physhlab.com",
+  subjectCN: "agenthub.example.com",
   issuerCN: "R10",
   issuerO: "Let's Encrypt",
   notBefore: new Date("2026-03-01"),
@@ -33,7 +33,7 @@ const selfCa: ParsedTlsCert = {
 
 describe("classifyCert", () => {
   it("flags TRAEFIK DEFAULT CERT as default-fallback", () => {
-    const r = classifyCert(traefikDefault, "agenthub.physhlab.com", now);
+    const r = classifyCert(traefikDefault, "agenthub.example.com", now);
     expect(r.resolver).toBe("default-fallback");
     expect(r.ok).toBe(false);
     expect(r.warnings).toContain(
@@ -42,7 +42,7 @@ describe("classifyCert", () => {
   });
 
   it("identifies Let's Encrypt by issuer", () => {
-    const r = classifyCert(validLE, "agenthub.physhlab.com", now);
+    const r = classifyCert(validLE, "agenthub.example.com", now);
     expect(r.resolver).toBe("public-alpn");
     expect(r.issuer).toBe("Let's Encrypt");
     expect(r.ok).toBe(true);
@@ -58,13 +58,13 @@ describe("classifyCert", () => {
   });
 
   it("warns when expiring < 14 days", () => {
-    const r = classifyCert(expiringSoon, "agenthub.physhlab.com", now);
+    const r = classifyCert(expiringSoon, "agenthub.example.com", now);
     expect(r.ok).toBe(true);
     expect(r.warnings).toContain("expires in 10 days");
   });
 
   it("flags expired cert", () => {
-    const r = classifyCert(expired, "agenthub.physhlab.com", now);
+    const r = classifyCert(expired, "agenthub.example.com", now);
     expect(r.ok).toBe(false);
     expect(r.warnings.some((w) => /expired/i.test(w))).toBe(true);
   });

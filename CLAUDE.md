@@ -84,7 +84,7 @@ Self-CA mode is gone. `agenthub update` auto-migrates old installs: `self-ca` �
 
 **HSTS gotcha:** PR #74 disabled Hono's `secureHeaders()` HSTS emission. Browsers that visited the install pre-#74 on HTTPS may be HSTS-pinned for ~6 months and will refuse plain `http://` after migration to `lan` mode. Operator fix: Chrome `chrome://net-internals/#hsts` → Delete domain; Firefox "Forget About This Site".
 
-**Authoritative reference:** `docs/superpowers/specs/2026-05-13-lan-first-tls-default.md`. User-facing: `docs/install/access-modes.md`.
+**Authoritative reference:** `docs/install/access-modes.md` + the PR #75 description (commit `6739441`).
 
 ### Install backup surface (slice 4b)
 
@@ -103,7 +103,7 @@ Operator-scoped backup of `compose/.env` + `/data/agenthub.db` + Infisical Postg
 
 **Conflict guard:** before applying, `buildConflictReport` checks for existing users, active sessions, and encryption-key mismatch. Without `--force`, a non-fresh target is rejected. The web UI shows conflicts from the dry-run validate step before enabling the Restore button.
 
-**Spec:** `docs/superpowers/specs/2026-05-13-install-backup-restore.md`. Operator doc: `docs/operations/install-backup.md`.
+**Operator doc:** `docs/operations/install-backup.md`. Design rationale in the PR #80 description.
 
 ### Other decisions
 - **Provisioner driver abstraction** (`packages/server/src/services/provisioner/`) — swappable at install time. Adding a new driver means implementing one interface. See `docs/architecture.md`.
