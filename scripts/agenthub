@@ -327,10 +327,20 @@ migrate_env() {
   # LAN-first TLS: migrate legacy AGENTHUB_TLS_MODE to the new
   # AGENTHUB_ACCESS_MODE shape. The migrate-access CLI rewrites .env and
   # cleans up old override artifacts. Idempotent.
+  #
+  # Rebuild the installer first — `git pull` brings new TypeScript source
+  # but no JS in dist/, and the migrate-cli isn't shipped pre-built in the
+  # repo. Without this step the migration is silently skipped (which is
+  # exactly the bug that bit VM 923's first update past PR #75).
   local migrate_cli="$AGENTHUB_DIR/packages/installer/dist/lib/access/migrate-cli.js"
+  if [[ ! -f "$migrate_cli" ]] && [[ -d "$AGENTHUB_DIR/packages/installer" ]]; then
+    msg "building installer to produce migrate-cli"
+    ( cd "$AGENTHUB_DIR" && pnpm -C packages/installer build ) \
+      || warn "installer build failed; access migration will be skipped"
+  fi
   if [[ -f "$migrate_cli" ]]; then
     node "$migrate_cli" "$AGENTHUB_DIR/compose" \
-      || die "TLS migration failed — refusing to upgrade Traefik"
+      || die "access migration failed — refusing to upgrade Traefik"
   else
     warn "skipping access migration (run 'pnpm -C packages/installer build' if you expected this)"
   fi

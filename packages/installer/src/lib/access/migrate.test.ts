@@ -131,6 +131,30 @@ describe("migrateAccessConfig", () => {
     rmSync(dir, { recursive: true });
   });
 
+  // VM 923 in prod was on self-CA but its .env never had an explicit
+  // AGENTHUB_TLS_MODE=self-ca line (the mode was implied at install time
+  // via process env). The original migration logic defaulted to "auto" and
+  // routed those installs to the wrong (public) path. Detect self-CA via
+  // AGENTHUB_LAN_IP presence (self-CA-only variable) as a fallback.
+  it("implicit self-ca (no TLS_MODE but LAN_IP set) → lan", () => {
+    const dir = setupFixture(
+      [
+        "DOMAIN=agenthub.example.com",
+        "AGENTHUB_LAN_IP=192.168.4.221",
+        "COMPOSE_FILE=docker-compose.yml:traefik.override.yml",
+      ].join("\n"),
+      "services:\n  traefik-self-ca-init:\n    image: alpine:3.20\n",
+    );
+    const r = migrateAccessConfig(dir);
+    expect(r.action).toBe("migrated-self-ca-to-lan");
+    const env = readFileSync(join(dir, ".env"), "utf8");
+    expect(env).toContain("AGENTHUB_ACCESS_MODE=lan");
+    expect(env).toContain("AGENTHUB_PUBLIC_URL=http://agenthub.example.com");
+    expect(env).not.toMatch(/AGENTHUB_LAN_IP=/);
+    expect(env).not.toMatch(/COMPOSE_FILE=/);
+    rmSync(dir, { recursive: true });
+  });
+
   it("self-ca → lan: regenerates traefik.yml as lan-only (no websecure, no certificatesResolvers)", () => {
     // Simulate a VM 923 self-CA install with the stale self-CA traefik.yml.
     const staleTraefikYml = [

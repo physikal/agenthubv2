@@ -177,14 +177,15 @@ describe("renderEnv COMPOSE_FILE", () => {
 });
 
 describe("renderEnv ACCESS_MODE + PUBLIC_URL", () => {
-  it("lan mode: PUBLIC_URL is http; no COMPOSE_FILE override", () => {
+  it("lan mode: PUBLIC_URL is http; TRAEFIK_ENTRYPOINT=web; no COMPOSE_FILE override", () => {
     const env = renderEnv({ ...emptyConfig(), accessMode: "lan", domain: "192.168.1.5" });
     expect(env).toContain("AGENTHUB_ACCESS_MODE=lan");
     expect(env).toContain("AGENTHUB_PUBLIC_URL=http://192.168.1.5");
+    expect(env).toContain("AGENTHUB_TRAEFIK_ENTRYPOINT=web");
     expect(env).not.toContain("COMPOSE_FILE=");
   });
 
-  it("public mode: PUBLIC_URL is https; COMPOSE_FILE includes override", () => {
+  it("public mode: PUBLIC_URL is https; TRAEFIK_ENTRYPOINT=websecure; COMPOSE_FILE includes override", () => {
     const env = renderEnv({
       ...emptyConfig(),
       accessMode: "public",
@@ -192,6 +193,7 @@ describe("renderEnv ACCESS_MODE + PUBLIC_URL", () => {
     });
     expect(env).toContain("AGENTHUB_ACCESS_MODE=public");
     expect(env).toContain("AGENTHUB_PUBLIC_URL=https://agenthub.example.com");
+    expect(env).toContain("AGENTHUB_TRAEFIK_ENTRYPOINT=websecure");
     expect(env).toContain("COMPOSE_FILE=docker-compose.yml:traefik.override.yml");
   });
 

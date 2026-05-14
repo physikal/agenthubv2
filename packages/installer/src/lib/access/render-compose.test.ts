@@ -84,7 +84,7 @@ describe("renderTraefikOverride", () => {
     ).toBeNull();
   });
 
-  it("public + public-alpn: adds certresolver label to agenthub-server", () => {
+  it("public + public-alpn: adds tls=true + certresolver labels to agenthub-server", () => {
     const yaml = renderTraefikOverride({
       accessMode: "public",
       domain: "agenthub.example.com",
@@ -93,6 +93,9 @@ describe("renderTraefikOverride", () => {
     });
     expect(yaml).not.toBeNull();
     expect(yaml!).toContain("agenthub-server");
+    // tls=true must be in the override (NOT base compose) so lan mode
+    // doesn't accidentally attach TLS to the plain :80 entrypoint.
+    expect(yaml!).toContain("traefik.http.routers.agenthub.tls=true");
     expect(yaml!).toContain("traefik.http.routers.agenthub.tls.certresolver=le");
   });
 
