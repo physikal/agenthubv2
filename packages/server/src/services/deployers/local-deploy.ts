@@ -8,6 +8,7 @@ import type { InfrastructureConfig } from "../../db/schema.js";
 import type { AgentSessionContext } from "../../middleware/auth.js";
 import { DeployError } from "../deploy-error.js";
 import { firstPublishedTcpPort, parseComposePs } from "./local-deploy-ports.js";
+import { resolveAgenthubHost } from "../public-host.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -232,10 +233,10 @@ export async function localDockerDeploy(
       // internal-only (no TCP publish); store url=null so the UI can hide
       // the clickable link.
       const actualPort = await inspectPublishedPort(proj);
-      // Compose emits empty strings for unset vars, so fall through on both
-      // null/undefined and "". 127.0.0.1 only works when the caller is on
-      // the same box — document that operators should set AGENTHUB_PUBLIC_HOST.
-      const host = process.env["AGENTHUB_PUBLIC_HOST"] || "127.0.0.1";
+      // resolvePublicHost prefers AGENTHUB_PUBLIC_HOST, derives from
+      // AGENTHUB_PUBLIC_URL when missing, falls back to 127.0.0.1 only as a
+      // last resort (works for caller-on-same-box; LAN ops set PUBLIC_URL).
+      const host = resolveAgenthubHost();
       const url = actualPort ? `http://${host}:${String(actualPort)}` : null;
 
       updateStatus(deployId, {

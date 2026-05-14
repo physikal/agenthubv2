@@ -14,6 +14,7 @@ import {
   SecretStoreNotConfiguredError,
 } from "../services/secrets/index.js";
 import { getHostingProvider } from "../services/providers/index.js";
+import { verifyNonHostingCredentials } from "../services/verify.js";
 
 /**
  * Phase 2 minimum: manage Cloudflare DNS infra configs. The inner-MCP deploy
@@ -344,16 +345,19 @@ export function infraRoutes() {
       .get();
     if (!row) return c.json({ error: "Not found" }, 404);
 
-    const provider = getHostingProvider(row.provider);
-    if (!provider) {
-      // Non-hosting provider (cloudflare) has no verify. Return ok.
-      return c.json({ ok: true });
-    }
     const full = await resolveInfraConfig(
       user.id,
       id,
       JSON.parse(row.config) as Record<string, unknown>,
     );
+    // Non-HostingProvider integrations (cloudflare, b2, github, ai-*) have
+    // bespoke probes. HostingProvider compute targets defer to provider.verify.
+    const nonHosting = await verifyNonHostingCredentials(row.provider, full);
+    if (nonHosting) return c.json(nonHosting);
+    const provider = getHostingProvider(row.provider);
+    if (!provider) {
+      return c.json({ ok: false, issues: [`no verify probe for provider ${row.provider}`] });
+    }
     const result = await provider.verify(full);
     return c.json(result);
   });
