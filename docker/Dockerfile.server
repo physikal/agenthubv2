@@ -98,6 +98,10 @@ COPY --from=deps /app/packages/agent/node_modules ./packages/agent/node_modules
 COPY --from=build-agent /app/packages/agent/dist ./packages/agent/dist
 COPY packages/agent/package.json ./packages/agent/
 
+# Operator scripts shipped in the image so `agenthub restore-install` can
+# invoke restore-install.js inside a temp container without a repo mount.
+COPY scripts/ ./scripts/
+
 ENV NODE_ENV=production
 ENV PORT=3000
 EXPOSE 3000

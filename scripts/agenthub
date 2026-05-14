@@ -429,6 +429,7 @@ cmd_update() {
 
   msg "pulling + rebuilding"
   local old_sha="$local_sha"
+
   git reset --hard origin/main --quiet
 
   # Single-pass update under the currently-running CLI. No self-update
@@ -467,6 +468,109 @@ cmd_update() {
   ok "updated to $(git rev-parse --short HEAD)"
 }
 
+server_container_name() {
+  # Matches compose project name "agenthub" + service "agenthub-server" + replica 1.
+  local project
+  project="$(grep -oE '^COMPOSE_PROJECT_NAME=[^ ]+' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
+  printf '%s' "${project:-agenthub}-agenthub-server-1"
+}
+
+# Run a backup directly inside the server container, bypassing HTTP auth.
+# Returns 1 if the server container is not running (caller decides whether to abort).
+cmd_backup_install() {
+  local local_only=0
+  local note=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --local-only|--no-b2) local_only=1; shift ;;
+      --note) note="$2"; shift 2 ;;
+      *) die "unknown flag: $1" ;;
+    esac
+  done
+
+  local ctr
+  ctr="$(server_container_name)"
+  if ! $SUDO docker inspect "$ctr" --format '{{.State.Running}}' 2>/dev/null | grep -q 'true'; then
+    die "server container '$ctr' is not running — start the stack first"
+  fi
+
+  local no_b2_arg="false"
+  [[ "$local_only" -eq 1 ]] && no_b2_arg="true"
+
+  # Compose a JSON snippet for the runner call.  jq may not be installed; build
+  # the JSON by hand (values are safe: boolean literal + shell-quoted string).
+  local runner_args
+  if [[ -n "$note" ]]; then
+    # Escape any double-quotes in the note so it remains valid JSON.
+    local escaped_note
+    escaped_note="${note//\\/\\\\}"
+    escaped_note="${escaped_note//\"/\\\"}"
+    runner_args="{ trigger: 'cli', noB2: ${no_b2_arg}, note: \"${escaped_note}\", onLog: (l) => process.stdout.write(l + '\\n') }"
+  else
+    runner_args="{ trigger: 'cli', noB2: ${no_b2_arg}, onLog: (l) => process.stdout.write(l + '\\n') }"
+  fi
+
+  msg "running backup inside $ctr"
+  $SUDO docker exec "$ctr" \
+    node --input-type=module <<EOF
+import { runBackup } from "/app/packages/server/dist/services/install-backup/runner.js";
+runBackup(${runner_args}).then((r) => {
+  process.stdout.write("[backup] done: " + r.localPath + " (" + (r.bytes ?? 0) + " bytes)\n");
+  if (r.b2Path) process.stdout.write("[backup] B2: " + r.b2Path + "\n");
+}).catch((err) => {
+  process.stderr.write("[backup] FAILED: " + (err.message ?? err) + "\n");
+  process.exit(1);
+});
+EOF
+}
+
+# Run restore inside a dedicated temp container so it can stop/restart the
+# live server stack without killing itself.
+cmd_restore_install() {
+  local from=""
+  local snapshot=""
+  local force=""
+  local dry_run=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --from)     from="$2";     shift 2 ;;
+      --snapshot) snapshot="$2"; shift 2 ;;
+      --force)    force="--force";   shift ;;
+      --dry-run)  dry_run="--dry-run"; shift ;;
+      *) die "unknown flag: $1" ;;
+    esac
+  done
+
+  if [[ -z "$from" && -z "$snapshot" ]]; then
+    die "restore-install requires --from <path-or-url> or --snapshot <latest|timestamp>"
+  fi
+
+  local server_image
+  server_image="$(grep -oE '^AGENTHUB_SERVER_IMAGE=[^ ]+' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
+  : "${server_image:=agenthubv2-server:local}"
+
+  local project
+  project="$(grep -oE '^COMPOSE_PROJECT_NAME=[^ ]+' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
+  : "${project:=agenthub}"
+
+  local from_args=()
+  [[ -n "$from"     ]] && from_args+=(--from     "$from")
+  [[ -n "$snapshot" ]] && from_args+=(--snapshot "$snapshot")
+
+  msg "starting temp restore container (image: $server_image)"
+  $SUDO docker run --rm \
+    -v /var/run/docker.sock:/var/run/docker.sock \
+    -v /data:/data \
+    -v "${AGENTHUB_DIR}:/repo" \
+    --network "${project}_default" \
+    --env-file "$ENV_FILE" \
+    "$server_image" \
+    node /app/scripts/restore-install.js \
+    "${from_args[@]}" \
+    ${force} \
+    ${dry_run}
+}
+
 cmd_logs() {
   local svc="${1:-agenthub-server}"
   compose logs -f --tail=100 "$svc"
@@ -488,6 +592,12 @@ Usage: agenthub <command> [args]
 
 Commands:
   update [--check]       Pull latest, rebuild, recreate. --check is a dry-run.
+                         Auto-backs up install state before applying changes.
+  backup-install         Snapshot compose/.env + SQLite + Infisical Postgres
+                         to a tar.gz bundle. Flags: --local-only, --note <msg>
+  restore-install        Restore a bundle (runs in a temp container).
+                         Flags: --from <path|b2://...>, --snapshot <latest|ts>,
+                         --force, --dry-run
   reconfigure-tls [...]  Change TLS strategy. Interactive by default;
                          --non-interactive reads AGENTHUB_TLS_* env vars.
                          Flags: --no-rollback, --regen-cert (self-ca only).
@@ -502,7 +612,9 @@ EOF
 }
 
 case "${1:-}" in
-  update)  shift; cmd_update "$@" ;;
+  update)          shift; cmd_update "$@" ;;
+  backup-install)  shift; cmd_backup_install "$@" ;;
+  restore-install) shift; cmd_restore_install "$@" ;;
   reconfigure-tls)
     shift
     cli="$AGENTHUB_DIR/packages/installer/dist/reconfigure-cli.js"
