@@ -30,8 +30,8 @@ describe("resolveAgenthubHost", () => {
   });
 
   it("strips port from PUBLIC_URL host derivation", () => {
-    process.env["AGENTHUB_PUBLIC_URL"] = "http://192.168.4.83:8080/";
-    expect(resolveAgenthubHost()).toBe("192.168.4.83");
+    process.env["AGENTHUB_PUBLIC_URL"] = "http://10.0.0.83:8080/";
+    expect(resolveAgenthubHost()).toBe("10.0.0.83");
   });
 
   it("falls back to 127.0.0.1 when neither is set", () => {

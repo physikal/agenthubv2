@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { renderGitConfig } from "./github-credentials.js";
 
 describe("renderGitConfig", () => {
-  const out = renderGitConfig("physikal");
+  const out = renderGitConfig("test-owner");
 
   it("does NOT embed a token anywhere — credential helper handles auth", () => {
     expect(out).not.toMatch(/ghs_/);
@@ -17,8 +17,8 @@ describe("renderGitConfig", () => {
   });
 
   it("sets git user.name + email from the account login", () => {
-    expect(out).toContain("name = physikal");
-    expect(out).toContain("email = physikal@users.noreply.github.com");
+    expect(out).toContain("name = test-owner");
+    expect(out).toContain("email = test-owner@users.noreply.github.com");
   });
 
   it("wires the credential helper at the expected path, resetting defaults", () => {

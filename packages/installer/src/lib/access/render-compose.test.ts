@@ -111,8 +111,9 @@ describe("renderTraefikOverride", () => {
     expect(yaml).not.toBeNull();
     expect(yaml!).toContain("CF_DNS_API_TOKEN");
     expect(yaml!).toContain("certresolver=le");
-    expect(yaml!).toMatch(/80:80/);
-    expect(yaml!).toMatch(/443:443/);
+    // Host-side ports are env-templated so operators can co-locate.
+    expect(yaml!).toMatch(/AGENTHUB_HTTP_PORT.*:80/);
+    expect(yaml!).toMatch(/AGENTHUB_HTTPS_PORT.*:443/);
   });
 
   it("public: restates :80, :443, :8443 on traefik.ports so compose merge doesn't drop :80", () => {
@@ -123,9 +124,10 @@ describe("renderTraefikOverride", () => {
       tlsEmail: "ops@example.com",
     });
     expect(yaml).not.toBeNull();
-    expect(yaml!).toMatch(/80:80/);
-    expect(yaml!).toMatch(/443:443/);
-    expect(yaml!).toMatch(/8443:8443/);
+    // Host-side ports use env-var templates with sane defaults.
+    expect(yaml!).toMatch(/AGENTHUB_HTTP_PORT.*:80/);
+    expect(yaml!).toMatch(/AGENTHUB_HTTPS_PORT.*:443/);
+    expect(yaml!).toMatch(/AGENTHUB_INFISICAL_PORT.*:8443/);
   });
 
   it("never emits `command:` on the traefik service (regression guard for #69)", () => {

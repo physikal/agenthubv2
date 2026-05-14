@@ -71,31 +71,54 @@ export async function runInstall(
   // identity, and write INFISICAL_PROJECT_ID/CLIENT_ID/CLIENT_SECRET back to
   // .env. Then recreate the server so it picks up the real creds (it booted
   // earlier with UnconfiguredStore).
-  const bootstrap = await bootstrapInfisical(
-    {
-      baseUrl: "http://localhost:8080",
-      adminEmail: "admin@agenthub.local",
-      orgName: "AgentHub",
-      projectName: "agenthub",
-      composeDir,
-      envFile,
-    },
-    onLog,
-  );
+  //
+  // Skip bootstrap when AGENTHUB_INFISICAL_EXTERNAL=true. In this mode the
+  // operator brings their own Infisical instance (existing self-hosted or
+  // Infisical Cloud), and is expected to provide the four INFISICAL_URL /
+  // PROJECT_ID / CLIENT_ID / CLIENT_SECRET vars themselves. Bootstrap is
+  // skipped + the bundled `infisical` service in compose/.env is expected to
+  // be either disabled or unused. See docs/install/agents.md.
+  const skipBootstrap =
+    process.env["AGENTHUB_INFISICAL_EXTERNAL"] === "true" ||
+    process.env["AGENTHUB_INFISICAL_EXTERNAL"] === "1";
+  let postBootstrap: InstallConfig = final;
+  if (skipBootstrap) {
+    onLog("AGENTHUB_INFISICAL_EXTERNAL=true — skipping Infisical bootstrap.");
+    if (!final.infisicalProjectId || !final.infisicalClientId || !final.infisicalClientSecret) {
+      throw new Error(
+        "AGENTHUB_INFISICAL_EXTERNAL=true but INFISICAL_PROJECT_ID/CLIENT_ID/" +
+          "CLIENT_SECRET are not set. Set them in your environment or .env " +
+          "before running the installer.",
+      );
+    }
+  } else {
+    const bootstrap = await bootstrapInfisical(
+      {
+        baseUrl: "http://localhost:8080",
+        adminEmail: "admin@agenthub.local",
+        orgName: "AgentHub",
+        projectName: "agenthub",
+        composeDir,
+        envFile,
+      },
+      onLog,
+    );
 
-  // Merge bootstrap results into .env. Admin email/password are persisted so
-  // the operator can retrieve them later via the Secrets page "Reveal
-  // Infisical login" flow — Infisical disables self-registration by default.
-  const next: InstallConfig = {
-    ...final,
-    infisicalProjectId: bootstrap.projectId,
-    infisicalClientId: bootstrap.clientId,
-    infisicalClientSecret: bootstrap.clientSecret,
-    infisicalAdminEmail: bootstrap.adminEmail,
-    infisicalAdminPassword: bootstrap.adminPassword,
-  };
-  writeFileSync(envFile, renderEnv(next), { mode: 0o600 });
-  onLog("wrote Infisical creds to .env");
+    // Merge bootstrap results into .env. Admin email/password are persisted
+    // so the operator can retrieve them later via the Secrets page "Reveal
+    // Infisical login" flow — Infisical disables self-registration by
+    // default.
+    postBootstrap = {
+      ...final,
+      infisicalProjectId: bootstrap.projectId,
+      infisicalClientId: bootstrap.clientId,
+      infisicalClientSecret: bootstrap.clientSecret,
+      infisicalAdminEmail: bootstrap.adminEmail,
+      infisicalAdminPassword: bootstrap.adminPassword,
+    };
+    writeFileSync(envFile, renderEnv(postBootstrap), { mode: 0o600 });
+    onLog("wrote Infisical creds to .env");
+  }
 
   onLog("restarting agenthub-server with secret store enabled…");
   await recreateService({
@@ -110,9 +133,11 @@ export async function runInstall(
 
   return {
     url,
-    adminPassword: final.adminPassword,
-    infisicalAdminEmail: bootstrap.adminEmail,
-    infisicalAdminPassword: bootstrap.adminPassword,
+    adminPassword: postBootstrap.adminPassword,
+    // Empty strings on the external-Infisical path — the operator has
+    // their own admin login flow there.
+    infisicalAdminEmail: postBootstrap.infisicalAdminEmail,
+    infisicalAdminPassword: postBootstrap.infisicalAdminPassword,
   };
 }
 

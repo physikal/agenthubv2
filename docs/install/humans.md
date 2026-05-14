@@ -63,7 +63,7 @@ The TUI walks you through:
 2. **Provisioner choice.** Pick one:
    - **Local Docker** (default) — workspace containers run on the same host. Simplest.
    - **Remote Dokploy** — point AgentHub at an existing Dokploy instance. Needs its URL + API token + project ID + environment ID.
-3. **Domain.** `localhost` or a real hostname (e.g. `192.168.4.10` or `agenthub.example.com`).
+3. **Domain.** `localhost` or a real hostname (e.g. `10.0.0.10` or `agenthub.example.com`).
 4. **Access mode.** How this install will be reached:
    - **LAN only** (default) — HTTP on :80, no TLS, accessible from your local network. Hit Enter to accept this.
    - **Public internet** — Let's Encrypt HTTPS. You'll be asked for a TLS sub-mode (`public-alpn` if :443 is port-forwarded; `dns-01` if you have a DNS provider API token) and a contact email.

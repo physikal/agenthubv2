@@ -64,7 +64,7 @@ export function installBackupRoutes() {
     });
   });
 
-  // PUT /api/admin/install-backup — save B2 config
+  // PUT /api/admin/install-backup — save backup config (B2 or S3-compatible)
   app.put("/", async (c) => {
     const body = await c.req.json<{
       b2KeyId: string;
@@ -72,11 +72,20 @@ export function installBackupRoutes() {
       b2Bucket: string;
       b2PathPrefix?: string;
       retentionKeepLast?: number;
+      backend?: "b2" | "s3";
+      endpoint?: string;
+      region?: string;
     }>();
 
     if (body.b2AppKey && body.b2AppKey !== MASK) {
       await saveB2AppKey(body.b2AppKey);
     }
+
+    // Normalize: null backend → "b2"; explicit "b2" → null in storage so
+    // rows from before the migration stay unchanged.
+    const backend = body.backend === "s3" ? "s3" : null;
+    const endpoint = backend === "s3" ? (body.endpoint ?? null) : null;
+    const region = backend === "s3" ? (body.region ?? null) : null;
 
     const now = new Date().toISOString();
     const existing = await db
@@ -91,6 +100,9 @@ export function installBackupRoutes() {
         b2Bucket: body.b2Bucket,
         b2PathPrefix: body.b2PathPrefix ?? "installs/",
         retentionKeepLast: body.retentionKeepLast ?? 10,
+        backend,
+        endpoint,
+        region,
         updatedAt: now,
       });
     } else {
@@ -101,6 +113,9 @@ export function installBackupRoutes() {
           b2Bucket: body.b2Bucket,
           b2PathPrefix: body.b2PathPrefix ?? "installs/",
           retentionKeepLast: body.retentionKeepLast ?? 10,
+          backend,
+          endpoint,
+          region,
           updatedAt: now,
         })
         .where(eq(schema.installBackupConfig.id, 1));

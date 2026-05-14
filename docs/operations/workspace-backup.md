@@ -1,8 +1,9 @@
-# Workspace volume backup + restore (pillar #4 slice 4c)
+# Workspace volume backup + restore
 
-Operator-driven backup of per-user `/home/coder` volumes, sibling to the
-install-state backup (slice 4b). One configured B2 destination holds both —
-no extra credentials needed if `agenthub backup-install` already works.
+Operator-driven backup of per-user `/home/coder` volumes — the second half
+of the backup story alongside [install-state backup](install-backup.md).
+One configured B2 destination holds both — no extra credentials needed if
+`agenthub backup-install` already works.
 
 ## When to use this
 
@@ -15,33 +16,34 @@ no extra credentials needed if `agenthub backup-install` already works.
   `restore-workspace --user <id> --snapshot latest` for each user.
 - Pre-debug: snapshot before letting an agent loose in a session.
 
+`--user` accepts a username or user UUID.
+
 ## CLI
 
 ```bash
 # Back up one user's workspace
-sudo agenthub backup-workspace --user alice@example.com
+sudo agenthub backup-workspace --user alice
 
 # Back up everyone (best-effort — per-user failures don't abort the run)
 sudo agenthub backup-workspace --all
 
 # Local-only (skip B2 push) for a one-off
-sudo agenthub backup-workspace --user alice@example.com --local-only --note "pre-refactor"
+sudo agenthub backup-workspace --user alice --local-only --note "pre-refactor"
 
 # Restore latest snapshot from B2
-sudo agenthub restore-workspace --user alice@example.com --snapshot latest
+sudo agenthub restore-workspace --user alice --snapshot latest
 
 # Restore a specific snapshot (filename as seen in B2 listing)
-sudo agenthub restore-workspace --user alice@example.com --snapshot workspace-<id>-2026-05-14T17-31-37-123Z.tar.zst
+sudo agenthub restore-workspace --user alice --snapshot workspace-<id>-2026-05-14T17-31-37-123Z.tar.zst
 
 # Restore from a local file (e.g. one scp'd from another host)
-sudo agenthub restore-workspace --user alice@example.com --from /tmp/workspace-alice.tar.zst
+sudo agenthub restore-workspace --user alice --from /tmp/workspace-alice.tar.zst
 
 # Overwrite a non-empty workspace volume (operator must end live sessions first)
-sudo agenthub restore-workspace --user alice@example.com --snapshot latest --force
+sudo agenthub restore-workspace --user alice --snapshot latest --force
 ```
 
-`--user` accepts a UUID or an email — whichever is unique in the `users`
-table.
+`--user` accepts a username or a user UUID — whichever you know.
 
 ## What's in the bundle
 
@@ -50,7 +52,7 @@ table.
   **Including** `node_modules`, `.git`, `.cache` — this is a true
   volume snapshot, not a curated copy.
 - A `agenthub-workspace-manifest.json` header entry recording the
-  creation timestamp, user id/email, and the workspace image SHA in
+  creation timestamp, user id/name, and the workspace image SHA in
   use at the time. Restore extracts the volume contents and skips the
   manifest entry.
 
@@ -82,18 +84,18 @@ the host.
 - **Backup is fuzzy.** The volume is bind-mounted read-only into the
   bundler sidecar, but the user's own session can still write through
   its own rw mount during the snapshot. tar's
-  `--warning=no-file-changed` lets the bundler accept those races.
-  Same semantics as slice 4b's install bundling.
+  `--warning=no-file-changed` lets the bundler accept those races —
+  same semantics as the install-state backup.
 
 ## Bundles are UNENCRYPTED
 
 Like install-state bundles, workspace bundles are written + uploaded
 in cleartext. Security relies on B2 bucket ACLs + filesystem perms on
 `/data/workspace-backups/`. If a host or B2 key is compromised, treat
-every user's `/home/coder` as exfiltrated. Encryption is a future
-opt-in (separate spec, shared with slice 4b).
+every user's `/home/coder` as exfiltrated. Opt-in encryption is on the
+roadmap.
 
-## Composition with slice 4b restore-install
+## Composition with restore-install
 
 `restore-install` does NOT auto-restore workspaces today. Run the
 two verbs in sequence on a fresh VM:
@@ -102,8 +104,8 @@ two verbs in sequence on a fresh VM:
 # On the new VM, after curl|bash install completes:
 sudo agenthub restore-install --snapshot latest    # users + secrets back
 # Then for each user that should pick up old work:
-sudo agenthub restore-workspace --user alice@... --snapshot latest
-sudo agenthub restore-workspace --user bob@...   --snapshot latest
+sudo agenthub restore-workspace --user alice --snapshot latest
+sudo agenthub restore-workspace --user bob   --snapshot latest
 ```
 
 The two-step is deliberate — install-state restore takes seconds,

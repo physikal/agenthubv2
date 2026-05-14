@@ -24,16 +24,44 @@ configured in Settings → Admin → Install Backup.
 
 ## Setup
 
-### Configure B2 storage (optional but recommended)
+### Configure backup storage (optional but recommended)
 
-1. In your Backblaze B2 account, create a bucket (e.g. `mycompany-agenthub-installs`).
+Default backend is **Backblaze B2** (native API). Any **S3-compatible** backend
+also works — Cloudflare R2, MinIO, Wasabi, Storj, AWS S3 itself. Pick one:
+
+#### Backblaze B2 (native)
+
+1. In your B2 account, create a bucket (e.g. `mycompany-agenthub-installs`).
 2. Create an application key with **Read and Write** access to that bucket.
-3. In AgentHub: Settings → Admin → Install Backup → B2 Configuration.
+3. AgentHub: Settings → Admin → Install Backup → B2 Configuration.
 4. Fill in Key ID, Application Key, bucket name, and path prefix (default: `installs/`).
-5. Click **Test connection** to verify rclone can reach the bucket.
+5. Click **Test connection**.
 
-If B2 is not configured, backups run locally-only. Local bundles are retained at
-`/data/install-backups/` and downloadable from the History table.
+#### S3-compatible (R2, MinIO, Wasabi, Storj, AWS)
+
+The PUT endpoint (`PUT /api/admin/install-backup`) accepts a `backend: "s3"`
+field plus `endpoint` (URL) and `region` (defaults to `auto`). Web UI form
+support is on the roadmap; until then, set via API:
+
+```bash
+# Cloudflare R2 example:
+curl -X POST 'http://<your-host>/api/admin/install-backup' \
+  -H "Cookie: $COOKIE" -H "Content-Type: application/json" -H "Origin: http://<your-host>" \
+  -d '{
+    "backend": "s3",
+    "b2KeyId": "<your-r2-access-key-id>",
+    "b2AppKey": "<your-r2-secret-access-key>",
+    "b2Bucket": "<bucket>",
+    "endpoint": "https://<account-id>.r2.cloudflarestorage.com",
+    "region": "auto"
+  }'
+```
+
+Field naming is `b2KeyId`/`b2AppKey` for back-compat — they're just access
+credentials, applied generically by rclone. Confirm with the test endpoint.
+
+If no backend is configured, backups run locally-only. Local bundles are
+retained at `/data/install-backups/` and downloadable from the History table.
 
 ### Retention
 

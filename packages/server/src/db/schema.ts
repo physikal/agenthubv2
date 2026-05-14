@@ -270,6 +270,15 @@ export const installBackupConfig = sqliteTable("install_backup_config", {
   b2Bucket: text("b2_bucket"),
   b2PathPrefix: text("b2_path_prefix").default("installs/"),
   retentionKeepLast: integer("retention_keep_last").default(10),
+  // Backend type: "b2" (default) or "s3" (any S3-compatible: R2, MinIO,
+  // Wasabi, Storj, AWS). NULL is treated as "b2" for installs configured
+  // before pluggable backends landed.
+  backend: text("backend"),
+  // S3-only: endpoint URL for non-AWS providers
+  // (e.g. https://account.r2.cloudflarestorage.com).
+  endpoint: text("endpoint"),
+  // S3-only: region (default "auto" — works for R2 + most non-AWS).
+  region: text("region"),
   updatedAt: text("updated_at").notNull(),
 });
 

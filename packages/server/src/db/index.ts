@@ -196,6 +196,11 @@ export function initDb(): void {
   addColumnIfMissing("deployments", "git_url", "TEXT");
   addColumnIfMissing("deployments", "git_branch", "TEXT");
   addColumnIfMissing("deployments", "build_strategy", "TEXT");
+  // Pluggable backup backend (b2 native vs S3-compatible). Default null
+  // is treated as "b2" by loadB2Config for back-compat.
+  addColumnIfMissing("install_backup_config", "backend", "TEXT");
+  addColumnIfMissing("install_backup_config", "endpoint", "TEXT");
+  addColumnIfMissing("install_backup_config", "region", "TEXT");
 
   // Seed default admin account. Password priority:
   //   1. AGENTHUB_ADMIN_PASSWORD env var (installer writes this into .env)
