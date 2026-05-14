@@ -652,9 +652,9 @@ const note = ${note_arg};
 
 let users;
 if (all) {
-  users = db.select({ id: schema.users.id, email: schema.users.username }).from(schema.users).all();
+  users = db.select({ id: schema.users.id, username: schema.users.username }).from(schema.users).all();
 } else {
-  users = db.select({ id: schema.users.id, email: schema.users.username })
+  users = db.select({ id: schema.users.id, username: schema.users.username })
     .from(schema.users)
     .where(or(eq(schema.users.id, target), eq(schema.users.username, target)))
     .all();
@@ -689,7 +689,7 @@ for (const u of users) {
   }
 }
 process.stdout.write(\`[backup] summary: \${okCount} ok, \${failCount} failed\n\`);
-if (failCount > 0) process.exit(1);
+process.exit(failCount > 0 ? 1 : 0);
 EOF
 }
 
@@ -730,7 +730,7 @@ import { loadB2Config } from "/app/packages/server/dist/services/install-backup/
 import { eq, or } from "drizzle-orm";
 
 const target = ${user_arg};
-const u = db.select({ id: schema.users.id, email: schema.users.username })
+const u = db.select({ id: schema.users.id, username: schema.users.username })
   .from(schema.users)
   .where(or(eq(schema.users.id, target), eq(schema.users.username, target)))
   .get();
@@ -752,6 +752,7 @@ if (b2Snapshot) args.b2Snapshot = b2Snapshot;
 try {
   const r = await runWorkspaceRestore(args);
   process.stdout.write(\`[restore] done: \${r.source} → \${r.extractedBytes} bytes on volume\n\`);
+  process.exit(0);
 } catch (err) {
   process.stderr.write(\`[restore] FAILED: \${err.message ?? err}\n\`);
   process.exit(1);

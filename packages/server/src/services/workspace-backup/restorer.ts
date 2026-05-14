@@ -86,7 +86,10 @@ export async function restoreWorkspace(opts: RestoreOptions): Promise<{ extracte
         "-c",
         [
           "set -eu",
-          'zstd -dc "$SIDECAR_DIR/$BUNDLE_FILENAME" | tar x -C /dst --exclude=./agenthub-workspace-manifest.json',
+          // Exclude both forms ("./X" and "X") — the bundler appends the
+          // manifest first via `tar c X` (no ./) then the volume contents
+          // via `tar -rf -C /src .` (with ./). Belt-and-braces.
+          'zstd -dc "$SIDECAR_DIR/$BUNDLE_FILENAME" | tar x -C /dst --exclude=./agenthub-workspace-manifest.json --exclude=agenthub-workspace-manifest.json',
         ].join(" && "),
       ],
       { timeout: 1800_000, maxBuffer: 16 * 1024 * 1024 },
