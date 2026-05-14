@@ -318,6 +318,61 @@ async function main() {
     const end = await req(`/api/sessions/${sessId}/end`, { method: "POST" });
     check("POST /api/sessions/:id/end → 200", end.status === 200);
   }
+
+  console.log("\n=== 10. Install-backup smoke (local-only) ===");
+  // POST /api/admin/install-backup/run returns an SSE stream.
+  // We consume it with the fetch ReadableStream API (available in Node 22).
+  {
+    const res = await fetch(`http://localhost:3000/api/admin/install-backup/run`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: ORIGIN,
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
+      body: JSON.stringify({ noB2: true, note: "e2e-test" }),
+    });
+    check("POST /api/admin/install-backup/run → 200", res.status === 200, `got ${res.status}`);
+
+    let backupDone = false;
+    let backupErrored = false;
+    if (res.status === 200 && res.body) {
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { value, done: streamDone } = await reader.read();
+        if (streamDone) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split("\n\n");
+        buf = parts.pop() ?? "";
+        for (const part of parts) {
+          const eventLine = part.split("\n").find((l) => l.startsWith("event:"));
+          const event = eventLine ? eventLine.slice(6).trim() : null;
+          if (event === "done") backupDone = true;
+          if (event === "error") {
+            backupErrored = true;
+            const dataLine = part.split("\n").find((l) => l.startsWith("data:"));
+            console.log(`    backup SSE error: ${dataLine ? dataLine.slice(5).trim() : "(no data)"}`);
+          }
+        }
+      }
+    }
+    check("backup SSE stream emitted 'done' event", backupDone, `done=${backupDone} errored=${backupErrored}`);
+
+    // Verify the run appears in history
+    const histRes = await req("/api/admin/install-backup/runs");
+    check("GET /api/admin/install-backup/runs → 200", histRes.status === 200, `got ${histRes.status}`);
+    const runs = Array.isArray(histRes.body?.runs) ? histRes.body.runs : [];
+    const latest = runs[0];
+    check("run appears in history", runs.length > 0, `got ${runs.length} runs`);
+    check("latest run status=ok", latest?.status === "ok", `got status=${latest?.status}`);
+    check("latest run note matches", latest?.note === "e2e-test", `got note=${latest?.note}`);
+    check("latest run has localPath", typeof latest?.localPath === "string" && latest.localPath.length > 0, `got localPath=${latest?.localPath}`);
+    if (latest?.bytes != null) {
+      console.log(`    bundle size: ${latest.bytes} bytes`);
+    }
+  }
 }
 
 // Run the main checks; always run cleanup even on failure so fixtures
