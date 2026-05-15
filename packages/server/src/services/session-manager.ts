@@ -7,7 +7,10 @@ import type {
   ProvisionerDriver,
   WorkspaceRef,
 } from "./provisioner/types.js";
+import { hydrateSession } from "./agent-auth/credential-sync.js";
+import { agentCredentialPath, CREDENTIAL_SECRET_NAME } from "./agent-auth/paths.js";
 import { firstActiveInstallationForUser } from "./providers/github-app.js";
+import { getSecretStore } from "./secrets/index.js";
 import { resolveInfraConfig } from "./secrets/helpers.js";
 
 // Pinned to literal types so drizzle's inArray accepts them as values for
@@ -88,11 +91,17 @@ interface AgentConnection {
   ip: string;
 }
 
+interface AgentChannelImpl {
+  send(msg: unknown): void;
+  on(ev: "message", cb: (msg: unknown) => void): AgentChannelImpl;
+}
+
 interface CreateSessionInput {
   name: string;
   userId: string;
   repo?: string | undefined;
   prompt?: string | undefined;
+  purpose?: "user" | "agent-auth" | undefined;
 }
 
 export interface BackupParams {
@@ -171,7 +180,12 @@ export class SessionManager {
     const active = db
       .select()
       .from(schema.sessions)
-      .where(inArray(schema.sessions.status, ACTIVE_STATUSES))
+      .where(
+        and(
+          inArray(schema.sessions.status, ACTIVE_STATUSES),
+          eq(schema.sessions.purpose, "user"),
+        ),
+      )
       .all();
 
     if (active.length === 0) return;
@@ -251,6 +265,7 @@ export class SessionManager {
         agentToken,
         repo: input.repo ?? null,
         prompt: input.prompt ?? null,
+        purpose: input.purpose ?? "user",
         createdAt: new Date(),
       })
       .returning()
@@ -347,6 +362,13 @@ export class SessionManager {
         status: "active",
         statusDetail: "terminal ready",
       });
+
+      // Hydrate credentials from Infisical into the new session's volume.
+      // Fire-and-forget — failure here is non-fatal; the user sees the CLI's
+      // own auth prompt on first invocation (same fallback as before).
+      if (session.userId && session.purpose === "user") {
+        void this.hydrateCredentialsForSession(session.id, session.userId);
+      }
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Unknown provisioning error";
@@ -485,6 +507,19 @@ export class SessionManager {
     });
   }
 
+  private async waitForAgentReady(
+    sessionId: string,
+    opts: { timeoutMs: number },
+  ): Promise<boolean> {
+    const start = Date.now();
+    while (Date.now() - start < opts.timeoutMs) {
+      const entry = this.agents.get(sessionId);
+      if (entry && entry.ws.readyState === entry.ws.OPEN) return true;
+      await sleep(200);
+    }
+    return false;
+  }
+
   private cleanupIfCompleted(sessionId: string): void {
     const session = this.getSession(sessionId);
     if (!session) return;
@@ -571,15 +606,57 @@ export class SessionManager {
   }
 
   listSessions(): Session[] {
-    return db.select().from(schema.sessions).all();
+    return db
+      .select()
+      .from(schema.sessions)
+      .where(eq(schema.sessions.purpose, "user"))
+      .all();
   }
 
   listSessionsForUser(userId: string): Session[] {
     return db
       .select()
       .from(schema.sessions)
-      .where(eq(schema.sessions.userId, userId))
+      .where(
+        and(
+          eq(schema.sessions.userId, userId),
+          eq(schema.sessions.purpose, "user"),
+        ),
+      )
       .all();
+  }
+
+  async createAuthHelper(
+    userId: string,
+  ): Promise<{ sessionId: string; agent: AgentChannelImpl }> {
+    const session = await this.createSession({
+      userId,
+      name: `auth-helper-${String(Date.now())}`,
+      purpose: "agent-auth",
+    });
+    const ready = await this.waitForAgentReady(session.id, { timeoutMs: 60_000 });
+    if (!ready) {
+      await this.endSession(session.id).catch(() => undefined);
+      throw new Error("auth helper failed to reach ready state");
+    }
+    const entry = this.agents.get(session.id);
+    if (!entry) throw new Error("auth helper has no agent connection");
+    const ws = entry.ws;
+    let messageCallback: ((msg: unknown) => void) | undefined;
+    ws.on("message", (raw: Buffer) => {
+      const cb = messageCallback;
+      if (!cb) return;
+      try { cb(JSON.parse(raw.toString())); } catch { /* ignore non-JSON */ }
+    });
+    const agent: AgentChannelImpl = {
+      send: (m: unknown) => { ws.send(JSON.stringify(m)); },
+      on: (_ev, cb) => { messageCallback = cb; return agent; },
+    };
+    return { sessionId: session.id, agent };
+  }
+
+  async destroy(sessionId: string): Promise<void> {
+    return this.endSession(sessionId);
   }
 
   getAgentConnection(sessionId: string): AgentConnection | undefined {
@@ -688,6 +765,48 @@ export class SessionManager {
     return this.listSessionsForUser(userId).find((s) =>
       ACTIVE_STATUSES.includes(s.status),
     );
+  }
+
+  private async hydrateCredentialsForSession(
+    sessionId: string,
+    userId: string,
+  ): Promise<void> {
+    const entry = this.agents.get(sessionId);
+    if (!entry) return;
+    const store = getSecretStore();
+    if (!store.configured) return;
+    const ws = entry.ws;
+    let messageCallback: ((m: unknown) => void) | undefined;
+    ws.on("message", (raw: Buffer) => {
+      const cb = messageCallback;
+      if (!cb) return;
+      try { cb(JSON.parse(raw.toString())); } catch { /* ignore */ }
+    });
+    const channel = {
+      send: (m: unknown) => { ws.send(JSON.stringify(m)); },
+      on: (_ev: "message", cb: (m: unknown) => void) => {
+        messageCallback = cb;
+        return channel;
+      },
+    };
+    try {
+      await hydrateSession({
+        userId,
+        agent: channel,
+        deps: {
+          getStored: async (uid, toolId) => {
+            const path = agentCredentialPath(uid, toolId);
+            const contents = await store.getSecret(path, CREDENTIAL_SECRET_NAME);
+            const filePath = await store.getSecret(path, "filePath");
+            if (!contents || !filePath) return null;
+            return { contents, filePath };
+          },
+        },
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "unknown";
+      console.warn(`[session ${sessionId}] hydrate failed: ${msg}`);
+    }
   }
 
   private updateSession(

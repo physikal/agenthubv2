@@ -331,6 +331,45 @@ async function main() {
     check("POST /api/sessions/:id/end → 200", end.status === 200);
   }
 
+  console.log("\n=== 10.5. Agent CLI auth — routes mounted ===");
+  {
+    const list = await req(`/api/integrations/agents`);
+    check(
+      "GET /api/integrations/agents → 200",
+      list.status === 200,
+      `got ${list.status}`,
+    );
+    const tools = Array.isArray(list.body?.tools) ? list.body.tools : [];
+    check(
+      "registry exposes 3 default tools (claude-code, codex, gh)",
+      tools.length >= 3,
+      `got ${tools.length} tools`,
+    );
+    const ids = tools.map((t) => t.id).sort();
+    check(
+      "tool IDs include claude-code/codex/gh",
+      ids.includes("claude-code") && ids.includes("codex") && ids.includes("gh"),
+      `ids=${ids.join(",")}`,
+    );
+    const allDisconnected = tools.every((t) => t.status === "disconnected");
+    check(
+      "all tools report disconnected for a fresh user",
+      allDisconnected,
+      `statuses=${tools.map((t) => t.status).join(",")}`,
+    );
+
+    const reg = await req(`/api/admin/agent-auth/registry`);
+    check(
+      "GET /api/admin/agent-auth/registry → 200 (admin)",
+      reg.status === 200,
+      `got ${reg.status}`,
+    );
+    check(
+      "registry payload has login commands",
+      Array.isArray(reg.body?.tools) && reg.body.tools.every((t) => typeof t.loginCommand === "string"),
+    );
+  }
+
   console.log("\n=== 11. Install-backup smoke (local-only) ===");
   // POST /api/admin/install-backup/run returns an SSE stream.
   // We consume it with the fetch ReadableStream API (available in Node 22).

@@ -86,6 +86,15 @@ const MANIFESTS: readonly PackageManifest[] = [
       scriptUrl: "https://app.factory.ai/cli",
     },
   },
+  {
+    id: "codex",
+    name: "OpenAI Codex",
+    description: "OpenAI's official Codex coding agent CLI.",
+    homepage: "https://github.com/openai/codex",
+    binName: "codex",
+    versionCmd: ["codex", "--version"],
+    install: { method: "npm", npmPackage: "@openai/codex" },
+  },
 ];
 
 function validateManifest(m: PackageManifest): void {

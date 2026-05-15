@@ -1,6 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "../lib/api.ts";
 import { useAuthStore } from "../stores/auth.ts";
+import { useAgentStatus } from "../components/agent-auth/useAgentStatus.js";
+import { AgentCard } from "../components/agent-auth/AgentCard.js";
+import { AgentLoginModal } from "../components/agent-auth/AgentLoginModal.js";
 
 type Provider =
   | "cloudflare"
@@ -781,6 +784,16 @@ export function Integrations() {
     | { kind: "error"; text: string }
     | null
   >(null);
+  const { tools: agentTools, refresh: refreshAgents } = useAgentStatus();
+  const [agentModalTool, setAgentModalTool] = useState<{ id: string; displayName: string } | null>(null);
+
+  const onAgentDisconnect = async (id: string) => {
+    await fetch(`/api/integrations/agents/${id}/disconnect`, {
+      method: "POST",
+      credentials: "include",
+    });
+    await refreshAgents();
+  };
 
   const fetchConfigs = useCallback(async () => {
     try {
@@ -885,6 +898,23 @@ export function Integrations() {
       </p>
 
       <div className="max-w-2xl space-y-4">
+        <section>
+          <h3 className="text-base font-semibold text-zinc-100 mb-1">Agent CLIs</h3>
+          <p className="text-xs text-zinc-500 mb-3">
+            One-click sign-in for coding-agent CLIs available in every workspace.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {agentTools.map((t) => (
+              <AgentCard
+                key={t.id}
+                tool={t}
+                onConnect={() => setAgentModalTool({ id: t.id, displayName: t.displayName })}
+                onDisconnect={() => void onAgentDisconnect(t.id)}
+              />
+            ))}
+          </div>
+        </section>
+
         {ghStatus?.registered &&
           ghStatus.installations.length === 0 &&
           configs.some((c) => c.provider === "github") && (
@@ -925,6 +955,17 @@ export function Integrations() {
           ))
         )}
       </div>
+
+      {agentModalTool && (
+        <AgentLoginModal
+          toolId={agentModalTool.id}
+          displayName={agentModalTool.displayName}
+          onClose={(success) => {
+            setAgentModalTool(null);
+            if (success) void refreshAgents();
+          }}
+        />
+      )}
     </div>
   );
 }

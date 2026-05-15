@@ -47,6 +47,9 @@ export function initDb(): void {
       expires_at INTEGER NOT NULL
     );
 
+    -- Note: user_credentials.claude_credentials is vestigial — replaced by
+    -- per-user Infisical storage at /users/{userId}/agents/claude-code/. The
+    -- column stays in the DDL for legacy installs; no code reads or writes it.
     CREATE TABLE IF NOT EXISTS user_credentials (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       claude_credentials TEXT,
@@ -187,6 +190,19 @@ export function initDb(): void {
 
     CREATE INDEX IF NOT EXISTS idx_install_backup_runs_started
       ON install_backup_runs(started_at);
+
+    CREATE TABLE IF NOT EXISTS agent_auth_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at INTEGER NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      tool_id TEXT NOT NULL,
+      session_id TEXT,
+      ok INTEGER NOT NULL DEFAULT 1,
+      error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_auth_audit_user_created ON agent_auth_audit(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_auth_audit_tool_created ON agent_auth_audit(tool_id, created_at DESC);
   `);
 
   // Idempotent schema migrations for existing installs — SQLite has no
@@ -201,6 +217,7 @@ export function initDb(): void {
   addColumnIfMissing("install_backup_config", "backend", "TEXT");
   addColumnIfMissing("install_backup_config", "endpoint", "TEXT");
   addColumnIfMissing("install_backup_config", "region", "TEXT");
+  addColumnIfMissing("sessions", "purpose", "TEXT NOT NULL DEFAULT 'user'");
 
   // Seed default admin account. Password priority:
   //   1. AGENTHUB_ADMIN_PASSWORD env var (installer writes this into .env)
