@@ -106,3 +106,41 @@ describe("AuthHandler.disconnect", () => {
     expect(done.ok).toBe(true);
   });
 });
+
+describe("AuthHandler.hydrate", () => {
+  it("writes hydrate entries to disk with 0600 perms", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agentauth-h-"));
+    const credFile = join(dir, "subdir", "creds.json");
+    const sent: AuthOutbound[] = [];
+    const handler = new AuthHandler({ send: (m) => sent.push(m) });
+
+    const contents = Buffer.from("{\"hello\":\"world\"}");
+    await handler.handle({
+      type: "auth.hydrate",
+      entries: [{ tool: "test", path: credFile, contentsBase64: contents.toString("base64") }],
+    });
+
+    const { readFileSync, statSync } = await import("node:fs");
+    expect(readFileSync(credFile, "utf8")).toBe("{\"hello\":\"world\"}");
+    const stat = statSync(credFile);
+    expect(stat.mode & 0o777).toBe(0o600);
+  });
+
+  it("hydrateProbe reports which paths are missing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agentauth-p-"));
+    const present = join(dir, "present.json");
+    writeFileSync(present, "x");
+    const missing = join(dir, "missing.json");
+
+    const sent: AuthOutbound[] = [];
+    const handler = new AuthHandler({ send: (m) => sent.push(m) });
+    await handler.handle({
+      type: "auth.hydrateProbe",
+      tools: [{ tool: "test", paths: [present, missing] }],
+    });
+
+    const result = sent.find((m) => m.type === "auth.hydrateProbeResult") as { missing: Array<{ tool: string; path: string }> };
+    expect(result).toBeDefined();
+    expect(result.missing).toEqual([{ tool: "test", path: missing }]);
+  });
+});

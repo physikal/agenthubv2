@@ -34,7 +34,10 @@ export class AuthHandler {
         await this.disconnect(msg);
         return;
       case "auth.hydrate":
+        await this.hydrate(msg);
+        return;
       case "auth.hydrateProbe":
+        await this.hydrateProbe(msg);
         return;
     }
   }
@@ -63,6 +66,26 @@ export class AuthHandler {
       const error = err instanceof Error ? err.message : String(err);
       this.deps.send({ type: "auth.disconnected", tool: msg.tool, ok: false, error });
     }
+  }
+
+  private async hydrate(msg: Extract<AuthInbound, { type: "auth.hydrate" }>): Promise<void> {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { dirname } = await import("node:path");
+    for (const entry of msg.entries) {
+      await mkdir(dirname(entry.path), { recursive: true, mode: 0o700 });
+      await writeFile(entry.path, Buffer.from(entry.contentsBase64, "base64"), { mode: 0o600 });
+    }
+  }
+
+  private async hydrateProbe(msg: Extract<AuthInbound, { type: "auth.hydrateProbe" }>): Promise<void> {
+    const { access } = await import("node:fs/promises");
+    const missing: Array<{ tool: string; path: string }> = [];
+    for (const t of msg.tools) {
+      for (const p of t.paths) {
+        try { await access(p); } catch { missing.push({ tool: t.tool, path: p }); }
+      }
+    }
+    this.deps.send({ type: "auth.hydrateProbeResult", missing });
   }
 
   private async connect(msg: Extract<AuthInbound, { type: "auth.connect" }>): Promise<void> {
