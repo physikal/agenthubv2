@@ -20,6 +20,25 @@ export const AGENT_TOOLS: AgentTool[] = [
     loginTimeoutSec: 300,
     expiryParser: parseClaudeExpiry,
   },
+  {
+    id: "codex",
+    displayName: "OpenAI Codex",
+    loginCommand: "codex login",
+    credentialPaths: ["/home/coder/.codex/auth.json"],
+    urlPattern: /https:\/\/auth\.openai\.com\/[^\s]+/,
+    loginTimeoutSec: 300,
+  },
+  {
+    id: "gh",
+    displayName: "GitHub CLI",
+    loginCommand: "gh auth login --web --hostname github.com",
+    logoutCommand: "gh auth logout --hostname github.com",
+    credentialPaths: [
+      "/home/coder/.config/gh/hosts.yml",
+    ],
+    urlPattern: /https:\/\/github\.com\/login\/device/,
+    loginTimeoutSec: 300,
+  },
 ];
 
 export function getTool(id: string): AgentTool | undefined {

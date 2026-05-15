@@ -1,0 +1,2 @@
+Open this URL in your browser to log in:
+https://auth.openai.com/authorize?client_id=codex-cli&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fcallback&state=abc
