@@ -299,6 +299,28 @@ export const installBackupRuns = sqliteTable("install_backup_runs", {
   note: text("note"),
 });
 
+/**
+ * One row per agent-CLI auth event. Records connect/disconnect/refresh/hydrate
+ * and per-tool capture events for auditing and debugging. Written by T1.5.
+ */
+export const agentAuthAudit = sqliteTable("agent_auth_audit", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  action: text("action", {
+    enum: ["connect", "disconnect", "refresh", "hydrate", "capture"],
+  }).notNull(),
+  toolId: text("tool_id").notNull(),
+  // Intentionally no FK: audit survives session deletion.
+  sessionId: text("session_id"),
+  ok: integer("ok", { mode: "boolean" }).notNull().default(true),
+  error: text("error"),
+});
+
 export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
@@ -316,3 +338,5 @@ export type UserPackageStatus = NonNullable<UserPackage["status"]>;
 export type InstallBackupConfig = typeof installBackupConfig.$inferSelect;
 export type InstallBackupRun = typeof installBackupRuns.$inferSelect;
 export type NewInstallBackupRun = typeof installBackupRuns.$inferInsert;
+export type AgentAuthAudit = typeof agentAuthAudit.$inferSelect;
+export type NewAgentAuthAudit = typeof agentAuthAudit.$inferInsert;

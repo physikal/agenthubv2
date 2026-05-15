@@ -187,6 +187,19 @@ export function initDb(): void {
 
     CREATE INDEX IF NOT EXISTS idx_install_backup_runs_started
       ON install_backup_runs(started_at);
+
+    CREATE TABLE IF NOT EXISTS agent_auth_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at INTEGER NOT NULL,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      tool_id TEXT NOT NULL,
+      session_id TEXT,
+      ok INTEGER NOT NULL DEFAULT 1,
+      error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_auth_audit_user_created ON agent_auth_audit(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_auth_audit_tool_created ON agent_auth_audit(tool_id, created_at DESC);
   `);
 
   // Idempotent schema migrations for existing installs — SQLite has no
