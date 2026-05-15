@@ -33,9 +33,7 @@ export const AGENT_TOOLS: AgentTool[] = [
     displayName: "GitHub CLI",
     loginCommand: "gh auth login --web --hostname github.com",
     logoutCommand: "gh auth logout --hostname github.com",
-    credentialPaths: [
-      "/home/coder/.config/gh/hosts.yml",
-    ],
+    credentialPaths: ["/home/coder/.config/gh/hosts.yml"],
     urlPattern: /https:\/\/github\.com\/login\/device/,
     loginTimeoutSec: 300,
   },
