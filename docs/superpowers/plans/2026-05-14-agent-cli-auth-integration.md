@@ -1,5 +1,7 @@
 # Agent CLI Auth Integration — Implementation Plan
 
+> **Status:** Implemented in PR #90 (`78a018c`). This file is retained as historical implementation context; do not treat the unchecked task boxes below as current backlog.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** One-click connect for `claude` / `codex` / `gh` from the Integrations page, using each CLI's own `/login` flow inside an ephemeral auth-helper session. Captured credentials are mirrored to Infisical for cross-volume durability, and the per-user home volume keeps them hot for every session.

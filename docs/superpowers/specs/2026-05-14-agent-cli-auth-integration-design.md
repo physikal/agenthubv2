@@ -1,6 +1,6 @@
 # Agent CLI Auth Integration
 
-**Status:** Design
+**Status:** Implemented in PR #90 (`78a018c`)
 **Date:** 2026-05-14
 **Owner:** boodyjenkins@gmail.com
 

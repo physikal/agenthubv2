@@ -157,5 +157,5 @@ docker exec -e ADMIN_PASSWORD=<pw> agenthub-agenthub-server-1 node /tmp/e2e.js
 ## Release flow
 
 1. Commit on `main`
-2. CI (`docs/ci/deploy.yml.pending` — currently parked, needs `gh auth refresh -s workflow` to activate) builds + pushes both images to GHCR on merge
+2. CI (`.github/workflows/deploy.yml`) builds + pushes both images to GHCR on merge
 3. Users pull with `docker compose pull` and restart their stack
