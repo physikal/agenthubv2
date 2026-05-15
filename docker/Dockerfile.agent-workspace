@@ -41,6 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       tmux dtach \
       build-essential \
       ripgrep fzf unzip \
+      bubblewrap \
     && rm -rf /var/lib/apt/lists/*
 
 # Node.js 22 via NodeSource
