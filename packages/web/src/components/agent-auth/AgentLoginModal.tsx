@@ -51,7 +51,7 @@ export function AgentLoginModal({ toolId, displayName, onClose }: Props) {
           </p>
         )}
 
-        {phase === "awaiting-url" && url && (
+        {url && (phase === "awaiting-url" || phase === "awaiting-callback") && (
           <>
             <a
               href={url}
@@ -61,13 +61,20 @@ export function AgentLoginModal({ toolId, displayName, onClose }: Props) {
             >
               Open {displayName} login →
             </a>
-            <p className="text-xs text-zinc-500 mt-3">
-              Opens in your browser. Sign in with the account you want this workspace to use.
-            </p>
+            {phase === "awaiting-callback" ? (
+              <p className="text-xs text-zinc-500 mt-3 flex items-center gap-2">
+                <span className="inline-block w-3 h-3 border-2 border-zinc-500 border-t-zinc-100 rounded-full animate-spin" />
+                Waiting for you to complete the sign-in… click the button above if a tab didn't open.
+              </p>
+            ) : (
+              <p className="text-xs text-zinc-500 mt-3">
+                Opens in your browser. Sign in with the account you want this workspace to use.
+              </p>
+            )}
           </>
         )}
 
-        {phase === "awaiting-callback" && (
+        {phase === "awaiting-callback" && !url && (
           <p className="text-sm text-zinc-400 flex items-center gap-2">
             <span className="inline-block w-3 h-3 border-2 border-zinc-500 border-t-zinc-100 rounded-full animate-spin" />
             Waiting for you to complete the sign-in…
