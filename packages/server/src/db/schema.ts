@@ -61,6 +61,7 @@ export const sessions = sqliteTable("sessions", {
   agentToken: text("agent_token"),
   repo: text("repo"),
   prompt: text("prompt"),
+  purpose: text("purpose", { enum: ["user", "agent-auth"] }).notNull().default("user"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),

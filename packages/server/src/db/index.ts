@@ -214,6 +214,7 @@ export function initDb(): void {
   addColumnIfMissing("install_backup_config", "backend", "TEXT");
   addColumnIfMissing("install_backup_config", "endpoint", "TEXT");
   addColumnIfMissing("install_backup_config", "region", "TEXT");
+  addColumnIfMissing("sessions", "purpose", "TEXT NOT NULL DEFAULT 'user'");
 
   // Seed default admin account. Password priority:
   //   1. AGENTHUB_ADMIN_PASSWORD env var (installer writes this into .env)

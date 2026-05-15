@@ -88,11 +88,17 @@ interface AgentConnection {
   ip: string;
 }
 
+interface AgentChannelImpl {
+  send(msg: unknown): void;
+  on(ev: "message", cb: (msg: unknown) => void): AgentChannelImpl;
+}
+
 interface CreateSessionInput {
   name: string;
   userId: string;
   repo?: string | undefined;
   prompt?: string | undefined;
+  purpose?: "user" | "agent-auth" | undefined;
 }
 
 export interface BackupParams {
@@ -171,7 +177,12 @@ export class SessionManager {
     const active = db
       .select()
       .from(schema.sessions)
-      .where(inArray(schema.sessions.status, ACTIVE_STATUSES))
+      .where(
+        and(
+          inArray(schema.sessions.status, ACTIVE_STATUSES),
+          eq(schema.sessions.purpose, "user"),
+        ),
+      )
       .all();
 
     if (active.length === 0) return;
@@ -251,6 +262,7 @@ export class SessionManager {
         agentToken,
         repo: input.repo ?? null,
         prompt: input.prompt ?? null,
+        purpose: input.purpose ?? "user",
         createdAt: new Date(),
       })
       .returning()
@@ -485,6 +497,19 @@ export class SessionManager {
     });
   }
 
+  private async waitForAgentReady(
+    sessionId: string,
+    opts: { timeoutMs: number },
+  ): Promise<boolean> {
+    const start = Date.now();
+    while (Date.now() - start < opts.timeoutMs) {
+      const entry = this.agents.get(sessionId);
+      if (entry && entry.ws.readyState === entry.ws.OPEN) return true;
+      await sleep(200);
+    }
+    return false;
+  }
+
   private cleanupIfCompleted(sessionId: string): void {
     const session = this.getSession(sessionId);
     if (!session) return;
@@ -571,15 +596,57 @@ export class SessionManager {
   }
 
   listSessions(): Session[] {
-    return db.select().from(schema.sessions).all();
+    return db
+      .select()
+      .from(schema.sessions)
+      .where(eq(schema.sessions.purpose, "user"))
+      .all();
   }
 
   listSessionsForUser(userId: string): Session[] {
     return db
       .select()
       .from(schema.sessions)
-      .where(eq(schema.sessions.userId, userId))
+      .where(
+        and(
+          eq(schema.sessions.userId, userId),
+          eq(schema.sessions.purpose, "user"),
+        ),
+      )
       .all();
+  }
+
+  async createAuthHelper(
+    userId: string,
+  ): Promise<{ sessionId: string; agent: AgentChannelImpl }> {
+    const session = await this.createSession({
+      userId,
+      name: `auth-helper-${String(Date.now())}`,
+      purpose: "agent-auth",
+    });
+    const ready = await this.waitForAgentReady(session.id, { timeoutMs: 60_000 });
+    if (!ready) {
+      await this.endSession(session.id).catch(() => undefined);
+      throw new Error("auth helper failed to reach ready state");
+    }
+    const entry = this.agents.get(session.id);
+    if (!entry) throw new Error("auth helper has no agent connection");
+    const ws = entry.ws;
+    let messageCallback: ((msg: unknown) => void) | undefined;
+    ws.on("message", (raw: Buffer) => {
+      const cb = messageCallback;
+      if (!cb) return;
+      try { cb(JSON.parse(raw.toString())); } catch { /* ignore non-JSON */ }
+    });
+    const agent: AgentChannelImpl = {
+      send: (m: unknown) => { ws.send(JSON.stringify(m)); },
+      on: (_ev, cb) => { messageCallback = cb; return agent; },
+    };
+    return { sessionId: session.id, agent };
+  }
+
+  async destroy(sessionId: string): Promise<void> {
+    return this.endSession(sessionId);
   }
 
   getAgentConnection(sessionId: string): AgentConnection | undefined {
