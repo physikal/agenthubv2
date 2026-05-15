@@ -109,7 +109,10 @@ export class Orchestrator {
       session.agent.on("message", (raw) => {
         const msg = raw as { type: string } & Record<string, unknown>;
         if (msg["type"] === "auth.line") {
-          const line = String(msg["line"] ?? "");
+          // Strip ANSI color escapes — codex wraps the device code in
+          // \x1b[94m...\x1b[0m, and the trailing 'm' before the code breaks
+          // \b word boundaries in codePattern.
+          const line = stripAnsi(String(msg["line"] ?? ""));
           if (!urlEmitted) {
             const m = line.match(urlRegex);
             if (m) {
@@ -266,4 +269,11 @@ export class Orchestrator {
     if (expiry) out.expiresAt = expiry.toISOString();
     return out;
   }
+}
+
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/g;
+
+function stripAnsi(s: string): string {
+  return s.replace(ANSI_RE, "");
 }
