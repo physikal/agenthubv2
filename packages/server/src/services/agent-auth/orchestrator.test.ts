@@ -69,3 +69,64 @@ describe("Orchestrator.connect", () => {
     expect(audits.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("Orchestrator.disconnect", () => {
+  it("messages the daemon, deletes Infisical entry, audits", async () => {
+    const sessions = new FakeSessions();
+    const store = new FakeStore();
+    await store.setSecrets("/users/u1/agents/claude-code", { credentials: "x" });
+    const audits: unknown[] = [];
+    const orch = new Orchestrator({
+      sessions: sessions as never,
+      store,
+      audit: async (e) => { audits.push(e); },
+    });
+
+    const run = orch.disconnect({ userId: "u1", toolId: "claude-code" });
+    await new Promise((r) => setTimeout(r, 5));
+    const agent = sessions._last;
+    expect(agent).toBeDefined();
+    agent!.emit("message", { type: "auth.disconnected", tool: "claude-code", ok: true });
+    await run;
+
+    expect(store.written.get("/users/u1/agents/claude-code")).toBeUndefined();
+    expect(sessions.destroyed).toEqual(["sess-1"]);
+    expect(audits).toHaveLength(1);
+    expect((audits[0] as { action: string }).action).toBe("disconnect");
+  });
+});
+
+describe("Orchestrator.status", () => {
+  it("returns connected when credential exists in Infisical", async () => {
+    const store = new FakeStore();
+    await store.setSecrets("/users/u1/agents/claude-code", { credentials: "{}" });
+    const orch = new Orchestrator({
+      sessions: {} as never,
+      store,
+      audit: async () => undefined,
+    });
+    const s = await orch.status({ userId: "u1", toolId: "claude-code" });
+    expect(s.status).toBe("connected");
+  });
+
+  it("returns disconnected when no credential present", async () => {
+    const orch = new Orchestrator({
+      sessions: {} as never,
+      store: new FakeStore(),
+      audit: async () => undefined,
+    });
+    const s = await orch.status({ userId: "u1", toolId: "codex" });
+    expect(s.status).toBe("disconnected");
+  });
+
+  it("returns disconnected when toolId is not registered", async () => {
+    const orch = new Orchestrator({
+      sessions: {} as never,
+      store: new FakeStore(),
+      audit: async () => undefined,
+    });
+    const s = await orch.status({ userId: "u1", toolId: "not-a-tool" });
+    expect(s.status).toBe("disconnected");
+    expect(s.id).toBe("not-a-tool");
+  });
+});

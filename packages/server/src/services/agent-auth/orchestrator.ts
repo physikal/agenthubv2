@@ -48,6 +48,12 @@ export interface OrchestratorDeps {
   audit: (entry: AuditEntryArg) => Promise<void>;
 }
 
+export type StatusResult = {
+  id: string;
+  status: "connected" | "disconnected";
+  expiresAt?: string;
+};
+
 export interface ConnectArgs {
   userId: string;
   toolId: string;
@@ -171,5 +177,62 @@ export class Orchestrator {
     } finally {
       await this.deps.sessions.destroy(session.sessionId);
     }
+  }
+
+  async disconnect(args: { userId: string; toolId: string }): Promise<void> {
+    const tool = getTool(args.toolId);
+    if (!tool) return;
+    const session = await this.deps.sessions.createAuthHelper(args.userId);
+    try {
+      const done = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        session.agent.on("message", (raw) => {
+          const m = raw as { type: string; ok?: boolean; error?: string };
+          if (m.type === "auth.disconnected") {
+            const ok = Boolean(m.ok);
+            const out: { ok: boolean; error?: string } = { ok };
+            if (typeof m.error === "string") out.error = m.error;
+            resolve(out);
+          }
+        });
+      });
+      const disconnectMsg: {
+        type: "auth.disconnect";
+        tool: string;
+        credentialPaths: string[];
+        logoutCommand?: string;
+      } = {
+        type: "auth.disconnect",
+        tool: tool.id,
+        credentialPaths: tool.credentialPaths,
+      };
+      if (tool.logoutCommand) disconnectMsg.logoutCommand = tool.logoutCommand;
+      session.agent.send(disconnectMsg);
+      const result = await done;
+      const credPath = agentCredentialPath(args.userId, tool.id);
+      await this.deps.store.deletePath(credPath).catch(() => undefined);
+      const auditEntry: AuditEntryArg = {
+        userId: args.userId,
+        action: "disconnect",
+        toolId: tool.id,
+        sessionId: session.sessionId,
+        ok: result.ok,
+      };
+      if (result.error) auditEntry.error = result.error;
+      await this.deps.audit(auditEntry);
+    } finally {
+      await this.deps.sessions.destroy(session.sessionId);
+    }
+  }
+
+  async status(args: { userId: string; toolId: string }): Promise<StatusResult> {
+    const tool = getTool(args.toolId);
+    if (!tool) return { id: args.toolId, status: "disconnected" };
+    const credPath = agentCredentialPath(args.userId, tool.id);
+    const cred = await this.deps.store.getSecret(credPath, CREDENTIAL_SECRET_NAME);
+    if (!cred) return { id: tool.id, status: "disconnected" };
+    const expiry = tool.expiryParser?.(cred) ?? null;
+    const out: StatusResult = { id: tool.id, status: "connected" };
+    if (expiry) out.expiresAt = expiry.toISOString();
+    return out;
   }
 }
