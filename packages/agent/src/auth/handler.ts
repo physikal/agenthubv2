@@ -31,6 +31,8 @@ export class AuthHandler {
         this.cancel(msg.tool);
         return;
       case "auth.disconnect":
+        await this.disconnect(msg);
+        return;
       case "auth.hydrate":
       case "auth.hydrateProbe":
         return;
@@ -40,6 +42,27 @@ export class AuthHandler {
   private cancel(tool: string): void {
     const entry = this.active.get(tool);
     if (entry) entry.kill();
+  }
+
+  private async disconnect(msg: Extract<AuthInbound, { type: "auth.disconnect" }>): Promise<void> {
+    try {
+      if (msg.logoutCommand) {
+        const proc = this.deps.spawn(msg.logoutCommand);
+        const drain = async (iter: AsyncIterable<string>): Promise<void> => {
+          for await (const _line of iter) { /* drop */ }
+        };
+        await Promise.all([drain(proc.stdoutLines), drain(proc.stderrLines)]);
+        await proc.wait();
+      }
+      const { unlink } = await import("node:fs/promises");
+      for (const p of msg.credentialPaths) {
+        await unlink(p).catch(() => undefined);
+      }
+      this.deps.send({ type: "auth.disconnected", tool: msg.tool, ok: true });
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      this.deps.send({ type: "auth.disconnected", tool: msg.tool, ok: false, error });
+    }
   }
 
   private async connect(msg: Extract<AuthInbound, { type: "auth.connect" }>): Promise<void> {

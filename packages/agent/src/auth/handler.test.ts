@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { AuthHandler } from "./handler.js";
 import type { AuthOutbound } from "./protocol.js";
@@ -58,5 +61,48 @@ describe("AuthHandler.connect", () => {
     const done = sent.find((m) => m.type === "auth.done") as { ok: boolean; error?: string };
     expect(done.ok).toBe(false);
     expect(done.error).toMatch(/exit 1/);
+  });
+});
+
+describe("AuthHandler.disconnect", () => {
+  it("runs logoutCommand if provided", async () => {
+    const sent: AuthOutbound[] = [];
+    const handler = new AuthHandler({
+      send: (m) => sent.push(m),
+      spawn: () => ({
+        stdoutLines: (async function* () {})(),
+        stderrLines: (async function* () {})(),
+        kill: vi.fn(),
+        wait: () => Promise.resolve(0),
+      }),
+    });
+    await handler.handle({
+      type: "auth.disconnect",
+      tool: "claude-code",
+      logoutCommand: "claude /logout",
+      credentialPaths: [],
+    });
+    const done = sent.find((m) => m.type === "auth.disconnected") as { ok: boolean };
+    expect(done).toBeDefined();
+    expect(done.ok).toBe(true);
+  });
+
+  it("deletes credential files when no logoutCommand", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agentauth-"));
+    const credFile = join(dir, "creds.json");
+    writeFileSync(credFile, "{\"x\":1}");
+    expect(existsSync(credFile)).toBe(true);
+
+    const sent: AuthOutbound[] = [];
+    const handler = new AuthHandler({ send: (m) => sent.push(m) });
+    await handler.handle({
+      type: "auth.disconnect",
+      tool: "test",
+      credentialPaths: [credFile],
+    });
+    expect(existsSync(credFile)).toBe(false);
+    const done = sent.find((m) => m.type === "auth.disconnected") as { ok: boolean };
+    expect(done).toBeDefined();
+    expect(done.ok).toBe(true);
   });
 });
