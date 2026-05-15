@@ -24,6 +24,7 @@ jobs:
           node-version: "22"
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm rebuild better-sqlite3 esbuild
       - run: pnpm -r typecheck
       - run: pnpm -r --if-present test
 
