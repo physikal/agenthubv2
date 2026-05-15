@@ -7,7 +7,10 @@ import type {
   ProvisionerDriver,
   WorkspaceRef,
 } from "./provisioner/types.js";
+import { hydrateSession } from "./agent-auth/credential-sync.js";
+import { agentCredentialPath, CREDENTIAL_SECRET_NAME } from "./agent-auth/paths.js";
 import { firstActiveInstallationForUser } from "./providers/github-app.js";
+import { getSecretStore } from "./secrets/index.js";
 import { resolveInfraConfig } from "./secrets/helpers.js";
 
 // Pinned to literal types so drizzle's inArray accepts them as values for
@@ -359,6 +362,13 @@ export class SessionManager {
         status: "active",
         statusDetail: "terminal ready",
       });
+
+      // Hydrate credentials from Infisical into the new session's volume.
+      // Fire-and-forget — failure here is non-fatal; the user sees the CLI's
+      // own auth prompt on first invocation (same fallback as before).
+      if (session.userId && session.purpose === "user") {
+        void this.hydrateCredentialsForSession(session.id, session.userId);
+      }
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Unknown provisioning error";
@@ -755,6 +765,48 @@ export class SessionManager {
     return this.listSessionsForUser(userId).find((s) =>
       ACTIVE_STATUSES.includes(s.status),
     );
+  }
+
+  private async hydrateCredentialsForSession(
+    sessionId: string,
+    userId: string,
+  ): Promise<void> {
+    const entry = this.agents.get(sessionId);
+    if (!entry) return;
+    const store = getSecretStore();
+    if (!store.configured) return;
+    const ws = entry.ws;
+    let messageCallback: ((m: unknown) => void) | undefined;
+    ws.on("message", (raw: Buffer) => {
+      const cb = messageCallback;
+      if (!cb) return;
+      try { cb(JSON.parse(raw.toString())); } catch { /* ignore */ }
+    });
+    const channel = {
+      send: (m: unknown) => { ws.send(JSON.stringify(m)); },
+      on: (_ev: "message", cb: (m: unknown) => void) => {
+        messageCallback = cb;
+        return channel;
+      },
+    };
+    try {
+      await hydrateSession({
+        userId,
+        agent: channel,
+        deps: {
+          getStored: async (uid, toolId) => {
+            const path = agentCredentialPath(uid, toolId);
+            const contents = await store.getSecret(path, CREDENTIAL_SECRET_NAME);
+            const filePath = await store.getSecret(path, "filePath");
+            if (!contents || !filePath) return null;
+            return { contents, filePath };
+          },
+        },
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "unknown";
+      console.warn(`[session ${sessionId}] hydrate failed: ${msg}`);
+    }
   }
 
   private updateSession(
