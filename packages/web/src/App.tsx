@@ -6,6 +6,7 @@ import { Settings } from "./pages/Settings.tsx";
 import { Backups } from "./pages/Backups.tsx";
 import { Admin } from "./pages/Admin.tsx";
 import { InstallBackupPage } from "./pages/admin/InstallBackup.tsx";
+import { AgentAuthAudit } from "./pages/admin/AgentAuthAudit.tsx";
 import { Integrations } from "./pages/Integrations.tsx";
 import { Packages } from "./pages/Packages.tsx";
 import { Secrets } from "./pages/Secrets.tsx";
@@ -31,6 +32,7 @@ function Layout() {
           <Route path="/secrets" element={<Secrets />} />
           <Route path="/admin/users" element={<Admin />} />
           <Route path="/admin/install-backup" element={<InstallBackupPage />} />
+          <Route path="/admin/agent-auth" element={<AgentAuthAudit />} />
         </Routes>
         </main>
       </div>
