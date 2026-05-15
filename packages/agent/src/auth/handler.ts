@@ -110,13 +110,21 @@ export class AuthHandler {
       const code = await proc.wait();
       const done: AuthOutbound = code === 0
         ? { type: "auth.done", tool: msg.tool, ok: true }
-        : { type: "auth.done", tool: msg.tool, ok: false, error: `exit ${code}` };
+        : { type: "auth.done", tool: msg.tool, ok: false, error: formatExitError(code, msg.loginCommand) };
       send(done);
     } finally {
       clearTimeout(timeout);
       this.active.delete(msg.tool);
     }
   }
+}
+
+function formatExitError(code: number, command: string): string {
+  if (code === 127) {
+    const binary = command.trim().split(/\s+/)[0] ?? command;
+    return `'${binary}' is not installed in this workspace — install it from the Packages page first.`;
+  }
+  return `exit ${String(code)}`;
 }
 
 function realSpawn(command: string): ProcessHandle {

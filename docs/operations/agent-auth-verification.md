@@ -6,7 +6,8 @@ Live OAuth flows require real Anthropic, OpenAI, and GitHub accounts; this check
 
 1. Install AgentHub on a fresh VM (`./scripts/install.sh`).
 2. Log in as a regular (non-admin) user.
-3. Navigate to **Integrations** in the sidebar.
+3. **Install non-built-in CLIs first.** Claude Code and GitHub CLI are baked into the workspace image; **Codex must be installed via the Packages page** (`Packages → OpenAI Codex → Install`) before you can Connect. If you try to Connect before installing, you'll see *"'codex' is not installed in this workspace — install it from the Packages page first."*
+4. Navigate to **Integrations** in the sidebar.
 
 You should see an **Agent CLIs** section at the top with three cards:
 
