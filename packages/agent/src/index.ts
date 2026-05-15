@@ -4,6 +4,8 @@ import { AgentServer } from "./ws-server.js";
 import { startFileServer } from "./file-server.js";
 import { registerAgentDeployMcp } from "./mcp-writer.js";
 import { installGitCredentialsFromEnv } from "./github-credentials.js";
+import { AuthHandler } from "./auth/handler.js";
+import { CredentialWatcher } from "./auth/cred-watcher.js";
 
 const PORT = parseInt(process.env["AGENT_PORT"] ?? "9876", 10);
 const AUTH_TOKEN = process.env["AGENT_TOKEN"] ?? "";
@@ -51,7 +53,20 @@ console.log(`[agent] starting on port ${String(PORT)}, host: ${hostname()}`);
 const server = new AgentServer({ port: PORT, authToken: AUTH_TOKEN });
 const fileServer = startFileServer();
 
+const authHandler = new AuthHandler({ send: (m) => server.send(m) });
+server.setAuthRouter((m) => authHandler.handle(m));
+
+const watcher = new CredentialWatcher({
+  send: (m) => server.send(m),
+  tools: [
+    { tool: "claude-code", paths: ["/home/coder/.claude/.credentials.json"] },
+    { tool: "codex",       paths: ["/home/coder/.codex/auth.json"] },
+    { tool: "gh",          paths: ["/home/coder/.config/gh/hosts.yml"] },
+  ],
+});
+watcher.start();
+
 console.log("[agent] ready");
 
-process.on("SIGTERM", () => { server.close(); fileServer.close(); process.exit(0); });
-process.on("SIGINT", () => { server.close(); fileServer.close(); process.exit(0); });
+process.on("SIGTERM", () => { watcher.stop(); server.close(); fileServer.close(); process.exit(0); });
+process.on("SIGINT", () => { watcher.stop(); server.close(); fileServer.close(); process.exit(0); });

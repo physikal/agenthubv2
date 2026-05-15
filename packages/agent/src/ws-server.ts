@@ -9,6 +9,7 @@ import {
   type PackageOpParams,
   type PackageOpResult,
 } from "./package-ops.js";
+import type { AuthInbound, AuthOutbound } from "./auth/protocol.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -32,7 +33,8 @@ type InboundMessage =
   | { type: "upload"; name: string; data: string }
   | { type: "stop" }
   | { type: "backup"; op: "save" | "restore" | "size"; requestId: string; params: BackupParams }
-  | { type: "package"; op: "install" | "remove"; requestId: string; params: PackageOpParams };
+  | { type: "package"; op: "install" | "remove"; requestId: string; params: PackageOpParams }
+  | AuthInbound;
 
 type OutboundMessage =
   | { type: "status"; state: string; detail: string }
@@ -52,7 +54,8 @@ type OutboundMessage =
       ok: boolean;
       version?: string;
       error?: string;
-    };
+    }
+  | AuthOutbound;
 
 // Characters allowed in B2 credentials / bucket names. Fail-closed to stop
 // newline-injection into rclone.conf (which would inject a fake section).
@@ -72,6 +75,11 @@ export class AgentServer {
   private client: WebSocket | null = null;
   private readonly authToken: string;
   private sessionStarted = false;
+  private authRouter: ((msg: AuthInbound) => Promise<void>) | null = null;
+
+  public setAuthRouter(fn: (msg: AuthInbound) => Promise<void>): void {
+    this.authRouter = fn;
+  }
 
   constructor(config: AgentConfig) {
     this.authToken = config.authToken;
@@ -108,6 +116,10 @@ export class AgentServer {
   }
 
   private handleMessage(msg: InboundMessage): void {
+    if (typeof msg.type === "string" && msg.type.startsWith("auth.")) {
+      if (this.authRouter) void this.authRouter(msg as AuthInbound);
+      return;
+    }
     switch (msg.type) {
       case "start":
         this.startSession();
