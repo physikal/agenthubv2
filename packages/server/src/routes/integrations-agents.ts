@@ -73,5 +73,49 @@ export function integrationsAgentsRoutes(sessions: SessionManager) {
     });
   });
 
+  app.post("/:toolId/disconnect", async (c) => {
+    const user = c.get("user");
+    const toolId = c.req.param("toolId");
+    await orch.disconnect({ userId: user.id, toolId });
+    return c.json({ ok: true });
+  });
+
+  app.post("/:toolId/refresh", async (c) => {
+    const user = c.get("user");
+    const toolId = c.req.param("toolId");
+    return streamSSE(c, async (stream) => {
+      try {
+        await orch.connect({
+          userId: user.id,
+          toolId,
+          onEvent: (e) => {
+            const data = (() => {
+              if (e.phase === "awaiting-url" && e.url) {
+                return { event: "url", payload: { url: e.url } };
+              }
+              if (e.phase === "captured") {
+                return { event: "captured", payload: {} };
+              }
+              if (e.phase === "done") {
+                return {
+                  event: "done",
+                  payload: e.expiresAt ? { ok: true, expiresAt: e.expiresAt } : { ok: true },
+                };
+              }
+              if (e.phase === "error") {
+                return { event: "error", payload: { message: e.error ?? "unknown" } };
+              }
+              return { event: "state", payload: { phase: e.phase } };
+            })();
+            void stream.writeSSE({ event: data.event, data: JSON.stringify(data.payload) });
+          },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "unknown";
+        await stream.writeSSE({ event: "error", data: JSON.stringify({ message }) });
+      }
+    });
+  });
+
   return app;
 }
