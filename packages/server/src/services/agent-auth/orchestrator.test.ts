@@ -56,7 +56,7 @@ describe("Orchestrator.connect", () => {
     await new Promise((r) => setTimeout(r, 5));
     const agent = sessions._last;
     expect(agent).toBeDefined();
-    agent!.emit("message", { type: "auth.line", tool: "claude-code", stream: "stdout", line: "Visit https://claude.ai/oauth/authorize?x=1" });
+    agent!.emit("message", { type: "auth.line", tool: "claude-code", stream: "stdout", line: "Visit https://claude.com/cai/oauth/authorize?x=1" });
     agent!.emit("message", { type: "auth.captured", tool: "claude-code", path: "/home/coder/.claude/.credentials.json", contentsBase64: Buffer.from("{}").toString("base64") });
     agent!.emit("message", { type: "auth.done", tool: "claude-code", ok: true });
 

@@ -15,8 +15,9 @@ describe("agent tool registry", () => {
   it("getTool returns the entry for claude-code", () => {
     const tool = getTool("claude-code");
     expect(tool?.displayName).toBe("Claude Code");
-    expect(tool?.loginCommand).toBe("claude /login");
+    expect(tool?.loginCommand).toBe("claude auth login --claudeai");
     expect(tool?.credentialPaths).toEqual(["/home/coder/.claude/.credentials.json"]);
+    expect(tool?.acceptsCodeInput).toBe(true);
   });
 
   it("getTool returns undefined for unknown id", () => {
@@ -28,23 +29,31 @@ describe("agent tool registry", () => {
     const stdout = readFileSync(join(fixtureDir, "claude-login-stdout.txt"), "utf8");
     const match = stdout.match(tool.urlPattern);
     expect(match).not.toBeNull();
-    expect(match![0]).toContain("claude.ai/oauth/authorize");
+    expect(match![0]).toContain("claude.com/cai/oauth/authorize");
   });
 });
 
 describe("codex tool", () => {
-  it("is registered with the right login command", () => {
+  it("is registered with --device-auth login command", () => {
     const tool = getTool("codex")!;
-    expect(tool.loginCommand).toBe("codex login");
+    expect(tool.loginCommand).toBe("codex login --device-auth");
     expect(tool.credentialPaths).toEqual(["/home/coder/.codex/auth.json"]);
   });
 
-  it("urlPattern matches codex stdout fixture", () => {
+  it("urlPattern matches codex device-auth stdout fixture", () => {
     const tool = getTool("codex")!;
     const stdout = readFileSync(join(fixtureDir, "codex-login-stdout.txt"), "utf8");
     const match = stdout.match(tool.urlPattern);
     expect(match).not.toBeNull();
-    expect(match![0]).toContain("auth.openai.com");
+    expect(match![0]).toContain("auth.openai.com/codex/device");
+  });
+
+  it("codePattern extracts the device code from codex fixture", () => {
+    const tool = getTool("codex")!;
+    const stdout = readFileSync(join(fixtureDir, "codex-login-stdout.txt"), "utf8");
+    const match = stdout.match(tool.codePattern!);
+    expect(match).not.toBeNull();
+    expect(match![0]).toBe("34J7-3WML1");
   });
 });
 
@@ -59,5 +68,13 @@ describe("gh tool", () => {
     const tool = getTool("gh")!;
     const stdout = readFileSync(join(fixtureDir, "gh-auth-stdout.txt"), "utf8");
     expect(stdout).toMatch(tool.urlPattern);
+  });
+
+  it("codePattern extracts the device code from gh fixture", () => {
+    const tool = getTool("gh")!;
+    const stdout = readFileSync(join(fixtureDir, "gh-auth-stdout.txt"), "utf8");
+    const match = stdout.match(tool.codePattern!);
+    expect(match).not.toBeNull();
+    expect(match![0]).toBe("ABCD-1234");
   });
 });

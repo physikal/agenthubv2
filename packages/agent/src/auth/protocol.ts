@@ -1,6 +1,7 @@
 export type AuthInbound =
   | { type: "auth.connect"; tool: string; loginCommand: string; urlPattern: string; timeoutSec: number }
   | { type: "auth.cancel"; tool: string }
+  | { type: "auth.input"; tool: string; text: string }
   | { type: "auth.disconnect"; tool: string; logoutCommand?: string; credentialPaths: string[] }
   | { type: "auth.hydrate"; entries: Array<{ tool: string; path: string; contentsBase64: string }> }
   | { type: "auth.hydrateProbe"; tools: Array<{ tool: string; paths: string[] }> };

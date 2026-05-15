@@ -1,2 +1,12 @@
-Open this URL in your browser to log in:
-https://auth.openai.com/authorize?client_id=codex-cli&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fcallback&state=abc
+Welcome to Codex [v0.130.0]
+OpenAI's command-line coding agent
+
+Follow these steps to sign in with ChatGPT using device code authorization:
+
+1. Open this link in your browser and sign in to your account
+   https://auth.openai.com/codex/device
+
+2. Enter this one-time code (expires in 15 minutes)
+   34J7-3WML1
+
+Device codes are a common phishing target. Never share this code.

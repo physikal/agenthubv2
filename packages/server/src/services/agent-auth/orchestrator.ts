@@ -14,8 +14,12 @@ export type OrchestratorPhase =
 export interface OrchestratorEvent {
   phase: OrchestratorPhase;
   url?: string;
+  /** One-time / device code printed by the CLI (e.g. "34J7-3WML1"). */
+  code?: string;
   error?: string;
   expiresAt?: string;
+  /** True if the tool expects the user to paste a code back via stdin. */
+  acceptsCodeInput?: boolean;
 }
 
 export interface AgentChannel {
@@ -61,7 +65,20 @@ export interface ConnectArgs {
 }
 
 export class Orchestrator {
+  /** Active in-flight connect flows keyed by `${userId}|${toolId}`. Used by
+   * `relayInput` to send paste-back codes to the right auth-helper. */
+  private readonly active = new Map<string, AgentChannel>();
+
   constructor(private readonly deps: OrchestratorDeps) {}
+
+  /** Pipe text to the active auth-helper's subprocess stdin. Used when the
+   * CLI is waiting for the user to paste an OAuth confirmation code (e.g.
+   * `claude auth login`). No-op if no flow is active for this (user, tool). */
+  relayInput(args: { userId: string; toolId: string; text: string }): void {
+    const channel = this.active.get(`${args.userId}|${args.toolId}`);
+    if (!channel) return;
+    channel.send({ type: "auth.input", tool: args.toolId, text: args.text });
+  }
 
   async connect(args: ConnectArgs): Promise<void> {
     const tool = getTool(args.toolId);
@@ -79,10 +96,14 @@ export class Orchestrator {
 
     args.onEvent({ phase: "preparing" });
     const session = await this.deps.sessions.createAuthHelper(args.userId);
+    const activeKey = `${args.userId}|${args.toolId}`;
+    this.active.set(activeKey, session.agent);
 
     let captured: { path: string; contentsBase64: string } | null = null;
     let urlEmitted = false;
+    let codeEmitted = false;
     const urlRegex = tool.urlPattern;
+    const codeRegex = tool.codePattern;
 
     const done = new Promise<{ ok: boolean; error?: string }>((resolve) => {
       session.agent.on("message", (raw) => {
@@ -94,8 +115,17 @@ export class Orchestrator {
             if (m) {
               urlEmitted = true;
               const matchedUrl = m[0];
-              args.onEvent({ phase: "awaiting-url", url: matchedUrl });
+              const evt: OrchestratorEvent = { phase: "awaiting-url", url: matchedUrl };
+              if (tool.acceptsCodeInput) evt.acceptsCodeInput = true;
+              args.onEvent(evt);
               args.onEvent({ phase: "awaiting-callback" });
+            }
+          }
+          if (!codeEmitted && codeRegex) {
+            const cm = line.match(codeRegex);
+            if (cm) {
+              codeEmitted = true;
+              args.onEvent({ phase: "awaiting-callback", code: cm[0] });
             }
           }
         } else if (msg["type"] === "auth.captured") {
@@ -175,6 +205,7 @@ export class Orchestrator {
         await this.deps.audit(auditEntry);
       }
     } finally {
+      this.active.delete(activeKey);
       await this.deps.sessions.destroy(session.sessionId);
     }
   }

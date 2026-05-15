@@ -7,6 +7,8 @@ export interface ProcessHandle {
   stderrLines: AsyncIterable<string>;
   kill: () => void;
   wait: () => Promise<number>;
+  /** Write to the subprocess's stdin. No-op if stdin isn't piped. */
+  writeStdin?: (text: string) => void;
 }
 
 export interface AuthHandlerDeps {
@@ -16,7 +18,7 @@ export interface AuthHandlerDeps {
 
 export class AuthHandler {
   private readonly deps: Required<AuthHandlerDeps>;
-  private active = new Map<string, { kill: () => void }>();
+  private active = new Map<string, { kill: () => void; writeStdin?: (text: string) => void }>();
 
   constructor(deps: AuthHandlerDeps) {
     this.deps = { spawn: realSpawn, ...deps };
@@ -29,6 +31,9 @@ export class AuthHandler {
         return;
       case "auth.cancel":
         this.cancel(msg.tool);
+        return;
+      case "auth.input":
+        this.writeInput(msg.tool, msg.text);
         return;
       case "auth.disconnect":
         await this.disconnect(msg);
@@ -45,6 +50,11 @@ export class AuthHandler {
   private cancel(tool: string): void {
     const entry = this.active.get(tool);
     if (entry) entry.kill();
+  }
+
+  private writeInput(tool: string, text: string): void {
+    const entry = this.active.get(tool);
+    if (entry?.writeStdin) entry.writeStdin(`${text}\n`);
   }
 
   private async disconnect(msg: Extract<AuthInbound, { type: "auth.disconnect" }>): Promise<void> {
@@ -93,7 +103,7 @@ export class AuthHandler {
     const existing = this.active.get(msg.tool);
     if (existing) existing.kill();
     const proc = this.deps.spawn(msg.loginCommand);
-    this.active.set(msg.tool, { kill: proc.kill });
+    this.active.set(msg.tool, { kill: proc.kill, ...(proc.writeStdin ? { writeStdin: proc.writeStdin } : {}) });
 
     const consume = async (
       iter: AsyncIterable<string>,
@@ -135,8 +145,14 @@ function realSpawn(command: string): ProcessHandle {
     : ["sh", "-c", command];
   const head = argv[0];
   if (!head) throw new Error("argv head missing");
-  const proc = nodeSpawn(head, argv.slice(1), { stdio: ["ignore", "pipe", "pipe"] });
+  const proc = nodeSpawn(head, argv.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
   if (!proc.stdout || !proc.stderr) throw new Error("subprocess streams unavailable");
+
+  // Swallow EPIPE if the subprocess closes stdin before we write to it — happens
+  // when the CLI exits after first read (codex --device-auth case where we never
+  // need to write but the pipe is open). Without this listener Node logs a noisy
+  // "Error [ERR_STREAM_DESTROYED]" trace on stdin.write().
+  proc.stdin?.on("error", () => undefined);
 
   let killed = false;
   return {
@@ -151,6 +167,9 @@ function realSpawn(command: string): ProcessHandle {
       }, 2000).unref();
     },
     wait: () => new Promise((resolve) => proc.on("exit", (code) => resolve(code ?? 1))),
+    writeStdin: (text: string): void => {
+      if (proc.stdin && !proc.stdin.destroyed) proc.stdin.write(text);
+    },
   };
 }
 

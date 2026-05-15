@@ -5,6 +5,14 @@ export interface AgentTool {
   logoutCommand?: string;
   credentialPaths: string[];
   urlPattern: RegExp;
+  /** If set, lines matching this regex emit a `code` event to the UI. For
+   * device-code flows (codex --device-auth, gh) where the CLI prints a
+   * short code the user enters at the OAuth URL. */
+  codePattern?: RegExp;
+  /** If true, the CLI is waiting on stdin for the user to paste back a
+   * code from the OAuth provider's confirmation page. The modal renders
+   * a paste field; submitted text is piped to the subprocess's stdin. */
+  acceptsCodeInput?: boolean;
   loginTimeoutSec: number;
   expiryParser?: (fileContents: string) => Date | null;
 }
@@ -13,20 +21,23 @@ export const AGENT_TOOLS: AgentTool[] = [
   {
     id: "claude-code",
     displayName: "Claude Code",
-    loginCommand: "claude /login",
-    logoutCommand: "claude /logout",
+    loginCommand: "claude auth login --claudeai",
+    logoutCommand: "claude auth logout",
     credentialPaths: ["/home/coder/.claude/.credentials.json"],
-    urlPattern: /https:\/\/claude\.ai\/oauth\/authorize\?[^\s]+/,
+    urlPattern: /https:\/\/claude\.com\/cai\/oauth\/authorize\?[^\s]+/,
+    acceptsCodeInput: true,
     loginTimeoutSec: 300,
     expiryParser: parseClaudeExpiry,
   },
   {
     id: "codex",
     displayName: "OpenAI Codex",
-    loginCommand: "codex login",
+    loginCommand: "codex login --device-auth",
     credentialPaths: ["/home/coder/.codex/auth.json"],
-    urlPattern: /https:\/\/auth\.openai\.com\/[^\s]+/,
-    loginTimeoutSec: 300,
+    urlPattern: /https:\/\/auth\.openai\.com\/codex\/device/,
+    codePattern: /\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\b/,
+    loginTimeoutSec: 900,
+    expiryParser: parseClaudeExpiry,
   },
   {
     id: "gh",
@@ -35,7 +46,8 @@ export const AGENT_TOOLS: AgentTool[] = [
     logoutCommand: "gh auth logout --hostname github.com",
     credentialPaths: ["/home/coder/.config/gh/hosts.yml"],
     urlPattern: /https:\/\/github\.com\/login\/device/,
-    loginTimeoutSec: 300,
+    codePattern: /\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\b/,
+    loginTimeoutSec: 900,
   },
 ];
 

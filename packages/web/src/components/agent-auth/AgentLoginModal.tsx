@@ -11,6 +11,8 @@ type Phase = "preparing" | "awaiting-url" | "awaiting-callback" | "captured" | "
 interface Callbacks {
   setPhase: (p: Phase) => void;
   setUrl: (u: string | null) => void;
+  setCode: (c: string | null) => void;
+  setAcceptsCodeInput: (b: boolean) => void;
   setError: (m: string) => void;
   onDone: (ok: boolean) => void;
 }
@@ -18,13 +20,20 @@ interface Callbacks {
 export function AgentLoginModal({ toolId, displayName, onClose }: Props) {
   const [phase, setPhase] = useState<Phase>("preparing");
   const [url, setUrl] = useState<string | null>(null);
+  const [code, setCode] = useState<string | null>(null);
+  const [acceptsCodeInput, setAcceptsCodeInput] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pasteValue, setPasteValue] = useState("");
+  const [pasteSubmitting, setPasteSubmitting] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
 
   useEffect(() => {
     const ctrl = new AbortController();
     void runConnect(toolId, ctrl.signal, {
       setPhase,
       setUrl,
+      setCode,
+      setAcceptsCodeInput,
       setError,
       onDone: (ok) => {
         if (ok) setTimeout(() => onClose(true), 1500);
@@ -32,6 +41,30 @@ export function AgentLoginModal({ toolId, displayName, onClose }: Props) {
     });
     return () => ctrl.abort();
   }, [toolId, onClose]);
+
+  const submitPaste = async (): Promise<void> => {
+    const text = pasteValue.trim();
+    if (!text) return;
+    setPasteSubmitting(true);
+    try {
+      await fetch(`/api/integrations/agents/${toolId}/input`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      setPasteValue("");
+    } finally {
+      setPasteSubmitting(false);
+    }
+  };
+
+  const copyCode = (): void => {
+    if (!code) return;
+    void navigator.clipboard.writeText(code);
+    setCodeCopied(true);
+    setTimeout(() => setCodeCopied(false), 1500);
+  };
 
   return (
     <div
@@ -61,16 +94,59 @@ export function AgentLoginModal({ toolId, displayName, onClose }: Props) {
             >
               Open {displayName} login →
             </a>
-            {phase === "awaiting-callback" ? (
-              <p className="text-xs text-zinc-500 mt-3 flex items-center gap-2">
-                <span className="inline-block w-3 h-3 border-2 border-zinc-500 border-t-zinc-100 rounded-full animate-spin" />
-                Waiting for you to complete the sign-in… click the button above if a tab didn't open.
-              </p>
-            ) : (
-              <p className="text-xs text-zinc-500 mt-3">
-                Opens in your browser. Sign in with the account you want this workspace to use.
-              </p>
+
+            {code && (
+              <div className="mt-4 bg-zinc-950/70 border border-zinc-700 rounded-lg px-4 py-3">
+                <div className="text-xs text-zinc-500 mb-1">Enter this one-time code at the URL:</div>
+                <div className="flex items-center gap-2">
+                  <code className="font-mono text-lg tracking-wider text-zinc-100 select-all">
+                    {code}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={copyCode}
+                    className="ml-auto px-2 py-1 text-xs text-zinc-300 border border-zinc-700 rounded hover:bg-zinc-800 transition-colors"
+                  >
+                    {codeCopied ? "Copied!" : "Copy"}
+                  </button>
+                </div>
+              </div>
             )}
+
+            {acceptsCodeInput && (
+              <div className="mt-4">
+                <label className="text-xs text-zinc-500 block mb-1">
+                  After signing in, paste the code shown on the confirmation page:
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={pasteValue}
+                    onChange={(e) => setPasteValue(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") void submitPaste(); }}
+                    placeholder="paste code here"
+                    className="flex-1 bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-100 font-mono focus:outline-none focus:border-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void submitPaste()}
+                    disabled={!pasteValue.trim() || pasteSubmitting}
+                    className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-100 rounded-lg transition-colors"
+                  >
+                    Submit
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <p className="text-xs text-zinc-500 mt-4 flex items-center gap-2">
+              {phase === "awaiting-callback" && (
+                <span className="inline-block w-3 h-3 border-2 border-zinc-500 border-t-zinc-100 rounded-full animate-spin" />
+              )}
+              {phase === "awaiting-callback"
+                ? "Waiting for you to complete the sign-in…"
+                : "Opens in your browser. Sign in with the account you want this workspace to use."}
+            </p>
           </>
         )}
 
@@ -159,7 +235,10 @@ function handleEvent(chunk: string, cbs: Callbacks): void {
   }
   if (event === "url") {
     cbs.setUrl(String(parsed["url"]));
+    if (parsed["acceptsCodeInput"] === true) cbs.setAcceptsCodeInput(true);
     cbs.setPhase("awaiting-url");
+  } else if (event === "code") {
+    cbs.setCode(String(parsed["code"]));
   } else if (event === "captured") {
     cbs.setPhase("captured");
   } else if (event === "done") {
