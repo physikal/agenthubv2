@@ -47,6 +47,9 @@ export function initDb(): void {
       expires_at INTEGER NOT NULL
     );
 
+    -- Note: user_credentials.claude_credentials is vestigial — replaced by
+    -- per-user Infisical storage at /users/{userId}/agents/claude-code/. The
+    -- column stays in the DDL for legacy installs; no code reads or writes it.
     CREATE TABLE IF NOT EXISTS user_credentials (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       claude_credentials TEXT,

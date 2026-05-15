@@ -28,7 +28,6 @@ export const userCredentials = sqliteTable("user_credentials", {
   userId: text("user_id")
     .primaryKey()
     .references(() => users.id, { onDelete: "cascade" }),
-  claudeCredentials: text("claude_credentials"),
   backupConfig: text("backup_config"),
   updatedAt: integer("updated_at", { mode: "timestamp" })
     .notNull()
