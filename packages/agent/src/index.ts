@@ -58,6 +58,10 @@ server.setAuthRouter((m) => authHandler.handle(m));
 
 const watcher = new CredentialWatcher({
   send: (m) => server.send(m),
+  // 200ms debounce: long enough to coalesce atomic-rename sequences (write
+  // .tmp + rename), short enough that token-refresh writes are mirrored
+  // back to Infisical promptly without delaying the connect flow.
+  debounceMs: 200,
   tools: [
     { tool: "claude-code", paths: ["/home/coder/.claude/.credentials.json"] },
     { tool: "codex",       paths: ["/home/coder/.codex/auth.json"] },

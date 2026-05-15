@@ -118,6 +118,13 @@ export class AuthHandler {
     try {
       await Promise.all([consume(proc.stdoutLines, "stdout"), consume(proc.stderrLines, "stderr")]);
       const code = await proc.wait();
+      // On clean exit, directly capture any credential files that appeared.
+      // The fs-watch credential watcher also catches this, but its debounce
+      // (and the imminent session teardown after auth.done) races us, so do
+      // a direct read here for reliability.
+      if (code === 0 && msg.credentialPaths) {
+        await this.captureCredentialFiles(msg.tool, msg.credentialPaths);
+      }
       const done: AuthOutbound = code === 0
         ? { type: "auth.done", tool: msg.tool, ok: true }
         : { type: "auth.done", tool: msg.tool, ok: false, error: formatExitError(code, msg.loginCommand) };
@@ -125,6 +132,24 @@ export class AuthHandler {
     } finally {
       clearTimeout(timeout);
       this.active.delete(msg.tool);
+    }
+  }
+
+  private async captureCredentialFiles(tool: string, paths: string[]): Promise<void> {
+    const { readFile, access } = await import("node:fs/promises");
+    for (const path of paths) {
+      try {
+        await access(path);
+        const buf = await readFile(path);
+        this.deps.send({
+          type: "auth.captured",
+          tool,
+          path,
+          contentsBase64: buf.toString("base64"),
+        });
+      } catch {
+        // file absent — nothing to capture for this path
+      }
     }
   }
 }

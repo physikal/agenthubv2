@@ -59,11 +59,37 @@ export function AgentLoginModal({ toolId, displayName, onClose }: Props) {
     }
   };
 
-  const copyCode = (): void => {
+  const copyCode = async (): Promise<void> => {
     if (!code) return;
-    void navigator.clipboard.writeText(code);
-    setCodeCopied(true);
-    setTimeout(() => setCodeCopied(false), 1500);
+    let ok = false;
+    // navigator.clipboard only works in secure contexts (HTTPS / localhost).
+    // Plain-HTTP LAN deploys hit a fallback.
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(code);
+        ok = true;
+      } catch {
+        ok = false;
+      }
+    }
+    if (!ok) {
+      const ta = document.createElement("textarea");
+      ta.value = code;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        ok = document.execCommand("copy");
+      } catch {
+        ok = false;
+      }
+      document.body.removeChild(ta);
+    }
+    if (ok) {
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 1500);
+    }
   };
 
   return (
@@ -104,7 +130,7 @@ export function AgentLoginModal({ toolId, displayName, onClose }: Props) {
                   </code>
                   <button
                     type="button"
-                    onClick={copyCode}
+                    onClick={() => void copyCode()}
                     className="ml-auto px-2 py-1 text-xs text-zinc-300 border border-zinc-700 rounded hover:bg-zinc-800 transition-colors"
                   >
                     {codeCopied ? "Copied!" : "Copy"}

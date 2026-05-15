@@ -158,6 +158,7 @@ export class Orchestrator {
       loginCommand: tool.loginCommand,
       urlPattern: urlRegex.source,
       timeoutSec: tool.loginTimeoutSec,
+      credentialPaths: tool.credentialPaths,
     });
 
     const result = await done;

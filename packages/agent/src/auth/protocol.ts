@@ -1,5 +1,5 @@
 export type AuthInbound =
-  | { type: "auth.connect"; tool: string; loginCommand: string; urlPattern: string; timeoutSec: number }
+  | { type: "auth.connect"; tool: string; loginCommand: string; urlPattern: string; timeoutSec: number; credentialPaths?: string[] }
   | { type: "auth.cancel"; tool: string }
   | { type: "auth.input"; tool: string; text: string }
   | { type: "auth.disconnect"; tool: string; logoutCommand?: string; credentialPaths: string[] }
