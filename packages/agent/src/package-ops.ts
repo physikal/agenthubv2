@@ -258,7 +258,29 @@ function assertBinaryPresent(binName: string): void {
   }
 }
 
-async function readVersion(argv: readonly string[]): Promise<string | null> {
+const SEMVER_TOKEN_RE = /\bv?\d+\.\d+\.\d+(?:-[\w.-]+)?\b/;
+
+/**
+ * Pick a semver-shaped token out of a CLI's `--version` output.
+ *
+ * CLIs return surprisingly varied formats: `claude --version` prints
+ * `"2.1.143 (Claude Code)"`, `codex --version` prints
+ * `"codex-cli 0.130.0"`, `opencode --version` prints `"1.15.3"`. We want a
+ * plain `"M.m.p"` string in both cases so server-side semver compare works.
+ *
+ * Falls back to the trimmed first line (capped) when no semver token is
+ * present — the server's `isNewer` is safe against non-semver inputs.
+ */
+export function extractSemver(output: string): string | null {
+  const trimmed = output.trim();
+  if (!trimmed) return null;
+  const match = SEMVER_TOKEN_RE.exec(trimmed);
+  if (match) return match[0].replace(/^v/, "");
+  const firstLine = trimmed.split("\n")[0]?.trim() ?? "";
+  return firstLine.slice(0, 128) || null;
+}
+
+export async function readVersion(argv: readonly string[]): Promise<string | null> {
   const [cmd, ...args] = argv;
   if (!cmd) return null;
   try {
@@ -270,8 +292,7 @@ async function readVersion(argv: readonly string[]): Promise<string | null> {
       timeoutMs: 15_000,
       captureStdout: true,
     });
-    const trimmed = out.trim().split("\n")[0]?.trim() ?? "";
-    return trimmed.slice(0, 128) || null;
+    return extractSemver(out);
   } catch {
     return null;
   }

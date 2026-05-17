@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validatePackageOpParams, type PackageOpParams } from "./package-ops.js";
+import { extractSemver, validatePackageOpParams, type PackageOpParams } from "./package-ops.js";
 
 function baseParams(overrides: Partial<PackageOpParams> = {}): PackageOpParams {
   return {
@@ -84,5 +84,52 @@ describe("validatePackageOpParams", () => {
         }),
       ),
     ).toBe("invalid scriptEnv key");
+  });
+});
+
+describe("extractSemver", () => {
+  it("extracts the bare semver from claude --version output", () => {
+    // claude prints `2.1.143 (Claude Code)` — the suffix used to leak through.
+    expect(extractSemver("2.1.143 (Claude Code)")).toBe("2.1.143");
+  });
+
+  it("extracts semver from codex --version output", () => {
+    // codex prints `codex-cli 0.130.0`, sometimes preceded by a PATH warning.
+    expect(extractSemver("codex-cli 0.130.0")).toBe("0.130.0");
+    expect(
+      extractSemver(
+        "WARNING: proceeding, even though we could not update PATH: Permission denied (os error 13)\ncodex-cli 0.130.0",
+      ),
+    ).toBe("0.130.0");
+  });
+
+  it("strips a leading v prefix to match npm-registry shape", () => {
+    expect(extractSemver("v1.0.40")).toBe("1.0.40");
+  });
+
+  it("passes through plain semver unchanged", () => {
+    expect(extractSemver("1.15.3")).toBe("1.15.3");
+  });
+
+  it("preserves a prerelease segment", () => {
+    expect(extractSemver("1.2.3-beta.4")).toBe("1.2.3-beta.4");
+  });
+
+  it("falls back to the trimmed first line when no semver token is present", () => {
+    // Non-standard tools that don't print a semver still report SOMETHING —
+    // server-side isNewer is safe against these (returns false).
+    expect(extractSemver("nightly-build")).toBe("nightly-build");
+  });
+
+  it("returns null for empty output", () => {
+    expect(extractSemver("")).toBeNull();
+    expect(extractSemver("   \n\n  ")).toBeNull();
+  });
+
+  it("caps the fallback at 128 chars to bound DB storage", () => {
+    const long = "x".repeat(200);
+    const got = extractSemver(long);
+    expect(got).not.toBeNull();
+    expect(got!.length).toBeLessThanOrEqual(128);
   });
 });
