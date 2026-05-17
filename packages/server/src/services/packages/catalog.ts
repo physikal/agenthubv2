@@ -1,15 +1,16 @@
 /**
  * Installable coding-agent CLI catalog.
  *
- * Built-in entries (isBuiltin: true) are baked into the workspace image at
- * `docker/Dockerfile.agent-workspace` and show up in the UI as
- * "Pre-installed" — no install or remove actions. Everything else is
- * installed per-user into `/home/coder/.local/bin` on demand by the agent
- * daemon, using one of three hardcoded methods (npm / curl-sh / binary).
+ * Essentials (essential: true) are auto-installed into the user's
+ * /home/coder/.local/bin by the agent daemon on every session-active.
+ * Idempotent: an already-present binary is skipped. Non-essential
+ * entries (e.g. MiniMax, Droid) install only when the user clicks
+ * "Install" in the Packages page.
  *
- * Adding a new installable package: append a manifest entry here. The
- * install command templates live in `packages/agent/src/package-ops.ts` —
- * this file only describes WHAT to install, not HOW.
+ * Adding a new installable package: append a manifest entry here.
+ * The install command templates live in
+ * `packages/agent/src/package-ops.ts` — this file only describes WHAT
+ * to install, not HOW.
  */
 
 export type InstallMethod = "npm" | "curl-sh" | "binary";
@@ -32,6 +33,8 @@ export interface PackageManifest {
   homepage?: string;
   /** Pre-installed in image. Remove is refused at the server. */
   isBuiltin?: boolean;
+  /** Auto-installed by the agent daemon on session-active if missing. */
+  essential?: boolean;
   /** Executable name on PATH after install (for verify + cleanup). */
   binName: string;
   /** Argv used to capture the installed version for display. */
@@ -47,7 +50,7 @@ const MANIFESTS: readonly PackageManifest[] = [
     name: "Claude Code",
     description: "Anthropic's official coding agent CLI.",
     homepage: "https://docs.claude.com/en/docs/claude-code/overview",
-    isBuiltin: true,
+    essential: true,
     binName: "claude",
     versionCmd: ["claude", "--version"],
     install: { method: "npm", npmPackage: "@anthropic-ai/claude-code" },
@@ -57,7 +60,7 @@ const MANIFESTS: readonly PackageManifest[] = [
     name: "OpenCode",
     description: "Multi-model coding agent CLI.",
     homepage: "https://opencode.ai",
-    isBuiltin: true,
+    essential: true,
     binName: "opencode",
     versionCmd: ["opencode", "--version"],
     install: { method: "npm", npmPackage: "opencode-ai" },
@@ -67,7 +70,6 @@ const MANIFESTS: readonly PackageManifest[] = [
     name: "MiniMax",
     description: "MiniMax agent CLI (invoked via `mmx` or `claude-minimax`).",
     homepage: "https://www.minimax.io",
-    isBuiltin: true,
     binName: "mmx",
     versionCmd: ["mmx", "--version"],
     install: { method: "npm", npmPackage: "mmx-cli" },
@@ -79,8 +81,6 @@ const MANIFESTS: readonly PackageManifest[] = [
     homepage: "https://app.factory.ai",
     binName: "droid",
     versionCmd: ["droid", "--version"],
-    // Official installer URL — verify at deploy time; if Factory changes
-    // the install path, only this line needs updating.
     install: {
       method: "curl-sh",
       scriptUrl: "https://app.factory.ai/cli",
@@ -91,6 +91,7 @@ const MANIFESTS: readonly PackageManifest[] = [
     name: "OpenAI Codex",
     description: "OpenAI's official Codex coding agent CLI.",
     homepage: "https://github.com/openai/codex",
+    essential: true,
     binName: "codex",
     versionCmd: ["codex", "--version"],
     install: { method: "npm", npmPackage: "@openai/codex" },

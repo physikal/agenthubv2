@@ -2,20 +2,27 @@ import { describe, expect, it } from "vitest";
 import { listCatalog, getPackage } from "./catalog.js";
 
 describe("package catalog", () => {
-  it("contains the three bundled CLIs as built-ins", () => {
-    const builtins = listCatalog().filter((m) => m.isBuiltin);
-    expect(builtins.map((m) => m.id).sort()).toEqual([
+  it("marks claude-code, opencode, and codex as essentials", () => {
+    const essentials = listCatalog().filter((m) => m.essential);
+    expect(essentials.map((m) => m.id).sort()).toEqual([
       "claude-code",
-      "minimax",
+      "codex",
       "opencode",
     ]);
   });
 
-  it("contains Droid as a non-builtin curl-sh install", () => {
+  it("contains MiniMax and Droid as non-essential opt-ins", () => {
+    const minimax = getPackage("minimax");
     const droid = getPackage("droid");
-    expect(droid).toBeDefined();
-    expect(droid?.isBuiltin).not.toBe(true);
+    expect(minimax?.essential).toBeFalsy();
+    expect(droid?.essential).toBeFalsy();
     expect(droid?.install.method).toBe("curl-sh");
+  });
+
+  it("no manifest is marked isBuiltin anymore", () => {
+    for (const m of listCatalog()) {
+      expect(m.isBuiltin).toBeFalsy();
+    }
   });
 
   it("every manifest has a valid slug, binName, and versionCmd", () => {
