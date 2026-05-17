@@ -35,14 +35,24 @@ describe("checkVersion (npm)", () => {
     expect("error" in res).toBe(true);
   });
 
+  it("returns an error when the 200 body is not valid JSON", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response("<!DOCTYPE html>", { status: 200 }),
+    ) as typeof fetch;
+    const res = await checkVersion({ method: "npm", npmPackage: "@anthropic-ai/claude-code" });
+    expect("error" in res).toBe(true);
+  });
+
   it("URL-encodes scoped npm package names", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ version: "1.0.0" }), { status: 200 }),
     );
     globalThis.fetch = fetchMock as typeof fetch;
     await checkVersion({ method: "npm", npmPackage: "@openai/codex" });
-    const url = String(fetchMock.mock.calls[0]?.[0]);
-    expect(url).toBe("https://registry.npmjs.org/%40openai%2Fcodex/latest");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://registry.npmjs.org/%40openai%2Fcodex/latest",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 });
 
