@@ -1,16 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
-import type { UserPackage, UserPackageStatus } from "../../db/schema.js";
+import type { UserPackage, UserPackageStatus, PackageVersionCache } from "../../db/schema.js";
 import type {
   PackageOpParams,
   PackageOpResult,
   SessionManager,
 } from "../session-manager.js";
 import { getPackage, listCatalog, type PackageManifest } from "./catalog.js";
+import { isNewer } from "./semver-cmp.js";
 
 export type CatalogState =
-  | "preinstalled"
   | "not-installed"
   | "installing"
   | "ready"
@@ -22,11 +22,21 @@ export interface CatalogEntry {
   name: string;
   description: string;
   homepage?: string;
-  isBuiltin: boolean;
+  /** True if marked essential in the catalog — auto-installed by daemon. */
+  essential: boolean;
   state: CatalogState;
+  /** Daemon-reported version from /home/coder/.local/bin (post-install). */
   version?: string | null;
   error?: string | null;
   updatedAt?: string | null;
+  /** Upstream latest (from package_version_cache). null if never checked. */
+  latestVersion?: string | null;
+  /** True when latestVersion > version (semver). */
+  updateAvailable?: boolean;
+  /** ISO timestamp of the last poller tick that touched this row. */
+  versionCheckedAt?: string | null;
+  /** Last poller error string, if any. */
+  versionCheckError?: string | null;
 }
 
 export class PackageManager {
@@ -38,37 +48,19 @@ export class PackageManager {
     const byPackage = new Map<string, UserPackage>();
     for (const r of rows) byPackage.set(r.packageId, r);
 
-    return listCatalog().map((manifest) => {
-      const base: CatalogEntry = {
-        id: manifest.id,
-        name: manifest.name,
-        description: manifest.description,
-        isBuiltin: Boolean(manifest.isBuiltin),
-        state: manifest.isBuiltin ? "preinstalled" : "not-installed",
-      };
-      if (manifest.homepage !== undefined) base.homepage = manifest.homepage;
-      if (manifest.isBuiltin) return base;
+    const cacheRows = db.select().from(schema.packageVersionCache).all();
+    const byCache = new Map<string, PackageVersionCache>();
+    for (const r of cacheRows) byCache.set(r.packageId, r);
 
-      const row = byPackage.get(manifest.id);
-      if (!row) return base;
-
-      return {
-        ...base,
-        state: mapRowStatusToState(row.status),
-        version: row.version ?? null,
-        error: row.error ?? null,
-        updatedAt: row.updatedAt.toISOString(),
-      };
-    });
+    return listCatalog().map((manifest) =>
+      this.toEntry(manifest, byPackage.get(manifest.id), byCache.get(manifest.id)),
+    );
   }
 
   /** Return a single package's status for the polling endpoint. */
   getStatus(userId: string, packageId: string): CatalogEntry | null {
     const manifest = getPackage(packageId);
     if (!manifest) return null;
-    if (manifest.isBuiltin) {
-      return this.listForUser(userId).find((e) => e.id === packageId) ?? null;
-    }
     const row = db
       .select()
       .from(schema.userPackages)
@@ -79,23 +71,40 @@ export class PackageManager {
         ),
       )
       .get();
+    const cache = db
+      .select()
+      .from(schema.packageVersionCache)
+      .where(eq(schema.packageVersionCache.packageId, packageId))
+      .get();
+    return this.toEntry(manifest, row, cache);
+  }
 
+  private toEntry(
+    manifest: PackageManifest,
+    row: UserPackage | undefined,
+    cache: PackageVersionCache | undefined,
+  ): CatalogEntry {
     const base: CatalogEntry = {
       id: manifest.id,
       name: manifest.name,
       description: manifest.description,
-      isBuiltin: false,
+      essential: Boolean(manifest.essential),
       state: "not-installed",
     };
     if (manifest.homepage !== undefined) base.homepage = manifest.homepage;
-    if (!row) return base;
-    return {
-      ...base,
-      state: mapRowStatusToState(row.status),
-      version: row.version ?? null,
-      error: row.error ?? null,
-      updatedAt: row.updatedAt.toISOString(),
-    };
+    if (row) {
+      base.state = mapRowStatusToState(row.status);
+      base.version = row.version ?? null;
+      base.error = row.error ?? null;
+      base.updatedAt = row.updatedAt.toISOString();
+    }
+    if (cache) {
+      base.latestVersion = cache.latestVersion ?? null;
+      base.versionCheckedAt = cache.checkedAt.toISOString();
+      base.versionCheckError = cache.error ?? null;
+      base.updateAvailable = isNewer(cache.latestVersion, base.version ?? null);
+    }
+    return base;
   }
 
   /**
@@ -109,21 +118,16 @@ export class PackageManager {
   ): Promise<{ status: "started"; state: CatalogState } | { status: "conflict"; reason: string }> {
     const manifest = getPackage(packageId);
     if (!manifest) return { status: "conflict", reason: "unknown package" };
-    if (manifest.isBuiltin) {
-      return { status: "conflict", reason: "built-in packages are always pre-installed" };
-    }
 
     const existing = this.getRow(userId, packageId);
     if (existing) {
       if (existing.status === "installing") {
         return { status: "conflict", reason: "install already in progress" };
       }
-      if (existing.status === "ready") {
-        return { status: "conflict", reason: "already installed" };
-      }
       if (existing.status === "removing") {
         return { status: "conflict", reason: "remove in progress" };
       }
+      // NB: "ready" is no longer a conflict — re-install is how we upgrade.
     }
 
     const now = new Date();
@@ -155,9 +159,6 @@ export class PackageManager {
   ): Promise<{ status: "started"; state: CatalogState } | { status: "conflict"; reason: string } | { status: "not-found" }> {
     const manifest = getPackage(packageId);
     if (!manifest) return { status: "conflict", reason: "unknown package" };
-    if (manifest.isBuiltin) {
-      return { status: "conflict", reason: "built-in packages cannot be removed" };
-    }
 
     const existing = this.getRow(userId, packageId);
     if (!existing) return { status: "not-found" };

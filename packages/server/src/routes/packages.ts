@@ -19,7 +19,7 @@ export function packagesRoutes(manager: PackageManager) {
         name: m.name,
         description: m.description,
         homepage: m.homepage,
-        isBuiltin: Boolean(m.isBuiltin),
+        essential: Boolean(m.essential),
       })),
     );
   });
