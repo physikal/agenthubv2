@@ -166,6 +166,17 @@ export class SessionManager {
   private readonly pendingBackups = new Map<string, PendingBackup>();
   /** requestId → pending package install/remove */
   private readonly pendingPackageOps = new Map<string, PendingPackageOp>();
+  /**
+   * Notified for each `essentials.result` message from the agent. Wired up
+   * in server/src/index.ts to call `PackageManager.recordEssentialResult`.
+   */
+  private essentialsResultHandler?: (r: {
+    userId: string;
+    packageId: string;
+    ok: boolean;
+    version: string | null;
+    error: string | null;
+  }) => void;
 
   constructor(opts: {
     provisioner: ProvisionerDriver;
@@ -175,6 +186,23 @@ export class SessionManager {
     this.provisioner = opts.provisioner;
     this.workspaceImage = opts.workspaceImage;
     this.portalUrl = opts.portalUrl;
+  }
+
+  /**
+   * Wire a consumer for `essentials.result` agent messages. Called once at
+   * boot from server/src/index.ts after both SessionManager and
+   * PackageManager are constructed (avoids a circular import).
+   */
+  setEssentialsResultHandler(
+    fn: (r: {
+      userId: string;
+      packageId: string;
+      ok: boolean;
+      version: string | null;
+      error: string | null;
+    }) => void,
+  ): void {
+    this.essentialsResultHandler = fn;
   }
 
   async reconnectActiveSessions(): Promise<void> {
@@ -471,6 +499,29 @@ export class SessionManager {
             if (r.version !== undefined) result.version = r.version;
             if (r.error !== undefined) result.error = r.error;
             pending.resolve(result);
+          }
+        }
+
+        if (msg.type === "essentials.result") {
+          const r = msg as unknown as {
+            type: "essentials.result";
+            packageId: string;
+            ok: boolean;
+            version?: string;
+            error?: string;
+          };
+          const handler = this.essentialsResultHandler;
+          if (handler) {
+            const session = this.getSession(sessionId);
+            if (session?.userId) {
+              handler({
+                userId: session.userId,
+                packageId: r.packageId,
+                ok: r.ok,
+                version: r.version ?? null,
+                error: r.error ?? null,
+              });
+            }
           }
         }
       } catch {

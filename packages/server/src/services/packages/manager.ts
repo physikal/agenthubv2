@@ -57,6 +57,72 @@ export class PackageManager {
     );
   }
 
+  /**
+   * Record the agent's report for an essentials.ensure outcome. Auto-essentials
+   * runs without going through `startInstall`, so the user_packages row may
+   * not exist yet — this method UPSERTs.
+   *
+   * Semantics:
+   * - ok=true: upsert with status=ready, version, error cleared. Authoritative.
+   * - ok=false with no existing row: insert an error row so the user sees the
+   *   failure on the Packages page and can retry.
+   * - ok=false with an existing ready row: no-op. Don't punish a working
+   *   prior install for a transient failure in the next session boot.
+   */
+  recordEssentialResult(
+    userId: string,
+    packageId: string,
+    ok: boolean,
+    version: string | null,
+    error: string | null,
+  ): void {
+    if (!getPackage(packageId)) return;
+    const existing = this.getRow(userId, packageId);
+    const now = new Date();
+    if (ok) {
+      if (existing) {
+        db.update(schema.userPackages)
+          .set({ status: "ready", version, error: null, updatedAt: now })
+          .where(eq(schema.userPackages.id, existing.id))
+          .run();
+      } else {
+        db.insert(schema.userPackages)
+          .values({
+            id: randomUUID(),
+            userId,
+            packageId,
+            status: "ready",
+            version,
+            error: null,
+            installedAt: now,
+            updatedAt: now,
+          })
+          .run();
+      }
+      return;
+    }
+    if (existing && existing.status === "ready") return;
+    if (existing) {
+      db.update(schema.userPackages)
+        .set({ status: "error", error: error ?? "essential install failed", updatedAt: now })
+        .where(eq(schema.userPackages.id, existing.id))
+        .run();
+    } else {
+      db.insert(schema.userPackages)
+        .values({
+          id: randomUUID(),
+          userId,
+          packageId,
+          status: "error",
+          version: null,
+          error: error ?? "essential install failed",
+          installedAt: now,
+          updatedAt: now,
+        })
+        .run();
+    }
+  }
+
   /** Return a single package's status for the polling endpoint. */
   getStatus(userId: string, packageId: string): CatalogEntry | null {
     const manifest = getPackage(packageId);

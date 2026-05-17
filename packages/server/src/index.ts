@@ -51,6 +51,13 @@ const sessionManager = new SessionManager({
 
 const packageManager = new PackageManager(sessionManager);
 
+// Bridge agent-side essentials.result messages into the user_packages
+// table. Wired here (not in either manager's constructor) to avoid a
+// circular import between SessionManager and PackageManager.
+sessionManager.setEssentialsResultHandler((r) => {
+  packageManager.recordEssentialResult(r.userId, r.packageId, r.ok, r.version, r.error);
+});
+
 // Periodically poll upstream registries for fresh CLI versions. Writes into
 // package_version_cache; the Packages page reads from there. Tick interval
 // is 30 minutes — npm doesn't publish often enough to warrant tighter.

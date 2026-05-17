@@ -65,6 +65,18 @@ server.setPackagesRouter(async (msg: PackagesInbound) => {
       console.log(line);
       server.send({ type: "essentials.line", packageId: "*", line });
     },
+    onResult: (r) => {
+      const out: {
+        type: "essentials.result";
+        packageId: string;
+        ok: boolean;
+        version?: string;
+        error?: string;
+      } = { type: "essentials.result", packageId: r.packageId, ok: r.ok };
+      if (r.version !== undefined) out.version = r.version;
+      if (r.error !== undefined) out.error = r.error;
+      server.send(out);
+    },
   });
   server.send({
     type: "essentials.done",
