@@ -16,7 +16,7 @@ const CODER_UID = 1000;
 const CODER_GID = 1000;
 const CODER_HOME = "/home/coder";
 const LOCAL_PREFIX = `${CODER_HOME}/.local`;
-const LOCAL_BIN = `${LOCAL_PREFIX}/bin`;
+export const LOCAL_BIN = `${LOCAL_PREFIX}/bin`;
 
 const PACKAGE_ID_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const BIN_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;

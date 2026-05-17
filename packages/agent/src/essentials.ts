@@ -1,15 +1,11 @@
 import { access } from "node:fs/promises";
-import { installPackage, type PackageOpResult } from "./package-ops.js";
+import { installPackage, LOCAL_BIN, type PackageOpResult } from "./package-ops.js";
 import type { EssentialSpec } from "./packages-protocol.js";
 
-const LOCAL_BIN = "/home/coder/.local/bin";
-
 export interface EnsureEssentialsDeps {
-  /** Check whether a binary exists in /home/coder/.local/bin. */
   binExists: (binName: string) => Promise<boolean>;
-  /** Install one essential. Defaults to the real `installPackage`. */
   install: (spec: EssentialSpec) => Promise<PackageOpResult>;
-  /** Log line emitter — wired to WS-out by the caller. */
+  /** Wired to the WS-out send by the caller so install progress reaches the session terminal. */
   log: (line: string) => void;
 }
 
