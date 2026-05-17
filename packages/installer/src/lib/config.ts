@@ -233,7 +233,10 @@ export function missingRequiredForHeadless(cfg: InstallConfig): string[] {
     if (!cfg.dokployProjectId) missing.push("AGENTHUB_DOKPLOY_PROJECT_ID");
     if (!cfg.dokployEnvironmentId) missing.push("AGENTHUB_DOKPLOY_ENVIRONMENT_ID");
   }
-  if (cfg.domain !== "localhost" && !cfg.tlsEmail) {
+  // Only public access mode actually uses TLS_EMAIL (Let's Encrypt). Lan
+  // mode runs plain HTTP and ignores the email; localhost installs have no
+  // routable hostname to issue a cert for in the first place.
+  if (cfg.accessMode === "public" && cfg.domain !== "localhost" && !cfg.tlsEmail) {
     missing.push("AGENTHUB_TLS_EMAIL");
   }
   if (!VALID_ACCESS_MODES.includes(cfg.accessMode)) {
