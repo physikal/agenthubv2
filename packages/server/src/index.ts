@@ -17,6 +17,7 @@ import { deployRoutes } from "./routes/deploy.js";
 import { agentGithubRoutes } from "./routes/agent-github.js";
 import { packagesRoutes } from "./routes/packages.js";
 import { PackageManager } from "./services/packages/manager.js";
+import { VersionPoller } from "./services/packages/poller.js";
 import { authMiddleware, adminMiddleware, agentAuthMiddleware } from "./middleware/auth.js";
 import { githubAppManifestRoutes } from "./routes/github-app-manifest.js";
 import {
@@ -49,6 +50,12 @@ const sessionManager = new SessionManager({
 });
 
 const packageManager = new PackageManager(sessionManager);
+
+// Periodically poll upstream registries for fresh CLI versions. Writes into
+// package_version_cache; the Packages page reads from there. Tick interval
+// is 30 minutes — npm doesn't publish often enough to warrant tighter.
+const versionPoller = new VersionPoller();
+versionPoller.start();
 
 // Reconnect active sessions on startup.
 void (async () => {
@@ -194,6 +201,7 @@ server.listen(PORT, () => {
 
 const shutdown = (): void => {
   console.log("[server] shutting down");
+  versionPoller.stop();
   server.close();
   process.exit(0);
 };
