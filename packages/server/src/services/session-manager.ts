@@ -10,6 +10,7 @@ import type {
 import { hydrateSession } from "./agent-auth/credential-sync.js";
 import { agentCredentialPath, CREDENTIAL_SECRET_NAME } from "./agent-auth/paths.js";
 import { firstActiveInstallationForUser } from "./providers/github-app.js";
+import { listCatalog } from "./packages/catalog.js";
 import { getSecretStore } from "./secrets/index.js";
 import { resolveInfraConfig } from "./secrets/helpers.js";
 
@@ -368,6 +369,10 @@ export class SessionManager {
       // own auth prompt on first invocation (same fallback as before).
       if (session.userId && session.purpose === "user") {
         void this.hydrateCredentialsForSession(session.id, session.userId);
+        // Auto-install essentials into /home/coder/.local/bin. Idempotent —
+        // the agent skips binaries that already exist. Failures are
+        // non-fatal: the user can manually install via Packages.
+        this.ensureEssentialsForSession(session.id);
       }
     } catch (err) {
       const message =
@@ -765,6 +770,26 @@ export class SessionManager {
     return this.listSessionsForUser(userId).find((s) =>
       ACTIVE_STATUSES.includes(s.status),
     );
+  }
+
+  private ensureEssentialsForSession(sessionId: string): void {
+    const entry = this.agents.get(sessionId);
+    if (!entry) return;
+    const specs = listCatalog()
+      .filter((m) => m.essential === true)
+      .map((m) => ({
+        packageId: m.id,
+        binName: m.binName,
+        versionCmd: m.versionCmd,
+        install: m.install,
+      }));
+    if (specs.length === 0) return;
+    try {
+      entry.ws.send(JSON.stringify({ type: "essentials.ensure", specs }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "unknown";
+      console.warn(`[session ${sessionId}] essentials send failed: ${msg}`);
+    }
   }
 
   private async hydrateCredentialsForSession(
