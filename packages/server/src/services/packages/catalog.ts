@@ -31,10 +31,6 @@ export interface PackageManifest {
   name: string;
   description: string;
   homepage?: string;
-  /** @deprecated — kept transitionally while manager.ts / routes / Packages.tsx
-   * still reference it. Removed in Task 7 of the CLI catalog migration plan.
-   * Do not set on new catalog entries. */
-  isBuiltin?: boolean;
   /** Auto-installed by the agent daemon on session-active if missing. */
   essential?: boolean;
   /** Executable name on PATH after install (for verify + cleanup). */
@@ -106,9 +102,6 @@ function validateManifest(m: PackageManifest): void {
   }
   if (!/^[A-Za-z0-9._-]{1,64}$/.test(m.binName)) {
     throw new Error(`invalid binName for ${m.id}: ${m.binName}`);
-  }
-  if (m.isBuiltin) {
-    throw new Error(`${m.id}: isBuiltin is deprecated — use essential instead`);
   }
   if (m.versionCmd.length === 0) {
     throw new Error(`empty versionCmd for ${m.id}`);

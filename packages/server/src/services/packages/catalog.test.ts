@@ -19,12 +19,6 @@ describe("package catalog", () => {
     expect(droid?.install.method).toBe("curl-sh");
   });
 
-  it("no manifest is marked isBuiltin anymore", () => {
-    for (const m of listCatalog()) {
-      expect(m.isBuiltin).toBeFalsy();
-    }
-  });
-
   it("every manifest has a valid slug, binName, and versionCmd", () => {
     const slug = /^[a-z][a-z0-9-]{0,63}$/;
     const binName = /^[A-Za-z0-9._-]{1,64}$/;
