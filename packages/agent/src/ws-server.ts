@@ -10,6 +10,7 @@ import {
   type PackageOpResult,
 } from "./package-ops.js";
 import type { AuthInbound, AuthOutbound } from "./auth/protocol.js";
+import type { PackagesInbound, PackagesOutbound } from "./packages-protocol.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -34,7 +35,8 @@ type InboundMessage =
   | { type: "stop" }
   | { type: "backup"; op: "save" | "restore" | "size"; requestId: string; params: BackupParams }
   | { type: "package"; op: "install" | "remove"; requestId: string; params: PackageOpParams }
-  | AuthInbound;
+  | AuthInbound
+  | PackagesInbound;
 
 type OutboundMessage =
   | { type: "status"; state: string; detail: string }
@@ -55,7 +57,8 @@ type OutboundMessage =
       version?: string;
       error?: string;
     }
-  | AuthOutbound;
+  | AuthOutbound
+  | PackagesOutbound;
 
 // Characters allowed in B2 credentials / bucket names. Fail-closed to stop
 // newline-injection into rclone.conf (which would inject a fake section).
@@ -79,6 +82,12 @@ export class AgentServer {
 
   public setAuthRouter(fn: (msg: AuthInbound) => Promise<void>): void {
     this.authRouter = fn;
+  }
+
+  private packagesRouter: ((msg: PackagesInbound) => Promise<void>) | null = null;
+
+  public setPackagesRouter(fn: (msg: PackagesInbound) => Promise<void>): void {
+    this.packagesRouter = fn;
   }
 
   constructor(config: AgentConfig) {
@@ -118,6 +127,10 @@ export class AgentServer {
   private handleMessage(msg: InboundMessage): void {
     if (typeof msg.type === "string" && msg.type.startsWith("auth.")) {
       if (this.authRouter) void this.authRouter(msg as AuthInbound);
+      return;
+    }
+    if (typeof msg.type === "string" && msg.type.startsWith("essentials.")) {
+      if (this.packagesRouter) void this.packagesRouter(msg as PackagesInbound);
       return;
     }
     switch (msg.type) {
