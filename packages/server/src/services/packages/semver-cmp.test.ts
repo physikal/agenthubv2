@@ -32,7 +32,7 @@ describe("isNewer", () => {
     expect(isNewer("1.0.0-rc.1", "1.0.0")).toBe(false);
   });
 
-  it("treats prereleases ordinally by string compare", () => {
+  it("compares prerelease identifiers per §11.4 (rc.2 > rc.1)", () => {
     expect(isNewer("1.0.0-rc.2", "1.0.0-rc.1")).toBe(true);
     expect(isNewer("1.0.0-rc.1", "1.0.0-rc.2")).toBe(false);
   });
