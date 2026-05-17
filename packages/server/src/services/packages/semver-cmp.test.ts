@@ -43,4 +43,20 @@ describe("isNewer", () => {
     expect(isNewer("not-a-version", "1.0.0")).toBe(false);
     expect(isNewer("1.0.0", "not-a-version")).toBe(false);
   });
+
+  it("compares numeric prerelease identifiers numerically (rc.10 > rc.9)", () => {
+    expect(isNewer("1.0.0-rc.10", "1.0.0-rc.9")).toBe(true);
+    expect(isNewer("1.0.0-rc.9", "1.0.0-rc.10")).toBe(false);
+  });
+
+  it("treats numeric prerelease identifiers as lower precedence than alphanumeric", () => {
+    // 1.0.0-alpha > 1.0.0-1 per semver §11.4.3
+    expect(isNewer("1.0.0-alpha", "1.0.0-1")).toBe(true);
+    expect(isNewer("1.0.0-1", "1.0.0-alpha")).toBe(false);
+  });
+
+  it("longer prerelease wins when prefixes match (§11.4.4)", () => {
+    expect(isNewer("1.0.0-alpha.1", "1.0.0-alpha")).toBe(true);
+    expect(isNewer("1.0.0-alpha", "1.0.0-alpha.1")).toBe(false);
+  });
 });
