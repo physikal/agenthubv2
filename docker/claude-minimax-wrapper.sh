@@ -26,6 +26,24 @@ EOF
   exit 1
 fi
 
+# Resolve the claude binary. Prefer the per-user install (~/.local/bin)
+# because the workspace image no longer bakes claude in; fall back to PATH
+# for installs that still have a system-wide one (during rolling upgrades).
+CLAUDE_BIN="${HOME}/.local/bin/claude"
+if [ ! -x "$CLAUDE_BIN" ]; then
+  CLAUDE_BIN="$(command -v claude 2>/dev/null || true)"
+fi
+if [ -z "$CLAUDE_BIN" ] || [ ! -x "$CLAUDE_BIN" ]; then
+  cat >&2 <<'EOF'
+claude-minimax: Claude Code is not installed in this workspace yet.
+
+Wait a few seconds for the essentials installer to finish (terminal
+scrollback will show "[essentials] claude-code installed"), or open the
+Packages page and install Claude Code manually.
+EOF
+  exit 1
+fi
+
 exec env \
   ANTHROPIC_BASE_URL="${MINIMAX_BASE_URL:-https://api.minimax.io/anthropic}" \
   ANTHROPIC_AUTH_TOKEN="$MINIMAX_API_KEY" \
@@ -36,4 +54,4 @@ exec env \
   ANTHROPIC_SMALL_FAST_MODEL="MiniMax-M2.7" \
   API_TIMEOUT_MS=3000000 \
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
-  claude --model MiniMax-M2.7 --dangerously-skip-permissions "$@"
+  "$CLAUDE_BIN" --model MiniMax-M2.7 --dangerously-skip-permissions "$@"
