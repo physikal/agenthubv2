@@ -49,7 +49,9 @@ const STATE_COLOR: Record<CatalogState, string> = {
 };
 
 function formatRelative(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
+  // Clamp to 0 so server-ahead clock skew on self-hosted installs never
+  // surfaces as "-2 min ago" in the UI.
+  const ms = Math.max(0, Date.now() - new Date(iso).getTime());
   const m = Math.floor(ms / 60_000);
   if (m < 1) return "just now";
   if (m < 60) return `${String(m)} min ago`;
@@ -277,7 +279,7 @@ export function Packages() {
           <PackageCard
             key={entry.id}
             entry={entry}
-            onChanged={() => void fetchEntries()}
+            onChanged={fetchEntries}
           />
         ))}
       </div>
