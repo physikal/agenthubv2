@@ -4,14 +4,12 @@
 # (with nothing on stdout) if creds aren't configured, the server is
 # unreachable, or the response doesn't contain a token.
 #
-# Shared by:
+# Used by:
 #   - /opt/agenthub-agent/git-credential-agenthub  (git credential helper)
-#   - /usr/local/bin/gh                            (gh wrapper)
 #
-# Keeping one source means a change to the token endpoint, error
-# handling, or env-loading is a one-file edit. Callers MUST check the
-# exit code; treat non-zero as "no token available" and fall back to
-# whatever unauthenticated behavior makes sense in their context.
+# Callers MUST check the exit code; treat non-zero as "no token
+# available" and fall back to whatever unauthenticated behavior makes
+# sense in their context.
 #
 # Environment (read from inherited env, with ~/.agenthub-env as fallback
 # for shells that lost env inheritance across sudo -u coder etc):

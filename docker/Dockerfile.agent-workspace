@@ -65,14 +65,6 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Global agent tools. Layered AFTER apt to avoid re-pulling large npm blobs
-# every time a system package changes.
-RUN npm install -g \
-      @anthropic-ai/claude-code \
-      opencode-ai \
-      mmx-cli \
-    && npm cache clean --force
-
 # claude-minimax shim — runs Claude Code routed through MiniMax's
 # Anthropic-compatible endpoint. Reads MINIMAX_API_KEY (+ optional
 # MINIMAX_BASE_URL) at runtime; both are injected by SessionManager
@@ -143,16 +135,6 @@ RUN chmod 0755 /opt/agenthub-agent/agenthub-mint-github-token
 # tokens never touch the workspace filesystem.
 COPY docker/git-credential-agenthub.sh /opt/agenthub-agent/git-credential-agenthub
 RUN chmod 0755 /opt/agenthub-agent/git-credential-agenthub
-
-# `gh` wrapper that bridges the GitHub App install to the GitHub CLI —
-# same ephemeral-token approach as the git credential helper, but for
-# `gh`'s own auth discovery (GH_TOKEN) since `gh` doesn't read git
-# credential helpers. Installed to /usr/local/bin/gh so it shadows
-# /usr/bin/gh in PATH. Agents probing `gh auth status` now see
-# "authenticated" out of the box instead of "not logged in", stopping
-# the "I need you to run gh auth login" chorus.
-COPY docker/gh-agenthub-wrapper.sh /usr/local/bin/gh
-RUN chmod 0755 /usr/local/bin/gh
 
 EXPOSE 7681 9876
 
