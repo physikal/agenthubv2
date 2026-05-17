@@ -15,7 +15,6 @@ describe("VersionPoller.tick", () => {
   const originalFetch = globalThis.fetch;
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    db.delete(schema.packageVersionCache).run();
   });
 
   beforeEach(() => {
@@ -35,7 +34,8 @@ describe("VersionPoller.tick", () => {
     await poller.tick();
 
     const rows = db.select().from(schema.packageVersionCache).all();
-    // claude-code, opencode, minimax, codex are npm; droid is curl-sh.
+    // All catalog entries get a row — npm ones get latestVersion set,
+    // curl-sh/binary get an error row (no version source). droid is curl-sh.
     const ids = rows.map((r) => r.packageId).sort();
     expect(ids).toEqual(["claude-code", "codex", "droid", "minimax", "opencode"]);
     const claude = rows.find((r) => r.packageId === "claude-code");

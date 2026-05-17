@@ -168,9 +168,11 @@ export const backupRuns = sqliteTable("backup_runs", {
 });
 
 /**
- * Per-user record of add-on agent CLIs installed into the workspace's
- * persistent /home/coder/.local tree. Built-ins (Claude Code, OpenCode,
- * MiniMax) live in the image layer and are not tracked here.
+ * Per-user record of agent CLIs installed into the workspace's persistent
+ * /home/coder/.local tree. Includes both essentials (auto-installed by
+ * the daemon on session-active) and user-installed entries from the
+ * Packages page. Latest-version metadata for the catalog lives in
+ * `package_version_cache`.
  */
 export const userPackages = sqliteTable("user_packages", {
   id: text("id").primaryKey(),
