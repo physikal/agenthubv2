@@ -321,6 +321,24 @@ export const agentAuthAudit = sqliteTable("agent_auth_audit", {
   error: text("error"),
 });
 
+/**
+ * Latest-version cache populated by the server-side npm-registry poller.
+ * One row per catalog package id (text PK). Not user-scoped — version
+ * info is identical for every user on this AgentHub install.
+ *
+ * On every poll tick:
+ *   - success: latestVersion set, error cleared
+ *   - failure: latestVersion left at last-good value, error populated
+ */
+export const packageVersionCache = sqliteTable("package_version_cache", {
+  packageId: text("package_id").primaryKey(),
+  latestVersion: text("latest_version"),
+  checkedAt: integer("checked_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  error: text("error"),
+});
+
 export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
@@ -340,3 +358,5 @@ export type InstallBackupRun = typeof installBackupRuns.$inferSelect;
 export type NewInstallBackupRun = typeof installBackupRuns.$inferInsert;
 export type AgentAuthAudit = typeof agentAuthAudit.$inferSelect;
 export type NewAgentAuthAudit = typeof agentAuthAudit.$inferInsert;
+export type PackageVersionCache = typeof packageVersionCache.$inferSelect;
+export type NewPackageVersionCache = typeof packageVersionCache.$inferInsert;
