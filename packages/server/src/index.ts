@@ -26,6 +26,11 @@ import {
 } from "./routes/github-integration.js";
 import { installBackupRoutes } from "./routes/admin-install-backup.js";
 import { adminAgentAuthRoutes } from "./routes/admin-agent-auth.js";
+import { adminUpdatesRoutes } from "./routes/admin-updates.js";
+import { EnvOverrides } from "./services/images/env-overrides.js";
+import { dockerRunningDigest } from "./services/images/manager.js";
+import { ImagePoller } from "./services/images/poller.js";
+import { DockerHubClient } from "./services/images/registry-client.js";
 import { integrationsAgentsRoutes } from "./routes/integrations-agents.js";
 import { ALLOWED_ORIGINS, isOriginAllowed } from "./middleware/origin.js";
 import { setupTerminalProxy } from "./ws/terminal-proxy.js";
@@ -58,11 +63,8 @@ sessionManager.setEssentialsResultHandler((r) => {
   packageManager.recordEssentialResult(r.userId, r.packageId, r.ok, r.version, r.error);
 });
 
-// Periodically poll upstream registries for fresh CLI versions. Writes into
-// package_version_cache; the Packages page reads from there. Tick interval
-// is 30 minutes — npm doesn't publish often enough to warrant tighter.
 const versionPoller = new VersionPoller();
-versionPoller.start();
+
 
 // Reconnect active sessions on startup.
 void (async () => {
@@ -174,12 +176,28 @@ app.route("/api/integrations/agents", integrationsAgentsRoutes(sessionManager));
 app.route("/api/packages", packagesRoutes(packageManager));
 app.route("/api", deployRoutes());
 
+const envOverrides = new EnvOverrides({ envPath: "compose/.env" });
+
+// Periodically poll upstream registries for fresh CLI versions. Writes into
+// package_version_cache; the Packages page reads from there. Tick interval
+// is 30 minutes — npm doesn't publish often enough to warrant tighter.
+versionPoller.start();
+
+// Poll Docker Hub for fresh image versions. Writes into image_version_cache;
+// the Updates page reads from there.
+const imagePoller = new ImagePoller(envOverrides, new DockerHubClient());
+imagePoller.start();
+
 // --- Admin-only routes ---
 app.use("/api/admin/*", adminMiddleware);
 app.route("/api/admin", adminRoutes(sessionManager));
 app.route("/api/admin/github-app", githubAppManifestRoutes());
 app.route("/api/admin/install-backup", installBackupRoutes());
 app.route("/api/admin/agent-auth", adminAgentAuthRoutes());
+app.route("/api/admin/updates", adminUpdatesRoutes({
+  env: envOverrides,
+  runningDigest: dockerRunningDigest(),
+}));
 
 if (process.env["NODE_ENV"] === "production") {
   // Static assets for the React SPA + the Starlight docs site (the latter
@@ -209,6 +227,7 @@ server.listen(PORT, () => {
 const shutdown = (): void => {
   console.log("[server] shutting down");
   versionPoller.stop();
+  imagePoller.stop();
   server.close();
   process.exit(0);
 };
