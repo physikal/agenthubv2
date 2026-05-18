@@ -81,10 +81,13 @@ export class AuthHandler {
   private async hydrate(msg: Extract<AuthInbound, { type: "auth.hydrate" }>): Promise<void> {
     const { mkdir, writeFile } = await import("node:fs/promises");
     const { dirname } = await import("node:path");
+    let sawClaudeCode = false;
     for (const entry of msg.entries) {
       await mkdir(dirname(entry.path), { recursive: true, mode: 0o700 });
       await writeFile(entry.path, Buffer.from(entry.contentsBase64, "base64"), { mode: 0o600 });
+      if (entry.tool === "claude-code") sawClaudeCode = true;
     }
+    if (sawClaudeCode) await markClaudeOnboarded().catch(() => undefined);
   }
 
   private async hydrateProbe(msg: Extract<AuthInbound, { type: "auth.hydrateProbe" }>): Promise<void> {
@@ -124,6 +127,9 @@ export class AuthHandler {
       // a direct read here for reliability.
       if (code === 0 && msg.credentialPaths) {
         await this.captureCredentialFiles(msg.tool, msg.credentialPaths);
+        if (msg.tool === "claude-code") {
+          await markClaudeOnboarded().catch(() => undefined);
+        }
       }
       const done: AuthOutbound = code === 0
         ? { type: "auth.done", tool: msg.tool, ok: true }
@@ -152,6 +158,33 @@ export class AuthHandler {
       }
     }
   }
+}
+
+/**
+ * Set `hasCompletedOnboarding: true` in ~/.claude.json. Claude Code's
+ * interactive `claude` runs a setup wizard while this sentinel is unset, and
+ * the wizard's "Authenticate" step triggers a fresh OAuth flow even when valid
+ * creds exist — confusing users who already authed via Integrations. Setting
+ * this here makes new sessions skip the wizard and land at "Welcome back".
+ *
+ * Best-effort: errors are swallowed by callers via .catch(). Worst case the
+ * wizard re-runs in the user's session, which is the pre-fix behavior anyway.
+ */
+export async function markClaudeOnboarded(): Promise<void> {
+  const { mkdir, readFile, writeFile } = await import("node:fs/promises");
+  const home = process.env["HOME"] ?? "/home/coder";
+  const path = `${home}/.claude.json`;
+  let parsed: Record<string, unknown> = {};
+  try {
+    const buf = await readFile(path, "utf8");
+    parsed = JSON.parse(buf) as Record<string, unknown>;
+  } catch {
+    // file missing or unparseable — start from empty object
+  }
+  if (parsed["hasCompletedOnboarding"] === true) return;
+  parsed["hasCompletedOnboarding"] = true;
+  await mkdir(home, { recursive: true });
+  await writeFile(path, JSON.stringify(parsed, null, 2), { mode: 0o600 });
 }
 
 function formatExitError(code: number, command: string): string {
