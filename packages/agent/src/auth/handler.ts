@@ -14,6 +14,8 @@ export interface ProcessHandle {
 export interface AuthHandlerDeps {
   send: (msg: AuthOutbound) => void;
   spawn?: (command: string) => ProcessHandle;
+  /** Override the path used by the claude-code post-auth hook (tests inject a tempdir). */
+  claudeJsonPath?: string;
 }
 
 export class AuthHandler {
@@ -21,7 +23,7 @@ export class AuthHandler {
   private active = new Map<string, { kill: () => void; writeStdin?: (text: string) => void }>();
 
   constructor(deps: AuthHandlerDeps) {
-    this.deps = { spawn: realSpawn, ...deps };
+    this.deps = { spawn: realSpawn, claudeJsonPath: "/home/coder/.claude.json", ...deps };
   }
 
   async handle(msg: AuthInbound): Promise<void> {
@@ -87,7 +89,7 @@ export class AuthHandler {
       await writeFile(entry.path, Buffer.from(entry.contentsBase64, "base64"), { mode: 0o600 });
       if (entry.tool === "claude-code") sawClaudeCode = true;
     }
-    if (sawClaudeCode) await markClaudeOnboarded().catch(() => undefined);
+    if (sawClaudeCode) await markClaudeOnboarded(this.deps.claudeJsonPath).catch(() => undefined);
   }
 
   private async hydrateProbe(msg: Extract<AuthInbound, { type: "auth.hydrateProbe" }>): Promise<void> {
@@ -128,7 +130,7 @@ export class AuthHandler {
       if (code === 0 && msg.credentialPaths) {
         await this.captureCredentialFiles(msg.tool, msg.credentialPaths);
         if (msg.tool === "claude-code") {
-          await markClaudeOnboarded().catch(() => undefined);
+          await markClaudeOnboarded(this.deps.claudeJsonPath).catch(() => undefined);
         }
       }
       const done: AuthOutbound = code === 0
@@ -160,31 +162,46 @@ export class AuthHandler {
   }
 }
 
+const CODER_UID = 1000;
+const CODER_GID = 1000;
+const CODER_CLAUDE_JSON = "/home/coder/.claude.json";
+
 /**
- * Set `hasCompletedOnboarding: true` in ~/.claude.json. Claude Code's
- * interactive `claude` runs a setup wizard while this sentinel is unset, and
- * the wizard's "Authenticate" step triggers a fresh OAuth flow even when valid
- * creds exist — confusing users who already authed via Integrations. Setting
- * this here makes new sessions skip the wizard and land at "Welcome back".
+ * Set `hasCompletedOnboarding: true` in /home/coder/.claude.json. Claude
+ * Code's interactive `claude` runs a setup wizard while this sentinel is
+ * unset, and the wizard's "Authenticate" step triggers a fresh OAuth flow
+ * even when valid creds exist — confusing users who already authed via
+ * Integrations. Setting this here makes new sessions skip the wizard and
+ * land at "Welcome back".
  *
- * Best-effort: errors are swallowed by callers via .catch(). Worst case the
- * wizard re-runs in the user's session, which is the pre-fix behavior anyway.
+ * The agent daemon runs as root inside the workspace (HOME=/root), so
+ * `~/.claude.json` would resolve to the wrong place. We hard-code the
+ * coder user's home — and chown the result to coder:coder so the user
+ * shell (which runs as coder) can read it.
+ *
+ * Tests inject a tempdir path. Production callers omit the arg and get
+ * /home/coder/.claude.json.
+ *
+ * Best-effort: errors are swallowed by callers via .catch(). Worst case
+ * the wizard re-runs in the user's session, which is the pre-fix behavior.
  */
-export async function markClaudeOnboarded(): Promise<void> {
-  const { mkdir, readFile, writeFile } = await import("node:fs/promises");
-  const home = process.env["HOME"] ?? "/home/coder";
-  const path = `${home}/.claude.json`;
+export async function markClaudeOnboarded(claudeJsonPath: string = CODER_CLAUDE_JSON): Promise<void> {
+  const { mkdir, readFile, writeFile, chown } = await import("node:fs/promises");
+  const { dirname } = await import("node:path");
   let parsed: Record<string, unknown> = {};
   try {
-    const buf = await readFile(path, "utf8");
+    const buf = await readFile(claudeJsonPath, "utf8");
     parsed = JSON.parse(buf) as Record<string, unknown>;
   } catch {
     // file missing or unparseable — start from empty object
   }
   if (parsed["hasCompletedOnboarding"] === true) return;
   parsed["hasCompletedOnboarding"] = true;
-  await mkdir(home, { recursive: true });
-  await writeFile(path, JSON.stringify(parsed, null, 2), { mode: 0o600 });
+  await mkdir(dirname(claudeJsonPath), { recursive: true });
+  await writeFile(claudeJsonPath, JSON.stringify(parsed, null, 2), { mode: 0o600 });
+  // Best-effort chown — fails harmlessly as non-root in tests; production
+  // agent runs as root so this gives the user shell read+write access.
+  try { await chown(claudeJsonPath, CODER_UID, CODER_GID); } catch { /* non-root or unsupported FS */ }
 }
 
 function formatExitError(code: number, command: string): string {
