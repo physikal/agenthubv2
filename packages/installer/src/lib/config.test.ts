@@ -132,10 +132,22 @@ describe("missingRequiredForHeadless", () => {
     expect(missingRequiredForHeadless(cfg)).toEqual([]);
   });
 
-  it("demands TLS email when domain != localhost", () => {
+  it("demands TLS email when public mode + domain != localhost", () => {
     const cfg = emptyConfig();
+    cfg.accessMode = "public";
     cfg.domain = "agents.acme.io";
     expect(missingRequiredForHeadless(cfg)).toContain("AGENTHUB_TLS_EMAIL");
+  });
+
+  it("does NOT demand TLS email in lan mode with a non-localhost domain", () => {
+    // Lan mode serves plain HTTP and ignores TLS_EMAIL. Pre-fix this case
+    // erroneously failed the headless gate, blocking lan-mode installs on
+    // an IP/hostname.
+    const cfg = emptyConfig();
+    cfg.adminPassword = "x";
+    cfg.accessMode = "lan";
+    cfg.domain = "192.168.4.13";
+    expect(missingRequiredForHeadless(cfg)).not.toContain("AGENTHUB_TLS_EMAIL");
   });
 
   it("demands all four Dokploy-remote vars", () => {

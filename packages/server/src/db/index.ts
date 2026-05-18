@@ -203,6 +203,13 @@ export function initDb(): void {
     );
     CREATE INDEX IF NOT EXISTS idx_agent_auth_audit_user_created ON agent_auth_audit(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_agent_auth_audit_tool_created ON agent_auth_audit(tool_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS package_version_cache (
+      package_id TEXT PRIMARY KEY,
+      latest_version TEXT,
+      checked_at INTEGER NOT NULL,
+      error TEXT
+    );
   `);
 
   // Idempotent schema migrations for existing installs — SQLite has no

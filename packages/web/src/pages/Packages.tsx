@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api.ts";
 
 type CatalogState =
-  | "preinstalled"
   | "not-installed"
   | "installing"
   | "ready"
@@ -14,15 +13,18 @@ interface CatalogEntry {
   name: string;
   description: string;
   homepage?: string;
-  isBuiltin: boolean;
+  essential: boolean;
   state: CatalogState;
   version?: string | null;
   error?: string | null;
   updatedAt?: string | null;
+  latestVersion?: string | null;
+  updateAvailable?: boolean;
+  versionCheckedAt?: string | null;
+  versionCheckError?: string | null;
 }
 
 const STATE_DOT: Record<CatalogState, string> = {
-  preinstalled: "bg-zinc-500",
   "not-installed": "bg-zinc-700",
   installing: "bg-yellow-400",
   removing: "bg-yellow-400",
@@ -31,7 +33,6 @@ const STATE_DOT: Record<CatalogState, string> = {
 };
 
 const STATE_LABEL: Record<CatalogState, string> = {
-  preinstalled: "Pre-installed",
   "not-installed": "Not installed",
   installing: "Installing…",
   removing: "Removing…",
@@ -40,13 +41,24 @@ const STATE_LABEL: Record<CatalogState, string> = {
 };
 
 const STATE_COLOR: Record<CatalogState, string> = {
-  preinstalled: "text-zinc-400",
   "not-installed": "text-zinc-500",
   installing: "text-yellow-400",
   removing: "text-yellow-400",
   ready: "text-green-400",
   error: "text-red-400",
 };
+
+function formatRelative(iso: string): string {
+  // Clamp to 0 so server-ahead clock skew on self-hosted installs never
+  // surfaces as "-2 min ago" in the UI.
+  const ms = Math.max(0, Date.now() - new Date(iso).getTime());
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${String(m)} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${String(h)} h ago`;
+  return `${String(Math.floor(h / 24))} d ago`;
+}
 
 function PackageCard({
   entry,
@@ -61,8 +73,6 @@ function PackageCard({
 
   useEffect(() => setCurrent(entry), [entry]);
 
-  // Poll status while installing or removing. Stop as soon as the state
-  // settles or the user navigates away.
   useEffect(() => {
     if (current.state !== "installing" && current.state !== "removing") return;
     const interval = setInterval(async () => {
@@ -80,13 +90,13 @@ function PackageCard({
   }, [current.id, current.state, onChanged]);
 
   const pulse = current.state === "installing" || current.state === "removing";
-  const canInstall =
-    !current.isBuiltin &&
-    (current.state === "not-installed" || current.state === "error");
-  const canRemove =
-    !current.isBuiltin && (current.state === "ready" || current.state === "error");
+  const installed = current.state === "ready" || current.state === "error";
+  const updateAvailable = current.updateAvailable === true && installed;
+  const canInstall = current.state === "not-installed" || current.state === "error";
+  const canUpdate = updateAvailable && current.state !== "installing" && current.state !== "removing";
+  const canRemove = current.state === "ready" || current.state === "error";
 
-  const handleInstall = async () => {
+  const handleInstall = async (verb: "install" | "update") => {
     setBusy(true);
     setMessage(null);
     try {
@@ -95,10 +105,10 @@ function PackageCard({
         setCurrent((prev) => ({ ...prev, state: "installing", error: null }));
       } else {
         const body = (await res.json()) as { error?: string };
-        setMessage({ text: body.error ?? "Install failed", error: true });
+        setMessage({ text: body.error ?? `${verb} failed`, error: true });
       }
     } catch {
-      setMessage({ text: "Install failed", error: true });
+      setMessage({ text: `${verb} failed`, error: true });
     } finally {
       setBusy(false);
     }
@@ -127,13 +137,23 @@ function PackageCard({
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
       <div className="flex items-start justify-between mb-2">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
             <span
               className={`w-2 h-2 rounded-full ${STATE_DOT[current.state]} ${pulse ? "animate-pulse" : ""}`}
             />
             <h3 className="font-medium text-zinc-100">{current.name}</h3>
+            {current.essential && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                Essential
+              </span>
+            )}
             {current.version && (
               <code className="text-[10px] text-zinc-500">{current.version}</code>
+            )}
+            {updateAvailable && current.latestVersion && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/10 border border-yellow-500/30 text-yellow-200">
+                Update available — {current.version ?? "?"} → {current.latestVersion}
+              </span>
             )}
           </div>
           <p className="text-xs text-zinc-500">{current.description}</p>
@@ -157,10 +177,19 @@ function PackageCard({
         <p className="text-xs text-red-400 mt-1">{current.error}</p>
       )}
 
-      <div className="flex gap-2 mt-3">
-        {canInstall && (
+      <div className="flex gap-2 mt-3 flex-wrap items-center">
+        {canUpdate && (
           <button
-            onClick={() => void handleInstall()}
+            onClick={() => void handleInstall("update")}
+            disabled={busy}
+            className="px-3 py-1.5 text-xs font-medium bg-yellow-500 text-zinc-900 rounded-lg hover:bg-yellow-400 disabled:opacity-50 transition-colors"
+          >
+            Update
+          </button>
+        )}
+        {canInstall && !canUpdate && (
+          <button
+            onClick={() => void handleInstall("install")}
             disabled={busy}
             className="px-3 py-1.5 text-xs font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-500 disabled:opacity-50 transition-colors"
           >
@@ -176,9 +205,14 @@ function PackageCard({
             Remove
           </button>
         )}
-        {current.isBuiltin && (
-          <span className="text-[11px] text-zinc-600 self-center">
-            Built into every workspace image
+        {current.versionCheckedAt && (
+          <span
+            className="text-[10px] text-zinc-600 ml-auto"
+            title={current.versionCheckError ?? `Checked ${current.versionCheckedAt}`}
+          >
+            {current.versionCheckError
+              ? "Version check failed"
+              : `Last checked ${formatRelative(current.versionCheckedAt)}`}
           </span>
         )}
       </div>
@@ -230,8 +264,10 @@ export function Packages() {
       <p className="text-sm text-zinc-500 mb-6">
         Coding-agent CLIs available in your workspace. Installs land in
         <code className="mx-1 text-zinc-400">~/.local/bin</code>
-        and persist across sessions. Requires an active session — the agent
-        inside the workspace does the install.
+        and persist across sessions. Essentials (Claude Code, OpenCode,
+        Codex) auto-install on every new session; everything else is
+        opt-in. Update checks run every 30 minutes against the npm
+        registry.
       </p>
 
       {loadError && (
@@ -243,7 +279,7 @@ export function Packages() {
           <PackageCard
             key={entry.id}
             entry={entry}
-            onChanged={() => void fetchEntries()}
+            onChanged={fetchEntries}
           />
         ))}
       </div>

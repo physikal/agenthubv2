@@ -6,6 +6,8 @@ import { registerAgentDeployMcp } from "./mcp-writer.js";
 import { installGitCredentialsFromEnv } from "./github-credentials.js";
 import { AuthHandler } from "./auth/handler.js";
 import { CredentialWatcher } from "./auth/cred-watcher.js";
+import { ensureEssentials } from "./essentials.js";
+import type { PackagesInbound } from "./packages-protocol.js";
 
 const PORT = parseInt(process.env["AGENT_PORT"] ?? "9876", 10);
 const AUTH_TOKEN = process.env["AGENT_TOKEN"] ?? "";
@@ -55,6 +57,34 @@ const fileServer = startFileServer();
 
 const authHandler = new AuthHandler({ send: (m) => server.send(m) });
 server.setAuthRouter((m) => authHandler.handle(m));
+
+server.setPackagesRouter(async (msg: PackagesInbound) => {
+  if (msg.type !== "essentials.ensure") return;
+  const result = await ensureEssentials(msg.specs, {
+    log: (line) => {
+      console.log(line);
+      server.send({ type: "essentials.line", packageId: "*", line });
+    },
+    onResult: (r) => {
+      const out: {
+        type: "essentials.result";
+        packageId: string;
+        ok: boolean;
+        version?: string;
+        error?: string;
+      } = { type: "essentials.result", packageId: r.packageId, ok: r.ok };
+      if (r.version !== undefined) out.version = r.version;
+      if (r.error !== undefined) out.error = r.error;
+      server.send(out);
+    },
+  });
+  server.send({
+    type: "essentials.done",
+    installed: result.installed,
+    skipped: result.skipped,
+    failed: result.failed,
+  });
+});
 
 const watcher = new CredentialWatcher({
   send: (m) => server.send(m),
