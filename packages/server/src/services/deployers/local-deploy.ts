@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../../db/index.js";
 import type { InfrastructureConfig } from "../../db/schema.js";
@@ -83,10 +83,47 @@ function projectName(appName: string, deployId: string): string {
   return `agenthub-local-${appName}-${deployId.slice(0, 8)}`;
 }
 
+/**
+ * Pick the container port the user's app listens on, by introspecting
+ * their Dockerfile. Mirrors the SSH-based path in deployer.ts:611-628
+ * so local and remote-docker targets behave the same.
+ *
+ * Priority:
+ *   1. Explicit `EXPOSE <port>` directive — first numeric token wins.
+ *   2. FROM line — static-content base images (nginx, httpd, caddy,
+ *      apache) default their server to port 80.
+ *   3. Fall back to {@link DEFAULT_CONTAINER_PORT} (3000 — Node.js
+ *      convention; Express/Vite/Next dev servers all default here).
+ *
+ * Without this detection, every Dockerfile-only project was mapped to
+ * `host:port → container:3000` regardless of what the app actually
+ * listened on. Nginx-based static sites returned connection refused.
+ */
+export function detectContainerPort(dockerfilePath: string): number {
+  if (!existsSync(dockerfilePath)) return DEFAULT_CONTAINER_PORT;
+  let text: string;
+  try {
+    text = readFileSync(dockerfilePath, "utf8");
+  } catch {
+    return DEFAULT_CONTAINER_PORT;
+  }
+  const exposeMatch = /^\s*EXPOSE\s+([0-9]+)/im.exec(text);
+  if (exposeMatch?.[1]) {
+    const n = parseInt(exposeMatch[1], 10);
+    if (!Number.isNaN(n) && n > 0 && n < 65536) return n;
+  }
+  const fromMatch = /^\s*FROM\s+(\S+)/im.exec(text);
+  if (fromMatch?.[1] && /^(nginx|httpd|caddy|apache)/i.test(fromMatch[1])) {
+    return 80;
+  }
+  return DEFAULT_CONTAINER_PORT;
+}
+
 /** Write a Dockerfile-free compose that builds `./` and publishes one port. */
 function buildCompose(
   appName: string,
   hostPort: number,
+  containerPort: number,
   envVars: Record<string, string> | undefined,
 ): string {
   const lines: string[] = [
@@ -95,9 +132,9 @@ function buildCompose(
     "    build: .",
     "    restart: unless-stopped",
     "    ports:",
-    `      - "${String(hostPort)}:${String(DEFAULT_CONTAINER_PORT)}"`,
+    `      - "${String(hostPort)}:${String(containerPort)}"`,
   ];
-  const env = { PORT: String(DEFAULT_CONTAINER_PORT), ...(envVars ?? {}) };
+  const env = { PORT: String(containerPort), ...(envVars ?? {}) };
   lines.push("    environment:");
   for (const [k, v] of Object.entries(env)) {
     // Keep values single-line + escape double quotes.
@@ -209,9 +246,10 @@ export async function localDockerDeploy(
         // the user also supplies a docker-compose.yml we overwrite it —
         // PR #2 scope is Dockerfile-only local deploys; compose_config
         // mode takes the other branch below.
+        const containerPort = detectContainerPort(`${tmpDir}/Dockerfile`);
         writeFileSync(
           `${tmpDir}/docker-compose.yml`,
-          buildCompose(input.name, hostPort, input.envVars),
+          buildCompose(input.name, hostPort, containerPort, input.envVars),
         );
       } else if (input.composeConfig) {
         writeFileSync(`${tmpDir}/docker-compose.yml`, input.composeConfig);
