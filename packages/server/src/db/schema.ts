@@ -341,6 +341,28 @@ export const packageVersionCache = sqliteTable("package_version_cache", {
   error: text("error"),
 });
 
+/**
+ * Latest-version cache populated by the image-registry poller. One row per
+ * logical image (`traefik` | `postgres` | `redis` | `infisical`). Not user-
+ * scoped — pin state is install-wide.
+ *
+ * On every poll tick:
+ *   - success: newest* columns set (or upstreamDigest for digest mode),
+ *     lastError cleared
+ *   - failure: newest* / digest left at last-good, lastError populated
+ */
+export const imageVersionCache = sqliteTable("image_version_cache", {
+  image: text("image").primaryKey(),
+  pinnedTag: text("pinned_tag").notNull(),
+  newestWithinMajor: text("newest_within_major"),
+  newestAcrossMajor: text("newest_across_major"),
+  upstreamDigest: text("upstream_digest"),
+  lastCheckedAt: integer("last_checked_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  lastError: text("last_error"),
+});
+
 export type User = typeof users.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type NewSession = typeof sessions.$inferInsert;
@@ -362,3 +384,5 @@ export type AgentAuthAudit = typeof agentAuthAudit.$inferSelect;
 export type NewAgentAuthAudit = typeof agentAuthAudit.$inferInsert;
 export type PackageVersionCache = typeof packageVersionCache.$inferSelect;
 export type NewPackageVersionCache = typeof packageVersionCache.$inferInsert;
+export type ImageVersionCache = typeof imageVersionCache.$inferSelect;
+export type NewImageVersionCache = typeof imageVersionCache.$inferInsert;
