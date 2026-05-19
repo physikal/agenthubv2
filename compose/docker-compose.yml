@@ -192,6 +192,15 @@ services:
       # server passes this through to the updater container so its EXIT
       # trap restores ownership consistently across web-UI and CLI paths.
       AGENTHUB_OWNER: ${AGENTHUB_OWNER:-}
+
+      # Absolute paths to the compose file + env file inside the container
+      # (the host repo is bind-mounted at /repo). The Updates page poller
+      # reads .env to surface operator pins, and applyImageUpdate shells
+      # `docker compose -f $COMPOSE_FILE ...` to pull/recreate one service.
+      # Without these, both default to the relative path `compose/...`
+      # which doesn't exist from the server's cwd of `/app`.
+      COMPOSE_FILE: /repo/compose/docker-compose.yml
+      COMPOSE_ENV_FILE: /repo/compose/.env
     volumes:
       - agenthub-data:/data
       # Required for PROVISIONER_MODE=docker. If you're running dokploy-remote,

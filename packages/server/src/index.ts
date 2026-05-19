@@ -176,7 +176,9 @@ app.route("/api/integrations/agents", integrationsAgentsRoutes(sessionManager));
 app.route("/api/packages", packagesRoutes(packageManager));
 app.route("/api", deployRoutes());
 
-const envOverrides = new EnvOverrides({ envPath: "compose/.env" });
+const envOverrides = new EnvOverrides({
+  envPath: process.env["COMPOSE_ENV_FILE"] ?? "compose/.env",
+});
 
 // Periodically poll upstream registries for fresh CLI versions. Writes into
 // package_version_cache; the Packages page reads from there. Tick interval
