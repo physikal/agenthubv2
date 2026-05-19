@@ -9,13 +9,10 @@ description: What Infisical is, why it's in the box, and how AgentHub uses it.
 
 Every external-service credential that AgentHub accepts from you or from an agent lands in Infisical at the path `/users/{userId}/...`:
 
-- `cloudflare` — Cloudflare API token
-- `digitalocean` — DigitalOcean API token
-- `docker` — remote Docker host ssh private key
-- `dokploy` — Dokploy API token
-- `b2` — Backblaze B2 keyId + appKey
+- `infra/{infraId}/cloudflare` — Cloudflare API token (and other structured provider integrations: DigitalOcean, Docker, Dokploy, Backblaze B2, AI providers). Written by the [Integrations page](/docs/web-ui/integrations/), read server-side for deploy / backup / DNS automation.
+- `workspace-env/{NAME}` — per-user env vars AgentHub injects into the workspace shell at session start. Written by the [Secrets page → Workspace secrets](/docs/web-ui/secrets/#workspace-secrets) card, read by SessionManager when provisioning a workspace.
 
-These are written by the [Integrations page](/docs/web-ui/integrations/) when you save a row. They are read by the server when an operation needs them (a deploy, a backup, a DNS change). **They never touch SQLite.**
+Both categories live in the same Infisical project but are reached by different surfaces in the UI. **Neither touches SQLite.**
 
 ## What *doesn't* live in Infisical
 
