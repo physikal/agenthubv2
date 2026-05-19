@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.js";
 import type { SessionManager } from "../services/session-manager.js";
 import type { AuthUser } from "../middleware/auth.js";
+import { releaseUpdateLock, tryAcquireUpdateLock } from "../services/update-lock.js";
 
 // Repo is mounted at /repo by compose. See docker-compose.yml volumes +
 // installer's renderEnv (which writes AGENTHUB_REPO_DIR).
@@ -272,6 +273,10 @@ export function adminRoutes(sessionManager: SessionManager) {
       );
     }
 
+    if (!tryAcquireUpdateLock("agenthub")) {
+      return c.json({ error: "another update is in progress" }, 409);
+    }
+
     const jobId = randomUUID();
     const containerName = `agenthub-updater-${jobId.slice(0, 8)}`;
 
@@ -283,7 +288,12 @@ export function adminRoutes(sessionManager: SessionManager) {
     const owner = process.env["AGENTHUB_OWNER"] ?? "";
 
     try {
-      spawn(
+      // The updater's final step force-recreates this very container, so the
+      // exit handler typically never fires (the process is killed first). The
+      // handlers below cover the early-failure path (docker spawn errored or
+      // updater container failed before recreate). When the process dies,
+      // the in-memory lock dies with it — implicit release.
+      const child = spawn(
         "docker",
         [
           "run",
@@ -298,8 +308,12 @@ export function adminRoutes(sessionManager: SessionManager) {
           "update",
         ],
         { stdio: "ignore", detached: true },
-      ).unref();
+      );
+      child.on("exit", () => releaseUpdateLock());
+      child.on("error", () => releaseUpdateLock());
+      child.unref();
     } catch (err) {
+      releaseUpdateLock();
       const msg = err instanceof Error ? err.message : "docker spawn failed";
       return c.json({ error: msg }, 500);
     }
