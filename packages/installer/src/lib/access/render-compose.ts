@@ -13,9 +13,12 @@ export interface RenderInput {
 /**
  * Render Traefik's static config (compose/traefik.yml).
  *
- * - lan: just the `web` entrypoint on :80. No cert resolver. No websecure.
- * - public + public-alpn: web + websecure (with TLS), LE resolver via tlsChallenge.
- * - public + dns-01: web + websecure, LE resolver via dnsChallenge (provider).
+ * - lan: `web` entrypoint on :80 (plain HTTP) and `infisical` on :8443 (also
+ *   plain HTTP — admin-only console, same security posture as the rest of
+ *   lan mode). No cert resolver. No websecure.
+ * - public + public-alpn: web + websecure (with TLS) + infisical (TLS, default
+ *   self-signed cert), LE resolver via tlsChallenge.
+ * - public + dns-01: same as public-alpn but LE resolver via dnsChallenge.
  *
  * The file is mounted read-only into the traefik container at /etc/traefik/traefik.yml.
  * See compose/docker-compose.yml for the volume + command flags.
@@ -23,7 +26,13 @@ export interface RenderInput {
 export function renderTraefikStaticConfig(input: RenderInput): string {
   if (input.accessMode === "lan") {
     return dumpYaml({
-      entryPoints: { web: { address: ":80" } },
+      entryPoints: {
+        web: { address: ":80" },
+        // :8443 is bound on the host in the base compose (traefik service).
+        // Without this entrypoint declaration the Infisical router has
+        // nowhere to land and the admin console is unreachable in lan mode.
+        infisical: { address: ":8443" },
+      },
       providers: {
         docker: { exposedByDefault: false, network: "agenthub" },
       },
@@ -72,6 +81,12 @@ export function renderTraefikStaticConfig(input: RenderInput): string {
         },
       },
       websecure: { address: ":443" },
+      // Admin console for Infisical. Uses Traefik's default self-signed
+      // cert (we never wired a separate LE resolver for :8443 because
+      // it's admin-only). Without this entrypoint declaration the
+      // infisical@docker router fails to bind — even though :8443 is
+      // exposed on the host.
+      infisical: { address: ":8443" },
     },
     certificatesResolvers: { le: resolver },
     providers: {

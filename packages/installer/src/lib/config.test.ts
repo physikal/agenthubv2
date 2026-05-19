@@ -84,6 +84,36 @@ describe("renderEnv", () => {
     expect(env).toContain("AGENTHUB_OWNER=");
   });
 
+  it("lan mode: emits plain-HTTP infisical URL + tls=false", () => {
+    const cfg = emptyConfig();
+    cfg.domain = "192.168.1.42";
+    cfg.accessMode = "lan";
+    const env = renderEnv(cfg);
+    expect(env).toContain("AGENTHUB_INFISICAL_TLS=false");
+    expect(env).toContain("AGENTHUB_INFISICAL_URL=http://192.168.1.42:8443");
+  });
+
+  it("public mode: emits https infisical URL + tls=true", () => {
+    const cfg = emptyConfig();
+    cfg.domain = "agents.acme.io";
+    cfg.accessMode = "public";
+    cfg.tlsEmail = "ops@acme.io";
+    const env = renderEnv(cfg);
+    expect(env).toContain("AGENTHUB_INFISICAL_TLS=true");
+    expect(env).toContain("AGENTHUB_INFISICAL_URL=https://agents.acme.io:8443");
+  });
+
+  it("lan mode with DOMAIN=localhost + publicHost: uses publicHost for Infisical URL (CORS)", () => {
+    const cfg = emptyConfig();
+    cfg.domain = "localhost";
+    cfg.publicHost = "192.168.1.42";
+    cfg.accessMode = "lan";
+    const env = renderEnv(cfg);
+    // publicHost wins so the browser can actually open the page without
+    // hitting Infisical's CORS Allow-Origin guard.
+    expect(env).toContain("AGENTHUB_INFISICAL_URL=http://192.168.1.42:8443");
+  });
+
   it("carries an explicit ownerUidGid through to the env file", () => {
     const cfg = emptyConfig();
     cfg.ownerUidGid = "1000:1000";

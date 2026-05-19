@@ -21,6 +21,28 @@ export interface MigrateResult {
   warnings: string[];
 }
 
+/**
+ * Ensure AGENTHUB_INFISICAL_TLS and AGENTHUB_INFISICAL_URL are present in
+ * .env based on the current access mode. Idempotent — overwrites with the
+ * correct value, so a switch from lan→public (or vice versa) gets the right
+ * Infisical wiring. Pre-Phase-X installs (before these vars existed) get
+ * them backfilled here on the first `agenthub update` past this change.
+ *
+ * Host preference: AGENTHUB_PUBLIC_HOST (if set) > DOMAIN. Lan-mode installs
+ * frequently have DOMAIN=localhost but users access via LAN IP — that LAN
+ * IP must drive SITE_URL or Infisical's CORS will reject browser logins.
+ */
+function ensureInfisicalEnv(env: Map<string, string>): void {
+  const accessMode = env.get("AGENTHUB_ACCESS_MODE") ?? "lan";
+  const host =
+    (env.get("AGENTHUB_PUBLIC_HOST") || "").trim() ||
+    env.get("DOMAIN") ||
+    "localhost";
+  const scheme = accessMode === "public" ? "https" : "http";
+  env.set("AGENTHUB_INFISICAL_TLS", accessMode === "public" ? "true" : "false");
+  env.set("AGENTHUB_INFISICAL_URL", `${scheme}://${host}:8443`);
+}
+
 const HSTS_WARNING =
   "Browsers that visited the previous self-CA HTTPS install may be HSTS-pinned and refuse plain HTTP. " +
   "Operators must clear chrome://net-internals/#hsts (Chrome) or use 'Forget About This Site' (Firefox) " +
@@ -93,8 +115,39 @@ export function migrateAccessConfig(composeDir: string): MigrateResult {
   const env = parseDotEnv(readFileSync(envPath, "utf8"));
   const warnings: string[] = [];
 
-  // Already-migrated short-circuit
+  // Already-migrated short-circuit. Still reconcile the Infisical env vars
+  // on every run: their values depend on PUBLIC_HOST + DOMAIN + access mode,
+  // any of which the operator may have edited since last apply. Also regen
+  // traefik.yml if needed — installs migrated before the infisical-entrypoint
+  // declaration was added need it written on disk to be reachable.
   if (env.has("AGENTHUB_ACCESS_MODE")) {
+    const beforeTls = env.get("AGENTHUB_INFISICAL_TLS");
+    const beforeUrl = env.get("AGENTHUB_INFISICAL_URL");
+    ensureInfisicalEnv(env);
+    const envChanged =
+      env.get("AGENTHUB_INFISICAL_TLS") !== beforeTls ||
+      env.get("AGENTHUB_INFISICAL_URL") !== beforeUrl;
+    const traefikPath = join(composeDir, "traefik.yml");
+    const traefikHasInfisical =
+      existsSync(traefikPath) &&
+      readFileSync(traefikPath, "utf8").includes("infisical:");
+    if (envChanged) {
+      writeFileSync(envPath, renderDotEnv(env));
+    }
+    if (!traefikHasInfisical) {
+      const mode = env.get("AGENTHUB_ACCESS_MODE");
+      if (mode === "lan") {
+        applyLanTraefikFiles(composeDir, env.get("DOMAIN") ?? "localhost");
+      } else if (mode === "public") {
+        applyPublicTraefikFiles(
+          composeDir,
+          env.get("DOMAIN") ?? "localhost",
+          (env.get("AGENTHUB_TLS_MODE") ?? "public-alpn") as PublicTlsMode,
+          env.get("AGENTHUB_TLS_EMAIL") ?? env.get("TLS_EMAIL") ?? "",
+          env.get("AGENTHUB_TLS_DNS_PROVIDER") ?? undefined,
+        );
+      }
+    }
     return { action: "noop-already-migrated", warnings: [] };
   }
 
@@ -115,6 +168,7 @@ export function migrateAccessConfig(composeDir: string): MigrateResult {
     env.delete("AGENTHUB_TLS_MODE");
     env.delete("AGENTHUB_LAN_IP");
     env.delete("COMPOSE_FILE");
+    ensureInfisicalEnv(env);
     writeFileSync(envPath, renderDotEnv(env));
     applyLanTraefikFiles(composeDir, domain);
     return { action: "migrated-localhost-to-lan", warnings };
@@ -127,6 +181,7 @@ export function migrateAccessConfig(composeDir: string): MigrateResult {
     env.delete("AGENTHUB_TLS_MODE");
     env.delete("AGENTHUB_LAN_IP");
     env.delete("COMPOSE_FILE");
+    ensureInfisicalEnv(env);
     writeFileSync(envPath, renderDotEnv(env));
     // Delete the self-CA override file; the base compose is now sufficient.
     const overridePath = join(composeDir, "traefik.override.yml");
@@ -142,6 +197,7 @@ export function migrateAccessConfig(composeDir: string): MigrateResult {
     env.set("AGENTHUB_ACCESS_MODE", "public");
     env.set("AGENTHUB_PUBLIC_URL", `https://${domain}`);
     // Keep AGENTHUB_TLS_MODE as the sub-mode.
+    ensureInfisicalEnv(env);
     writeFileSync(envPath, renderDotEnv(env));
     applyPublicTraefikFiles(
       composeDir,
@@ -159,6 +215,7 @@ export function migrateAccessConfig(composeDir: string): MigrateResult {
     env.set("AGENTHUB_ACCESS_MODE", "public");
     env.set("AGENTHUB_PUBLIC_URL", `https://${domain}`);
     env.set("AGENTHUB_TLS_MODE", subMode);
+    ensureInfisicalEnv(env);
     writeFileSync(envPath, renderDotEnv(env));
     applyPublicTraefikFiles(
       composeDir,

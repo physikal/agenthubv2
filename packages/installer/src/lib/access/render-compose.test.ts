@@ -6,7 +6,7 @@ import {
 } from "./render-compose.js";
 
 describe("renderTraefikStaticConfig", () => {
-  it("lan: emits web entrypoint only, no cert resolver, no websecure", () => {
+  it("lan: emits web + infisical entrypoints, no cert resolver, no websecure", () => {
     const yaml = renderTraefikStaticConfig({
       accessMode: "lan",
       domain: "192.168.1.5",
@@ -16,12 +16,16 @@ describe("renderTraefikStaticConfig", () => {
     expect(yaml).toContain("entryPoints:");
     expect(yaml).toContain("web:");
     expect(yaml).toContain(":80");
+    // infisical entrypoint on :8443 (plain HTTP in lan mode). Without
+    // this the Infisical admin console is unreachable.
+    expect(yaml).toContain("infisical:");
+    expect(yaml).toContain(":8443");
     expect(yaml).not.toContain("websecure");
     expect(yaml).not.toContain("certificatesResolvers");
     expect(yaml).not.toContain(":443");
   });
 
-  it("public + public-alpn: emits both entrypoints, tlsChallenge resolver", () => {
+  it("public + public-alpn: emits web + websecure + infisical entrypoints, tlsChallenge resolver", () => {
     const yaml = renderTraefikStaticConfig({
       accessMode: "public",
       domain: "agenthub.example.com",
@@ -30,8 +34,10 @@ describe("renderTraefikStaticConfig", () => {
     });
     expect(yaml).toContain("web:");
     expect(yaml).toContain("websecure:");
+    expect(yaml).toContain("infisical:");
     expect(yaml).toContain(":80");
     expect(yaml).toContain(":443");
+    expect(yaml).toContain(":8443");
     expect(yaml).toContain("certificatesResolvers:");
     expect(yaml).toContain("tlsChallenge: {}");
     expect(yaml).toContain("email: ops@example.com");

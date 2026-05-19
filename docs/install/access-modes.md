@@ -74,6 +74,17 @@ AGENTHUB_CLOUDFLARE_API_TOKEN=<token> \
 agenthub reconfigure-access --non-interactive
 ```
 
+## Infisical admin console (`:8443`)
+
+The Infisical secret-store UI is exposed on `:8443` in both modes:
+
+| Mode | URL | TLS |
+|---|---|---|
+| `lan` | `http://<host>:8443/` | none (matches the rest of lan mode) |
+| `public` | `https://<host>:8443/` | Traefik's default self-signed cert (admin-only, not Let's Encrypt) |
+
+Login credentials are accessible from the AgentHub UI under **Secrets → Reveal Infisical admin login** (admin-only, gated by AgentHub password re-entry) — Infisical itself disables self-registration and has no SMTP password reset wired up, so this is the canonical recovery path.
+
 ## Customizing exposed ports
 
 By default Traefik binds host ports `80` (always), `443` (public mode only), and `8443` (Infisical console). Override via `compose/.env` if you need to co-locate AgentHub with another web service on the same box:

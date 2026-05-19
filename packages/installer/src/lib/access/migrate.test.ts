@@ -104,7 +104,7 @@ describe("migrateAccessConfig", () => {
     rmSync(dir, { recursive: true });
   });
 
-  it("already migrated: noop", () => {
+  it("already migrated without Infisical vars: backfills + regens traefik.yml", () => {
     const dir = setupFixture(
       [
         "DOMAIN=agenthub.example.com",
@@ -114,6 +114,61 @@ describe("migrateAccessConfig", () => {
     );
     const r = migrateAccessConfig(dir);
     expect(r.action).toBe("noop-already-migrated");
+    const env = readFileSync(join(dir, ".env"), "utf8");
+    // Backfill: vars didn't exist; should be added now per access mode.
+    expect(env).toContain("AGENTHUB_INFISICAL_TLS=false");
+    expect(env).toContain("AGENTHUB_INFISICAL_URL=http://agenthub.example.com:8443");
+    // traefik.yml regenerated with the new infisical entrypoint.
+    const traefikYml = readFileSync(join(dir, "traefik.yml"), "utf8");
+    expect(traefikYml).toContain("infisical:");
+    expect(traefikYml).toContain(":8443");
+    rmSync(dir, { recursive: true });
+  });
+
+  it("already migrated with Infisical vars + traefik.yml current: no rewrite", () => {
+    const seededTraefik = [
+      "entryPoints:",
+      "  web:",
+      "    address: ':80'",
+      "  infisical:",
+      "    address: ':8443'",
+    ].join("\n");
+    const dir = setupFixture(
+      [
+        "DOMAIN=agenthub.example.com",
+        "AGENTHUB_ACCESS_MODE=lan",
+        "AGENTHUB_PUBLIC_URL=http://agenthub.example.com",
+        "AGENTHUB_INFISICAL_TLS=false",
+        "AGENTHUB_INFISICAL_URL=http://agenthub.example.com:8443",
+      ].join("\n"),
+      undefined,
+      seededTraefik,
+    );
+    const r = migrateAccessConfig(dir);
+    expect(r.action).toBe("noop-already-migrated");
+    // traefik.yml was kept verbatim (already had infisical entrypoint).
+    expect(readFileSync(join(dir, "traefik.yml"), "utf8")).toBe(seededTraefik);
+    rmSync(dir, { recursive: true });
+  });
+
+  it("already migrated: PUBLIC_HOST change rewrites Infisical URL", () => {
+    const dir = setupFixture(
+      [
+        "DOMAIN=localhost",
+        "AGENTHUB_PUBLIC_HOST=192.168.1.42",
+        "AGENTHUB_ACCESS_MODE=lan",
+        "AGENTHUB_PUBLIC_URL=http://localhost",
+        "AGENTHUB_INFISICAL_TLS=false",
+        // Stale URL from before PUBLIC_HOST was set — should be rewritten.
+        "AGENTHUB_INFISICAL_URL=http://localhost:8443",
+      ].join("\n"),
+      undefined,
+      "entryPoints:\n  web:\n    address: ':80'\n  infisical:\n    address: ':8443'",
+    );
+    const r = migrateAccessConfig(dir);
+    expect(r.action).toBe("noop-already-migrated");
+    const env = readFileSync(join(dir, ".env"), "utf8");
+    expect(env).toContain("AGENTHUB_INFISICAL_URL=http://192.168.1.42:8443");
     rmSync(dir, { recursive: true });
   });
 

@@ -90,13 +90,13 @@ services:
       AUTH_SECRET: ${INFISICAL_AUTH_SECRET}
       DB_CONNECTION_URI: postgres://infisical:${INFISICAL_DB_PASSWORD}@infisical-postgres:5432/infisical
       REDIS_URL: redis://default:${INFISICAL_REDIS_PASSWORD}@infisical-redis:6379
-      # Infisical uses SITE_URL for absolute URLs in password-reset emails
-      # and OAuth callbacks. Must be non-empty (Infisical's zod schema
-      # rejects ""). For our admin-only usage these URLs are never clicked
-      # by anyone, so a hardcoded placeholder is fine — users still reach
-      # the console at https://<host>:8443/ via any host header Traefik
-      # sees. Override via compose/.env if you care about reset emails.
-      SITE_URL: https://localhost:8443
+      # SITE_URL is interpolated into Infisical's session-cookie domain and
+      # outbound links (password-reset emails, OAuth callbacks). The installer
+      # sets AGENTHUB_INFISICAL_URL per access mode in compose/.env
+      # (lan → http://<domain>:8443, public → https://<domain>:8443).
+      # Fallback to https://localhost:8443 only matters for installs that
+      # pre-date the access-mode wiring; new installs always emit the var.
+      SITE_URL: ${AGENTHUB_INFISICAL_URL:-https://localhost:8443}
       TELEMETRY_ENABLED: "false"
     networks:
       - agenthub
@@ -106,12 +106,14 @@ services:
       - "127.0.0.1:8080:8080"
     labels:
       - traefik.enable=true
-      # Dedicated :8443 entrypoint — no host-rule dance. TLS uses Traefik's
-      # default self-signed cert (localhost installs can't get Let's Encrypt
-      # anyway). Users reach the console at https://<host>:8443/.
+      # Dedicated :8443 entrypoint — no host-rule dance. TLS is mode-toggled
+      # via AGENTHUB_INFISICAL_TLS (lan=false → plain HTTP, public=true →
+      # Traefik's default self-signed cert — :8443 is admin-only so we never
+      # wired a separate LE resolver for it). Users reach the console at
+      # the URL printed by `agenthub status` (or AGENTHUB_INFISICAL_URL).
       - traefik.http.routers.infisical.rule=PathPrefix(`/`)
       - traefik.http.routers.infisical.entrypoints=infisical
-      - traefik.http.routers.infisical.tls=true
+      - traefik.http.routers.infisical.tls=${AGENTHUB_INFISICAL_TLS:-false}
       - traefik.http.services.infisical.loadbalancer.server.port=8080
 
   agenthub-server:

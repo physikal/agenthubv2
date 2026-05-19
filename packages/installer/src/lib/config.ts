@@ -122,6 +122,16 @@ export function renderEnv(cfg: InstallConfig): string {
     `AGENTHUB_ACCESS_MODE=${cfg.accessMode}`,
     `AGENTHUB_PUBLIC_URL=${cfg.accessMode === "public" ? "https" : "http"}://${cfg.domain}`,
     `AGENTHUB_TRAEFIK_ENTRYPOINT=${cfg.accessMode === "public" ? "websecure" : "web"}`,
+    // Per-mode wiring for the Infisical admin console at :8443. lan = plain
+    // HTTP (no cert at all); public = TLS with Traefik's default self-signed
+    // cert (we never wired a separate LE resolver for :8443 because it's
+    // admin-only). AGENTHUB_INFISICAL_URL is interpolated into the Infisical
+    // container's SITE_URL env, which drives the CORS Access-Control-Allow-
+    // Origin header. Must match the host the user actually reaches the page
+    // from — publicHost takes precedence over domain because on lan-mode
+    // installs domain is often "localhost" but users access via LAN IP.
+    `AGENTHUB_INFISICAL_TLS=${cfg.accessMode === "public" ? "true" : "false"}`,
+    `AGENTHUB_INFISICAL_URL=${cfg.accessMode === "public" ? "https" : "http"}://${cfg.publicHost || cfg.domain}:8443`,
     `TLS_EMAIL=${cfg.tlsEmail}`,
     `AGENTHUB_HOST_RULE=${hostRule}`,
     `AGENTHUB_PUBLIC_HOST=${cfg.publicHost}`,
