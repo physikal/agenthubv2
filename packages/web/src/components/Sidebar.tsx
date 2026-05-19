@@ -25,6 +25,7 @@ const links: readonly NavItem[] = [
 const adminLinks: readonly NavItem[] = [
   { to: "/admin/users", label: "Users", icon: "●" },
   { to: "/admin/install-backup", label: "Install Backup", icon: "●" },
+  { to: "/admin/updates", label: "Updates", icon: "●" },
   { to: "/admin/agent-auth", label: "Agent CLI Audit", icon: "●" },
 ];
 

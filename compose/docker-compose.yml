@@ -18,7 +18,7 @@ name: agenthub
 
 services:
   traefik:
-    image: traefik:v3.6
+    image: ${TRAEFIK_IMAGE:-traefik:v3.6}
     restart: unless-stopped
     # All Traefik static config (entrypoints, providers, cert resolvers,
     # middlewares) lives in compose/traefik.yml — generated per-install
@@ -47,7 +47,7 @@ services:
       - agenthub
 
   infisical-postgres:
-    image: postgres:16-alpine
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
     restart: unless-stopped
     environment:
       POSTGRES_USER: infisical
@@ -64,7 +64,7 @@ services:
       retries: 10
 
   infisical-redis:
-    image: redis:7-alpine
+    image: ${REDIS_IMAGE:-redis:7-alpine}
     restart: unless-stopped
     command: ["redis-server", "--requirepass", "${INFISICAL_REDIS_PASSWORD}"]
     volumes:
@@ -78,7 +78,7 @@ services:
       retries: 10
 
   infisical:
-    image: infisical/infisical:latest-postgres
+    image: ${INFISICAL_IMAGE:-infisical/infisical:latest-postgres}
     restart: unless-stopped
     depends_on:
       infisical-postgres:
@@ -192,6 +192,19 @@ services:
       # server passes this through to the updater container so its EXIT
       # trap restores ownership consistently across web-UI and CLI paths.
       AGENTHUB_OWNER: ${AGENTHUB_OWNER:-}
+
+      # Both COMPOSE_FILE and COMPOSE_ENV_FILE point at the HOST path of the
+      # repo (mounted at the same path inside this container — see the
+      # second ${AGENTHUB_REPO_DIR} bind below). Why not /repo? Because
+      # `docker compose up` shelled out from the server traverses the host
+      # docker.sock and the daemon resolves bind-mount sources on the host
+      # filesystem. If we pass `-f /repo/compose/docker-compose.yml`, the
+      # daemon tries to mount `/repo/compose/traefik.yml` from the host —
+      # which doesn't exist, so docker bind-creates it as an empty dir and
+      # traefik crashes with "is a directory". Using the host path on both
+      # sides makes the path resolve identically in both views.
+      COMPOSE_FILE: ${AGENTHUB_REPO_DIR}/compose/docker-compose.yml
+      COMPOSE_ENV_FILE: ${AGENTHUB_REPO_DIR}/compose/.env
     volumes:
       - agenthub-data:/data
       # Required for PROVISIONER_MODE=docker. If you're running dokploy-remote,
@@ -203,6 +216,12 @@ services:
       # (POST /api/admin/update spawns a one-shot agenthubv2-updater
       # container that git-pulls + rebuilds against this path).
       - ${AGENTHUB_REPO_DIR}:/repo:rw
+      # Second mount of the same source at the host path. Required by the
+      # Updates page apply flow: `docker compose -f $COMPOSE_FILE ...`
+      # passes COMPOSE_FILE (a host path) through to the host daemon, but
+      # the compose CLI inside this container also needs to read that
+      # same path. Mounting at the host path makes both views agree.
+      - ${AGENTHUB_REPO_DIR}:${AGENTHUB_REPO_DIR}:rw
     networks:
       - agenthub
     labels:

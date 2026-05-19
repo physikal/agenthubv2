@@ -210,6 +210,16 @@ export function initDb(): void {
       checked_at INTEGER NOT NULL,
       error TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS image_version_cache (
+      image TEXT PRIMARY KEY,
+      pinned_tag TEXT NOT NULL,
+      newest_within_major TEXT,
+      newest_across_major TEXT,
+      upstream_digest TEXT,
+      last_checked_at INTEGER NOT NULL,
+      last_error TEXT
+    );
   `);
 
   // Idempotent schema migrations for existing installs — SQLite has no
