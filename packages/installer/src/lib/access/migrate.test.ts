@@ -104,7 +104,7 @@ describe("migrateAccessConfig", () => {
     rmSync(dir, { recursive: true });
   });
 
-  it("already migrated: noop", () => {
+  it("already migrated without Infisical vars: backfills + regens traefik.yml", () => {
     const dir = setupFixture(
       [
         "DOMAIN=agenthub.example.com",
@@ -114,6 +114,32 @@ describe("migrateAccessConfig", () => {
     );
     const r = migrateAccessConfig(dir);
     expect(r.action).toBe("noop-already-migrated");
+    const env = readFileSync(join(dir, ".env"), "utf8");
+    // Backfill: vars didn't exist; should be added now per access mode.
+    expect(env).toContain("AGENTHUB_INFISICAL_TLS=false");
+    expect(env).toContain("AGENTHUB_INFISICAL_URL=http://agenthub.example.com:8443");
+    // traefik.yml regenerated with the new infisical entrypoint.
+    const traefikYml = readFileSync(join(dir, "traefik.yml"), "utf8");
+    expect(traefikYml).toContain("infisical:");
+    expect(traefikYml).toContain(":8443");
+    rmSync(dir, { recursive: true });
+  });
+
+  it("already migrated with Infisical vars: no rewrite", () => {
+    const dir = setupFixture(
+      [
+        "DOMAIN=agenthub.example.com",
+        "AGENTHUB_ACCESS_MODE=lan",
+        "AGENTHUB_PUBLIC_URL=http://agenthub.example.com",
+        "AGENTHUB_INFISICAL_TLS=false",
+        "AGENTHUB_INFISICAL_URL=http://agenthub.example.com:8443",
+      ].join("\n"),
+    );
+    const r = migrateAccessConfig(dir);
+    expect(r.action).toBe("noop-already-migrated");
+    // traefik.yml was not regen'd — it wasn't seeded by the fixture and
+    // the noop short-circuit should not have created it.
+    expect(existsSync(join(dir, "traefik.yml"))).toBe(false);
     rmSync(dir, { recursive: true });
   });
 

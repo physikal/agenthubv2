@@ -21,6 +21,21 @@ export interface MigrateResult {
   warnings: string[];
 }
 
+/**
+ * Ensure AGENTHUB_INFISICAL_TLS and AGENTHUB_INFISICAL_URL are present in
+ * .env based on the current access mode. Idempotent — overwrites with the
+ * correct value, so a switch from lan→public (or vice versa) gets the right
+ * Infisical wiring. Pre-Phase-X installs (before these vars existed) get
+ * them backfilled here on the first `agenthub update` past this change.
+ */
+function ensureInfisicalEnv(env: Map<string, string>): void {
+  const accessMode = env.get("AGENTHUB_ACCESS_MODE") ?? "lan";
+  const domain = env.get("DOMAIN") ?? "localhost";
+  const scheme = accessMode === "public" ? "https" : "http";
+  env.set("AGENTHUB_INFISICAL_TLS", accessMode === "public" ? "true" : "false");
+  env.set("AGENTHUB_INFISICAL_URL", `${scheme}://${domain}:8443`);
+}
+
 const HSTS_WARNING =
   "Browsers that visited the previous self-CA HTTPS install may be HSTS-pinned and refuse plain HTTP. " +
   "Operators must clear chrome://net-internals/#hsts (Chrome) or use 'Forget About This Site' (Firefox) " +
@@ -93,8 +108,31 @@ export function migrateAccessConfig(composeDir: string): MigrateResult {
   const env = parseDotEnv(readFileSync(envPath, "utf8"));
   const warnings: string[] = [];
 
-  // Already-migrated short-circuit
+  // Already-migrated short-circuit. Still backfill the Infisical env vars
+  // here — installs migrated before the AGENTHUB_INFISICAL_* additions
+  // need them on disk before docker compose up can interpolate them.
   if (env.has("AGENTHUB_ACCESS_MODE")) {
+    const hadInfisicalVars =
+      env.has("AGENTHUB_INFISICAL_TLS") && env.has("AGENTHUB_INFISICAL_URL");
+    if (!hadInfisicalVars) {
+      ensureInfisicalEnv(env);
+      writeFileSync(envPath, renderDotEnv(env));
+      // Also regen traefik.yml so the new infisical entrypoint declaration
+      // lands — without it, the docker-compose env-var change alone won't
+      // unblock the router.
+      const mode = env.get("AGENTHUB_ACCESS_MODE");
+      if (mode === "lan") {
+        applyLanTraefikFiles(composeDir, env.get("DOMAIN") ?? "localhost");
+      } else if (mode === "public") {
+        applyPublicTraefikFiles(
+          composeDir,
+          env.get("DOMAIN") ?? "localhost",
+          (env.get("AGENTHUB_TLS_MODE") ?? "public-alpn") as PublicTlsMode,
+          env.get("AGENTHUB_TLS_EMAIL") ?? env.get("TLS_EMAIL") ?? "",
+          env.get("AGENTHUB_TLS_DNS_PROVIDER") ?? undefined,
+        );
+      }
+    }
     return { action: "noop-already-migrated", warnings: [] };
   }
 
@@ -115,6 +153,7 @@ export function migrateAccessConfig(composeDir: string): MigrateResult {
     env.delete("AGENTHUB_TLS_MODE");
     env.delete("AGENTHUB_LAN_IP");
     env.delete("COMPOSE_FILE");
+    ensureInfisicalEnv(env);
     writeFileSync(envPath, renderDotEnv(env));
     applyLanTraefikFiles(composeDir, domain);
     return { action: "migrated-localhost-to-lan", warnings };
@@ -127,6 +166,7 @@ export function migrateAccessConfig(composeDir: string): MigrateResult {
     env.delete("AGENTHUB_TLS_MODE");
     env.delete("AGENTHUB_LAN_IP");
     env.delete("COMPOSE_FILE");
+    ensureInfisicalEnv(env);
     writeFileSync(envPath, renderDotEnv(env));
     // Delete the self-CA override file; the base compose is now sufficient.
     const overridePath = join(composeDir, "traefik.override.yml");
@@ -142,6 +182,7 @@ export function migrateAccessConfig(composeDir: string): MigrateResult {
     env.set("AGENTHUB_ACCESS_MODE", "public");
     env.set("AGENTHUB_PUBLIC_URL", `https://${domain}`);
     // Keep AGENTHUB_TLS_MODE as the sub-mode.
+    ensureInfisicalEnv(env);
     writeFileSync(envPath, renderDotEnv(env));
     applyPublicTraefikFiles(
       composeDir,
@@ -159,6 +200,7 @@ export function migrateAccessConfig(composeDir: string): MigrateResult {
     env.set("AGENTHUB_ACCESS_MODE", "public");
     env.set("AGENTHUB_PUBLIC_URL", `https://${domain}`);
     env.set("AGENTHUB_TLS_MODE", subMode);
+    ensureInfisicalEnv(env);
     writeFileSync(envPath, renderDotEnv(env));
     applyPublicTraefikFiles(
       composeDir,
