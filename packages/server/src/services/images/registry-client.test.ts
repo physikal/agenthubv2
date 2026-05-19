@@ -35,6 +35,19 @@ describe("DockerHubClient.listTags", () => {
     const client = new DockerHubClient();
     await expect(client.listTags("traefik", 1)).rejects.toThrow(/503/);
   });
+
+  it("namespaces single-segment repos under library/ for the v2 API", async () => {
+    const urls: string[] = [];
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ results: [], next: null }), { status: 200 });
+    }) as typeof fetch;
+    const client = new DockerHubClient();
+    await client.listTags("traefik", 1);
+    await client.listTags("infisical/infisical", 1);
+    expect(urls[0]).toContain("/repositories/library/traefik/tags");
+    expect(urls[1]).toContain("/repositories/infisical/infisical/tags");
+  });
 });
 
 describe("DockerHubClient.getDigest", () => {

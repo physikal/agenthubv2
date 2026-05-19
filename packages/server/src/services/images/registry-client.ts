@@ -12,11 +12,20 @@ export interface RegistryClient {
   getDigest(repo: string, tag: string): Promise<string>;
 }
 
+// Official Docker Hub images (single-segment names like "traefik", "postgres",
+// "redis") live under the implicit "library/" namespace. The v2 APIs reject
+// the unprefixed form with 404. Mirrors how `docker pull traefik` resolves
+// to `library/traefik`. We do this in the client so the catalog can keep
+// the user-facing short form, which is also what gets written to .env.
+function namespaced(repo: string): string {
+  return repo.includes("/") ? repo : `library/${repo}`;
+}
+
 export class DockerHubClient implements RegistryClient {
   async listTags(repo: string, maxPages: number): Promise<readonly string[]> {
     const out: string[] = [];
     let url: string | null =
-      `https://hub.docker.com/v2/repositories/${encodeURI(repo)}/tags?page_size=100`;
+      `https://hub.docker.com/v2/repositories/${encodeURI(namespaced(repo))}/tags?page_size=100`;
     let pages = 0;
     while (url && pages < maxPages) {
       const res = await fetch(url);
@@ -32,14 +41,15 @@ export class DockerHubClient implements RegistryClient {
   }
 
   async getDigest(repo: string, tag: string): Promise<string> {
+    const ns = namespaced(repo);
     const tokenUrl =
-      `https://auth.docker.io/token?service=registry.docker.io&scope=repository:${encodeURI(repo)}:pull`;
+      `https://auth.docker.io/token?service=registry.docker.io&scope=repository:${encodeURI(ns)}:pull`;
     const tokenRes = await fetch(tokenUrl);
     if (!tokenRes.ok) {
       throw new Error(`docker hub auth failed: ${String(tokenRes.status)}`);
     }
     const tokenBody = (await tokenRes.json()) as TokenResponse;
-    const manifestUrl = `https://registry-1.docker.io/v2/${encodeURI(repo)}/manifests/${encodeURIComponent(tag)}`;
+    const manifestUrl = `https://registry-1.docker.io/v2/${encodeURI(ns)}/manifests/${encodeURIComponent(tag)}`;
     const res = await fetch(manifestUrl, {
       headers: {
         authorization: `Bearer ${tokenBody.token}`,
