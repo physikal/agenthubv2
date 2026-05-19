@@ -27,6 +27,7 @@ import {
 import { installBackupRoutes } from "./routes/admin-install-backup.js";
 import { adminAgentAuthRoutes } from "./routes/admin-agent-auth.js";
 import { adminUpdatesRoutes } from "./routes/admin-updates.js";
+import { workspaceEnvRoutes } from "./routes/workspace-env.js";
 import { EnvOverrides } from "./services/images/env-overrides.js";
 import { dockerRunningDigest } from "./services/images/manager.js";
 import { ImagePoller } from "./services/images/poller.js";
@@ -170,6 +171,7 @@ app.use("/api/*", async (c, next) => {
 app.route("/api/sessions", sessionsRoutes(sessionManager));
 app.route("/api/sessions", previewRoutes(sessionManager));
 app.route("/api/user", userRoutes(sessionManager));
+app.route("/api/user/workspace-env", workspaceEnvRoutes());
 app.route("/api/infra", infraRoutes());
 app.route("/api/integrations/github", githubIntegrationRoutes());
 app.route("/api/integrations/agents", integrationsAgentsRoutes(sessionManager));

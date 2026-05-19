@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api.ts";
 import { useAuthStore } from "../stores/auth.ts";
+import { WorkspaceSecretsCard } from "../components/secrets/WorkspaceSecretsCard.tsx";
 
 interface StoreStatus {
   configured: boolean;
@@ -122,6 +123,8 @@ export function Secrets() {
             Open Infisical console →
           </a>
         </div>
+
+        <WorkspaceSecretsCard />
 
         {isAdmin && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">

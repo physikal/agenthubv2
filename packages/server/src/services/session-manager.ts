@@ -13,6 +13,7 @@ import { firstActiveInstallationForUser } from "./providers/github-app.js";
 import { listCatalog } from "./packages/catalog.js";
 import { getSecretStore } from "./secrets/index.js";
 import { resolveInfraConfig } from "./secrets/helpers.js";
+import { resolveWorkspaceEnv } from "./secrets/workspace-env.js";
 
 // Pinned to literal types so drizzle's inArray accepts them as values for
 // the provider column (SQLiteText with an enum data type).
@@ -359,6 +360,17 @@ export class SessionManager {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn(`[session ${session.id}] AI provider env injection failed: ${msg}`);
+      }
+
+      // Inject the user's workspace-secrets (UI: Secrets → Workspace secrets).
+      // Reserved names are filtered by resolveWorkspaceEnv itself, so the
+      // user can never shadow AGENT_TOKEN / ANTHROPIC_API_KEY / etc. — those
+      // entries get dropped silently rather than failing the session start.
+      try {
+        Object.assign(env, await resolveWorkspaceEnv(userId));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[session ${session.id}] workspace-env injection failed: ${msg}`);
       }
 
       const ref = await this.provisioner.create({
