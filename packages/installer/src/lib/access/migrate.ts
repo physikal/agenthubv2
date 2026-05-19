@@ -27,13 +27,20 @@ export interface MigrateResult {
  * correct value, so a switch from lan→public (or vice versa) gets the right
  * Infisical wiring. Pre-Phase-X installs (before these vars existed) get
  * them backfilled here on the first `agenthub update` past this change.
+ *
+ * Host preference: AGENTHUB_PUBLIC_HOST (if set) > DOMAIN. Lan-mode installs
+ * frequently have DOMAIN=localhost but users access via LAN IP — that LAN
+ * IP must drive SITE_URL or Infisical's CORS will reject browser logins.
  */
 function ensureInfisicalEnv(env: Map<string, string>): void {
   const accessMode = env.get("AGENTHUB_ACCESS_MODE") ?? "lan";
-  const domain = env.get("DOMAIN") ?? "localhost";
+  const host =
+    (env.get("AGENTHUB_PUBLIC_HOST") || "").trim() ||
+    env.get("DOMAIN") ||
+    "localhost";
   const scheme = accessMode === "public" ? "https" : "http";
   env.set("AGENTHUB_INFISICAL_TLS", accessMode === "public" ? "true" : "false");
-  env.set("AGENTHUB_INFISICAL_URL", `${scheme}://${domain}:8443`);
+  env.set("AGENTHUB_INFISICAL_URL", `${scheme}://${host}:8443`);
 }
 
 const HSTS_WARNING =
