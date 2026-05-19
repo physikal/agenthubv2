@@ -115,18 +115,26 @@ export function migrateAccessConfig(composeDir: string): MigrateResult {
   const env = parseDotEnv(readFileSync(envPath, "utf8"));
   const warnings: string[] = [];
 
-  // Already-migrated short-circuit. Still backfill the Infisical env vars
-  // here — installs migrated before the AGENTHUB_INFISICAL_* additions
-  // need them on disk before docker compose up can interpolate them.
+  // Already-migrated short-circuit. Still reconcile the Infisical env vars
+  // on every run: their values depend on PUBLIC_HOST + DOMAIN + access mode,
+  // any of which the operator may have edited since last apply. Also regen
+  // traefik.yml if needed — installs migrated before the infisical-entrypoint
+  // declaration was added need it written on disk to be reachable.
   if (env.has("AGENTHUB_ACCESS_MODE")) {
-    const hadInfisicalVars =
-      env.has("AGENTHUB_INFISICAL_TLS") && env.has("AGENTHUB_INFISICAL_URL");
-    if (!hadInfisicalVars) {
-      ensureInfisicalEnv(env);
+    const beforeTls = env.get("AGENTHUB_INFISICAL_TLS");
+    const beforeUrl = env.get("AGENTHUB_INFISICAL_URL");
+    ensureInfisicalEnv(env);
+    const envChanged =
+      env.get("AGENTHUB_INFISICAL_TLS") !== beforeTls ||
+      env.get("AGENTHUB_INFISICAL_URL") !== beforeUrl;
+    const traefikPath = join(composeDir, "traefik.yml");
+    const traefikHasInfisical =
+      existsSync(traefikPath) &&
+      readFileSync(traefikPath, "utf8").includes("infisical:");
+    if (envChanged) {
       writeFileSync(envPath, renderDotEnv(env));
-      // Also regen traefik.yml so the new infisical entrypoint declaration
-      // lands — without it, the docker-compose env-var change alone won't
-      // unblock the router.
+    }
+    if (!traefikHasInfisical) {
       const mode = env.get("AGENTHUB_ACCESS_MODE");
       if (mode === "lan") {
         applyLanTraefikFiles(composeDir, env.get("DOMAIN") ?? "localhost");
