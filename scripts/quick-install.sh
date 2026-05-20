@@ -16,7 +16,10 @@
 #   - Detects the Linux distro (debian/ubuntu, rhel/fedora/rocky/alma, arch, alpine)
 #   - For each prereq (git, docker, docker compose plugin, node 22+, pnpm):
 #       • Checks it
-#       • If missing: prompts for consent (or reads AGENTHUB_AUTO_INSTALL=true)
+#       • If missing: prompts for consent on the controlling terminal (works
+#         even under `curl | bash`, via /dev/tty). With no terminal at all
+#         (CI/agent) it auto-installs; AGENTHUB_AUTO_INSTALL=true forces that,
+#         AGENTHUB_AUTO_INSTALL=false refuses it.
 #       • Installs via the distro's canonical path
 #       • Re-verifies
 #   - Starts the Docker daemon if it's installed but not running
@@ -53,25 +56,43 @@ step() { printf '\n%s▸ %s%s\n'         "$c_bold" "$*" "$c_reset"; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-interactive() {
-  # stdin is a TTY (true install) — NOT true when piped through `curl | bash`,
-  # in which case we rely on AGENTHUB_AUTO_INSTALL=true.
-  [[ -t 0 ]]
+# Path to a terminal we can prompt on. Under `curl | bash`, stdin is the
+# script pipe (not a TTY), but the human's controlling terminal is still
+# reachable at /dev/tty — so we prompt and hand off there. Empty only when
+# truly headless (CI / agent with no terminal at all).
+TTY_DEV=""
+detect_tty() {
+  if [[ -t 0 ]]; then
+    TTY_DEV=/dev/stdin
+  elif [[ -e /dev/tty ]] && (: </dev/tty) 2>/dev/null; then
+    TTY_DEV=/dev/tty
+  fi
 }
 
 confirm() {
   local what="$1"
+  # Explicit opt-in — install everything without asking.
   if [[ "$AUTO" == "true" ]]; then
     msg "AGENTHUB_AUTO_INSTALL=true → installing ${what} without prompting"
     return 0
   fi
-  if ! interactive; then
-    die "${what} is required but missing. Stdin is not a TTY (piped through bash), \
-so I can't prompt. Re-run with:
-    curl -fsSL .../quick-install.sh | AGENTHUB_AUTO_INSTALL=true bash
-OR install ${what} manually first and re-run."
+  # Explicit opt-out — never auto-install.
+  if [[ "$AUTO" == "false" ]]; then
+    die "${what} is required but missing, and AGENTHUB_AUTO_INSTALL=false. \
+Install ${what} manually and re-run (or drop the flag to auto-install)."
   fi
-  read -r -p "$(printf '%s[?]%s Install %s now? [Y/n] ' "$c_yel" "$c_reset" "$what")" reply
+  # No terminal to prompt on (CI / agent / fully headless). The user ran an
+  # installer, so provisioning its prereqs is the expected default — proceed.
+  # Opt out with AGENTHUB_AUTO_INSTALL=false.
+  if [[ -z "$TTY_DEV" ]]; then
+    msg "no terminal for a prompt → auto-installing ${what} (set AGENTHUB_AUTO_INSTALL=false to disable)"
+    return 0
+  fi
+  # Interactive prompt on the controlling terminal — works even under
+  # `curl | bash`, where stdin is the pipe but /dev/tty is the keyboard.
+  local reply=""
+  printf '%s[?]%s Install %s now? [Y/n] ' "$c_yel" "$c_reset" "$what" >"$TTY_DEV"
+  read -r reply <"$TTY_DEV" || reply="Y"
   reply="${reply:-Y}"
   [[ "$reply" =~ ^[Yy] ]]
 }
@@ -368,6 +389,7 @@ main() {
   printf '\n%s=== AgentHub v2 quick-install ===%s\n' "$c_bold" "$c_reset"
   msg "will auto-install missing prereqs (git, docker, node 22, pnpm) with your consent"
 
+  detect_tty
   detect_sudo
   detect_distro
 
@@ -395,7 +417,16 @@ main() {
     # the sg -c shell parse.
     local cmd
     cmd="$(printf '%q ' "./scripts/install.sh" "$@")"
+    # Hand the controlling terminal to the installer (its Ink TUI needs a
+    # real stdin TTY) when we were piped in via `curl | bash`. Headless runs
+    # leave stdin alone — the installer detects no TTY and goes non-interactive.
+    if [[ "$TTY_DEV" == /dev/tty ]]; then
+      exec sg docker -c "$cmd" </dev/tty
+    fi
     exec sg docker -c "$cmd"
+  fi
+  if [[ "$TTY_DEV" == /dev/tty ]]; then
+    exec ./scripts/install.sh "$@" </dev/tty
   fi
   exec ./scripts/install.sh "$@"
 }
