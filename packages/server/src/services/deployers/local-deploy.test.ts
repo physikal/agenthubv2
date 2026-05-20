@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { detectContainerPort } from "./local-deploy.js";
+import { detectContainerPort, formatExecError } from "./local-deploy.js";
 
 describe("detectContainerPort", () => {
   let dir: string;
@@ -63,5 +63,32 @@ describe("detectContainerPort", () => {
     // EXPOSE, don't second-guess it.
     writeFileSync(dockerfile, "FROM nginx:alpine\nEXPOSE 8000\n");
     expect(detectContainerPort(dockerfile)).toBe(8000);
+  });
+});
+
+describe("formatExecError", () => {
+  it("prefers stderr (the real docker compose error) over the bare message", () => {
+    const err = {
+      message: "Command failed: docker compose -p x up -d --build",
+      stderr: 'Error response from daemon: driver failed: Bind for 0.0.0.0:80 failed: port is already allocated',
+    };
+    expect(formatExecError(err)).toContain("port is already allocated");
+  });
+
+  it("falls back to message when stderr is empty", () => {
+    expect(formatExecError({ message: "boom", stderr: "  " })).toBe("boom");
+  });
+
+  it("handles non-Error throwables", () => {
+    expect(formatExecError("plain string")).toBe("plain string");
+  });
+
+  it("keeps the TAIL when output exceeds the cap (failure reason is last)", () => {
+    const tail = "FATAL: the actual error line";
+    const big = "build log line\n".repeat(1000) + tail;
+    const out = formatExecError({ stderr: big });
+    expect(out.length).toBeLessThanOrEqual(4001); // 4000 + leading ellipsis
+    expect(out.startsWith("…")).toBe(true);
+    expect(out).toContain(tail);
   });
 });

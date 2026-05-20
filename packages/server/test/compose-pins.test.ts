@@ -44,7 +44,8 @@ describe("compose pin env-overrides", () => {
     const compose = readFileSync(composePath, "utf8");
     expect(compose).not.toMatch(/^\s+COMPOSE_FILE:/m);
     expect(compose).not.toMatch(/^\s+COMPOSE_ENV_FILE:/m);
-    expect(compose).toMatch(/^\s+AGENTHUB_COMPOSE_FILE:/m);
+    expect(compose).toMatch(/^\s+AGENTHUB_COMPOSE_DIR:/m);
+    expect(compose).toMatch(/^\s+AGENTHUB_COMPOSE_FILES:/m);
     expect(compose).toMatch(/^\s+AGENTHUB_COMPOSE_ENV_FILE:/m);
   });
 });

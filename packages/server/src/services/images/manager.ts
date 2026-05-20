@@ -42,10 +42,32 @@ export type ApplyPhase =
 
 export type RunningDigestResolver = (composeService: string) => Promise<string | null>;
 
-// Non-magic env var (NOT COMPOSE_FILE — that would override the compose file
-// for every `docker compose` call this container makes, breaking the
-// local-docker deployer). Read here and passed via explicit `-f`.
-const COMPOSE_PATH = process.env["AGENTHUB_COMPOSE_FILE"] ?? "compose/docker-compose.yml";
+/**
+ * Build the `-f <file>` flag list for `docker compose`, from the non-magic
+ * AGENTHUB_COMPOSE_DIR + AGENTHUB_COMPOSE_FILES env vars (set in
+ * compose/docker-compose.yml). FILES is colon-separated, mirroring the host
+ * COMPOSE_FILE — so public-mode installs include traefik.override.yml and a
+ * service recreate keeps its :443 port + cert resolver.
+ *
+ * NOT named COMPOSE_FILE: that magic var would override the compose file for
+ * every `docker compose` call the server makes, breaking the local-docker
+ * deployer (see compose/docker-compose.yml).
+ *
+ * Dev fallback (vars unset): a single relative compose/docker-compose.yml.
+ */
+export function composeFileFlags(): string[] {
+  const dir = process.env["AGENTHUB_COMPOSE_DIR"];
+  const files = process.env["AGENTHUB_COMPOSE_FILES"];
+  if (dir && files) {
+    const flags = files
+      .split(":")
+      .map((f) => f.trim())
+      .filter(Boolean)
+      .flatMap((f) => ["-f", `${dir}/${f}`]);
+    if (flags.length > 0) return flags;
+  }
+  return ["-f", "compose/docker-compose.yml"];
+}
 
 export class ImagesManager {
   constructor(
@@ -132,12 +154,13 @@ export class ImagesManager {
       envChanged = true;
     }
 
+    const composeFlags = composeFileFlags();
     try {
       onEvent({ kind: "phase", phase: "pulling" });
-      await runDocker(["compose", "-f", COMPOSE_PATH, "pull", entry.composeService], onEvent);
+      await runDocker(["compose", ...composeFlags, "pull", entry.composeService], onEvent);
       onEvent({ kind: "phase", phase: "recreating" });
       await runDocker(
-        ["compose", "-f", COMPOSE_PATH, "up", "-d", "--no-deps", entry.composeService],
+        ["compose", ...composeFlags, "up", "-d", "--no-deps", entry.composeService],
         onEvent,
       );
       onEvent({ kind: "phase", phase: "done" });
@@ -148,7 +171,7 @@ export class ImagesManager {
       if (envChanged) this.env.restoreEnv(backupPath);
       try {
         await runDocker(
-          ["compose", "-f", COMPOSE_PATH, "up", "-d", "--no-deps", entry.composeService],
+          ["compose", ...composeFlags, "up", "-d", "--no-deps", entry.composeService],
           onEvent,
         );
         onEvent({ kind: "phase", phase: "failed" });
@@ -193,7 +216,7 @@ export function dockerRunningDigest(): RunningDigestResolver {
     return new Promise((resolve) => {
       const child = spawn("docker", [
         "compose",
-        "-f", process.env["AGENTHUB_COMPOSE_FILE"] ?? "compose/docker-compose.yml",
+        ...composeFileFlags(),
         "images", "--quiet", service,
       ], { stdio: ["ignore", "pipe", "pipe"] });
       let buf = "";
