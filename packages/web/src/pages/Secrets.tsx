@@ -3,11 +3,6 @@ import { api } from "../lib/api.ts";
 import { useAuthStore } from "../stores/auth.ts";
 import { WorkspaceSecretsCard } from "../components/secrets/WorkspaceSecretsCard.tsx";
 
-interface StoreStatus {
-  configured: boolean;
-  storeReady?: boolean;
-}
-
 interface RevealedCreds {
   email: string;
   password: string;
@@ -15,7 +10,7 @@ interface RevealedCreds {
 
 export function Secrets() {
   const { user } = useAuthStore();
-  const [status, setStatus] = useState<StoreStatus | null>(null);
+  const [storeReady, setStoreReady] = useState(true);
   const [revealOpen, setRevealOpen] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [creds, setCreds] = useState<RevealedCreds | null>(null);
@@ -26,17 +21,10 @@ export function Secrets() {
   useEffect(() => {
     void (async () => {
       try {
-        // /api/user/backup happens to return { storeReady } derived from the
-        // Infisical SDK state — cheapest way to answer "is the secret store
-        // up?" without adding a new endpoint.
-        const res = await api("/api/user/backup");
-        if (res.ok) {
-          setStatus((await res.json()) as StoreStatus);
-        } else {
-          setStatus({ configured: false, storeReady: false });
-        }
+        const res = await api("/api/user/workspace-env");
+        setStoreReady(res.status !== 503); // 200 => store reachable; 503 => not configured
       } catch {
-        setStatus({ configured: false, storeReady: false });
+        setStoreReady(false);
       }
     })();
   }, []);
@@ -47,7 +35,6 @@ export function Secrets() {
   const pageHost = typeof window !== "undefined" ? window.location.hostname : "localhost";
   const infisicalUrl = `https://${pageHost}:8443/`;
 
-  const storeReady = status?.storeReady !== false;
   const isAdmin = user?.role === "admin";
 
   const resetReveal = () => {
