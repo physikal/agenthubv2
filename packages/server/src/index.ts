@@ -11,7 +11,6 @@ import { createProvisioner } from "./services/provisioner/index.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { authRoutes } from "./routes/auth.js";
 import { adminRoutes } from "./routes/admin.js";
-import { userRoutes } from "./routes/user.js";
 import { infraRoutes } from "./routes/infra.js";
 import { deployRoutes } from "./routes/deploy.js";
 import { agentGithubRoutes } from "./routes/agent-github.js";
@@ -172,7 +171,6 @@ app.use("/api/*", async (c, next) => {
 });
 app.route("/api/sessions", sessionsRoutes(sessionManager));
 app.route("/api/sessions", previewRoutes(sessionManager));
-app.route("/api/user", userRoutes(sessionManager));
 app.route("/api/user/workspace-env", workspaceEnvRoutes());
 app.route("/api/user/workspace-backup", userWorkspaceBackupRoutes());
 app.route("/api/infra", infraRoutes());

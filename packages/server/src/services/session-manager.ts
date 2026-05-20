@@ -106,30 +106,8 @@ interface CreateSessionInput {
   purpose?: "user" | "agent-auth" | undefined;
 }
 
-export interface BackupParams {
-  b2KeyId: string;
-  b2AppKey: string;
-  b2Bucket: string;
-  subdir: string;
-  snapshotAt?: string;
-}
-
-export interface BackupResult {
-  ok: boolean;
-  bytes?: number;
-  fileCount?: number;
-  error?: string;
-}
-
-interface PendingBackup {
-  resolve: (r: BackupResult) => void;
-  reject: (e: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-}
-
 /** Mirror of the agent's InstallSpec. Redefined here so the server package
- * doesn't depend on @agenthub/agent — same duplication pattern used for
- * BackupParams. */
+ * doesn't depend on @agenthub/agent. */
 export type PackageInstallSpec =
   | { method: "npm"; npmPackage: string }
   | {
@@ -163,8 +141,6 @@ export class SessionManager {
   private readonly workspaceImage: string;
   private readonly portalUrl: string;
   private readonly agents = new Map<string, AgentConnection>();
-  /** requestId → pending backup */
-  private readonly pendingBackups = new Map<string, PendingBackup>();
   /** requestId → pending package install/remove */
   private readonly pendingPackageOps = new Map<string, PendingPackageOp>();
   /**
@@ -474,27 +450,6 @@ export class SessionManager {
           void this.endSession(sessionId);
         }
 
-        if (msg.type === "backup-result") {
-          const r = msg as unknown as {
-            type: "backup-result";
-            requestId: string;
-            ok: boolean;
-            bytes?: number;
-            fileCount?: number;
-            error?: string;
-          };
-          const pending = this.pendingBackups.get(r.requestId);
-          if (pending) {
-            this.pendingBackups.delete(r.requestId);
-            clearTimeout(pending.timer);
-            const result: BackupResult = { ok: r.ok };
-            if (r.bytes !== undefined) result.bytes = r.bytes;
-            if (r.fileCount !== undefined) result.fileCount = r.fileCount;
-            if (r.error !== undefined) result.error = r.error;
-            pending.resolve(result);
-          }
-        }
-
         if (msg.type === "package-result") {
           const r = msg as unknown as {
             type: "package-result";
@@ -748,50 +703,10 @@ export class SessionManager {
   }
 
   /**
-   * Send a backup request to the agent inside the workspace for one of the
-   * user's active sessions. Agent runs rclone against /home/coder and sends
-   * back a {type: "backup-result", requestId, ok, ...} message which is
-   * correlated here by requestId.
-   */
-  async backupViaAgent(
-    userId: string,
-    op: "save" | "restore" | "size",
-    params: BackupParams,
-    timeoutMs = 360_000,
-  ): Promise<BackupResult> {
-    const session = this.findActiveSessionForUser(userId);
-    if (!session) {
-      throw new Error(
-        "No active workspace session — start a session first so the agent can reach /home/coder.",
-      );
-    }
-    const agent = this.agents.get(session.id);
-    if (!agent) {
-      throw new Error("Workspace agent not currently connected");
-    }
-
-    const requestId = randomUUID();
-    return new Promise<BackupResult>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingBackups.delete(requestId);
-        reject(new Error(`agent backup ${op} timed out after ${String(timeoutMs)}ms`));
-      }, timeoutMs);
-      this.pendingBackups.set(requestId, { resolve, reject, timer });
-      try {
-        agent.ws.send(JSON.stringify({ type: "backup", op, requestId, params }));
-      } catch (err) {
-        this.pendingBackups.delete(requestId);
-        clearTimeout(timer);
-        reject(err instanceof Error ? err : new Error(String(err)));
-      }
-    });
-  }
-
-  /**
    * Install or remove a per-user package via the agent running inside the
-   * user's active workspace. Same request/response correlation as
-   * backupViaAgent — an agent restart between send and reply leaves the
-   * request to time out rather than hang.
+   * user's active workspace. The request/response is correlated by requestId;
+   * an agent restart between send and reply leaves the request to time out
+   * rather than hang.
    */
   async packageViaAgent(
     userId: string,
