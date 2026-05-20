@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -6,6 +6,14 @@ import "@xterm/xterm/css/xterm.css";
 
 interface UseTerminalOptions {
   sessionId: string;
+}
+
+/** A pasted-image upload, surfaced as a transient chip in the web UI
+ *  (outside the terminal) instead of writing status into the PTY scrollback. */
+export interface UploadChip {
+  id: string;
+  label: string;
+  status: "uploading" | "done" | "error";
 }
 
 export function useTerminal(options: UseTerminalOptions) {
@@ -17,6 +25,8 @@ export function useTerminal(options: UseTerminalOptions) {
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
   const userClosedRef = useRef(false);
+  const imageCountRef = useRef(0);
+  const [uploads, setUploads] = useState<UploadChip[]>([]);
 
   const attach = useCallback(
     (el: HTMLDivElement | null) => {
@@ -152,69 +162,96 @@ export function useTerminal(options: UseTerminalOptions) {
         }
       });
 
-      // Image paste: intercept Cmd+V, upload via separate channel
-      term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-        if (e.type === "keydown" && e.key === "v" && (e.metaKey || e.ctrlKey)) {
-          void navigator.clipboard.read().then((items) => {
-            for (const item of items) {
-              const imageType = item.types.find((t) => t.startsWith("image/"));
-              if (imageType) {
-                void item.getType(imageType).then((blob) => {
-                  const ext = imageType.split("/")[1] ?? "png";
-                  const name = `paste-${Date.now()}.${ext}`;
-                  term.write(`\r\n\x1b[36m[uploading image...]\x1b[0m`);
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                    const base64 = (reader.result as string).split(",")[1];
-                    if (!base64) return;
-                    fetch(`/api/sessions/${options.sessionId}/upload`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      credentials: "include",
-                      body: JSON.stringify({ name, data: base64 }),
-                    }).then((res) => {
-                      if (res.ok) {
-                        const path = `/tmp/uploads/${name}`;
-                        term.write(`\r\n\x1b[32m[saved: ${path}]\x1b[0m\r\n`);
-                        // Type the path into the terminal
-                        const ws = wsRef.current;
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                          const buf = new Uint8Array(path.length + 1);
-                          buf[0] = 0x30;
-                          for (let j = 0; j < path.length; j++) {
-                            buf[j + 1] = path.charCodeAt(j);
-                          }
-                          ws.send(buf.buffer);
-                        }
-                      } else {
-                        term.write(`\r\n\x1b[31m[upload failed]\x1b[0m\r\n`);
-                      }
-                    }).catch(() => {
-                      term.write(`\r\n\x1b[31m[upload failed]\x1b[0m\r\n`);
-                    });
-                  };
-                  reader.readAsDataURL(blob);
-                });
-                return;
+      // Type a string into the PTY (ttyd input frame: ASCII '0' prefix).
+      const sendInput = (text: string): void => {
+        const ws = wsRef.current;
+        if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+        const buf = new Uint8Array(text.length + 1);
+        buf[0] = 0x30; // ASCII '0' = input
+        for (let i = 0; i < text.length; i++) buf[i + 1] = text.charCodeAt(i);
+        ws.send(buf.buffer);
+      };
+
+      // Surface upload progress as a transient chip in the web UI (rendered
+      // by TerminalView) rather than writing [uploading…]/[saved:…] into the
+      // PTY scrollback, which cluttered the terminal and interleaved with the
+      // prompt. The terminal only ever receives the final path.
+      const setChip = (id: string, patch: Partial<UploadChip>): void => {
+        setUploads((list) => list.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+      };
+      const dropChip = (id: string, afterMs: number): void => {
+        window.setTimeout(() => {
+          setUploads((list) => list.filter((c) => c.id !== id));
+        }, afterMs);
+      };
+
+      // Image paste: upload the bytes to the workspace and type the saved
+      // path so the agent (Claude Code etc.) can read it as a file. A
+      // trailing space keeps consecutive pastes — and any text typed after —
+      // from concatenating into one unparseable token.
+      const uploadImage = (blob: Blob): void => {
+        const ext = (blob.type.split("/")[1] ?? "png").replace(/[^a-z0-9]/gi, "") || "png";
+        const name = `paste-${Date.now()}.${ext}`;
+        const id = name;
+        imageCountRef.current += 1;
+        const label = `Image ${String(imageCountRef.current)}`;
+        setUploads((list) => [...list, { id, label, status: "uploading" }]);
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = (reader.result as string).split(",")[1];
+          if (!base64) {
+            setChip(id, { status: "error" });
+            dropChip(id, 4000);
+            return;
+          }
+          fetch(`/api/sessions/${options.sessionId}/upload`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ name, data: base64 }),
+          })
+            .then((res) => {
+              if (res.ok) {
+                sendInput(`/tmp/uploads/${name} `);
+                setChip(id, { status: "done" });
+                dropChip(id, 2500);
+              } else {
+                setChip(id, { status: "error" });
+                dropChip(id, 4000);
               }
-            }
-            // No image — paste text
-            void navigator.clipboard.readText().then((text) => {
-              const ws = wsRef.current;
-              if (text && ws && ws.readyState === WebSocket.OPEN) {
-                const buf = new Uint8Array(text.length + 1);
-                buf[0] = 0x30; // ASCII '0' = input
-                for (let i = 0; i < text.length; i++) {
-                  buf[i + 1] = text.charCodeAt(i);
-                }
-                ws.send(buf.buffer);
-              }
+            })
+            .catch(() => {
+              setChip(id, { status: "error" });
+              dropChip(id, 4000);
             });
-          }).catch(() => {});
-          return false;
+        };
+        reader.readAsDataURL(blob);
+      };
+
+      // Listen for the `paste` DOM event rather than the async Clipboard API
+      // (navigator.clipboard.read). The async API only works in a secure
+      // context (HTTPS / localhost), so it silently failed on plain-HTTP
+      // lan-mode installs. The paste event's clipboardData is available on
+      // HTTP too. Capture phase so we see the image before xterm's textarea
+      // handler; plain-text paste is left to xterm's built-in handler (which
+      // also reads clipboardData and works on HTTP).
+      const handlePaste = (e: ClipboardEvent): void => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item && item.kind === "file" && item.type.startsWith("image/")) {
+            const blob = item.getAsFile();
+            if (blob) {
+              e.preventDefault();
+              uploadImage(blob);
+              return;
+            }
+          }
         }
-        return true;
-      });
+        // No image — fall through to xterm's native text paste.
+      };
+      el.addEventListener("paste", handlePaste, true);
 
       const observer = new ResizeObserver(() => {
         requestAnimationFrame(() => {
@@ -249,6 +286,7 @@ export function useTerminal(options: UseTerminalOptions) {
       cleanupRef.current = () => {
         observer.disconnect();
         document.removeEventListener("visibilitychange", handleVisibility);
+        el.removeEventListener("paste", handlePaste, true);
       };
 
       connect();
@@ -276,5 +314,5 @@ export function useTerminal(options: UseTerminalOptions) {
     };
   }, [options.sessionId]);
 
-  return { attach };
+  return { attach, uploads };
 }

@@ -5,21 +5,22 @@ description: How to open the bundled Infisical admin UI, log in, and find your s
 
 ## Opening the console
 
-The bundled Infisical admin console lives at:
+The bundled Infisical admin console lives on its own `:8443` entrypoint. **The scheme depends on your [access mode](/docs/operators/access-modes/):**
 
-```
-https://<your-host>:8443/
-```
+- **lan mode (default):** plain HTTP — `http://<your-host>:8443/`. There is no TLS in lan mode, so `https://` will **fail to connect**. This trips people up: browsers love to upgrade you to `https://`, and it won't work. Type `http://` explicitly.
+- **public mode:** `https://<your-host>:8443/`, using Traefik's default self-signed cert.
 
-For local installs: `https://localhost:8443/`. For real-domain installs: `https://your-domain.example.com:8443/`. Your Traefik routes the `:8443` entrypoint to the Infisical container.
+For local installs that's `http://localhost:8443/` (lan) or `https://localhost:8443/` (public). Your Traefik routes the `:8443` entrypoint to the Infisical container either way.
 
-The **Secrets** page in AgentHub has a button that opens this URL in a new tab, which is the intended path.
+The **Secrets** page in AgentHub has a button that opens the right URL for your mode in a new tab — that's the intended path, and it always picks the correct scheme.
 
-## Accepting the cert
+## Accepting the cert (public mode only)
 
-Localhost installs use Traefik's default self-signed cert. Your browser shows a big red warning the first time — click **Advanced → Proceed to `localhost` (unsafe)**. On real-domain installs Traefik uses your Let's Encrypt cert; no warning.
+In lan mode there's no cert — nothing to accept.
 
-If you forget this step and hit the URL from a script, the TLS handshake will fail because your system trust store doesn't include the self-signed root. Pass `-k` to curl for testing.
+In public mode the `:8443` entrypoint uses Traefik's default **self-signed** cert (not your Let's Encrypt one, which is bound to `:443`). Your browser shows a big red warning the first time — click **Advanced → Proceed (unsafe)**.
+
+If you hit the URL from a script in public mode, the TLS handshake fails because your system trust store doesn't include the self-signed root. Pass `-k` to curl for testing.
 
 ## The "Failed to login without SRP" browser message
 

@@ -3,7 +3,7 @@ title: MiniMax (mmx + claude-minimax)
 description: The MiniMax M2 agent, plus a Claude Code shim for the same model.
 ---
 
-[MiniMax](https://www.minimax.io) publishes a family of coding-specialist models (the M2 line) and an official CLI called `mmx`. Both `mmx` and a `claude-minimax` convenience shim are pre-installed in every workspace.
+[MiniMax](https://www.minimax.io) publishes a family of coding-specialist models (the M2 line) and an official CLI called `mmx`. MiniMax is **opt-in** — install it from the [Packages page](/docs/web-ui/packages/) (it isn't one of the auto-installed essentials). Installing it lands `mmx` plus a `claude-minimax` convenience shim in `~/.local/bin`.
 
 ## Two ways in
 

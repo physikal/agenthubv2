@@ -47,7 +47,7 @@ It talks to Infisical over the `@infisical/sdk` npm client. On boot the `SecretS
 
 ## How you reach Infisical
 
-Through the [Secrets page](/docs/web-ui/secrets/), which opens the admin console at `https://<your-host>:8443/`. See [Using the console](/docs/infisical/console/) for the guided tour.
+Through the [Secrets page](/docs/web-ui/secrets/), which opens the admin console on the `:8443` entrypoint — `http://<your-host>:8443/` in lan mode, `https://<your-host>:8443/` in public mode. See [Using the console](/docs/infisical/console/) for the guided tour.
 
 ## What happens on install
 

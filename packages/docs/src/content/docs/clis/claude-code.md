@@ -1,9 +1,9 @@
 ---
 title: Claude Code
-description: Anthropic's official coding-agent CLI, pre-installed in every AgentHub workspace.
+description: Anthropic's official coding-agent CLI, auto-installed in every AgentHub workspace.
 ---
 
-[Claude Code](https://docs.claude.com/en/docs/claude-code/overview) is Anthropic's official coding agent. It's installed as `claude` in every workspace, updated to the latest stable release when the workspace image is rebuilt.
+[Claude Code](https://docs.claude.com/en/docs/claude-code/overview) is Anthropic's official coding agent. It's an [essential](/docs/clis/overview/#auto-installed-every-session-essentials) CLI — the agent daemon auto-installs `claude` into `~/.local/bin` on every session-active. Keep it current from the [Packages page](/docs/web-ui/packages/), which shows installed-vs-latest and a one-click **Update**.
 
 ## First-time sign-in
 

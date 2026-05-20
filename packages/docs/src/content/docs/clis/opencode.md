@@ -1,9 +1,9 @@
 ---
 title: OpenCode
-description: Open-source, multi-model coding agent — pre-installed in every workspace.
+description: Open-source, multi-model coding agent — auto-installed in every workspace.
 ---
 
-[OpenCode](https://opencode.ai) is an open-source coding agent that doesn't care which model it's talking to. It's installed as `opencode` in every workspace.
+[OpenCode](https://opencode.ai) is an open-source coding agent that doesn't care which model it's talking to. It's an [essential](/docs/clis/overview/#auto-installed-every-session-essentials) CLI — `opencode` auto-installs into `~/.local/bin` on every session-active, and the [Packages page](/docs/web-ui/packages/) keeps it updatable.
 
 Use it when:
 

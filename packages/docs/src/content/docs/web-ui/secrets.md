@@ -3,7 +3,7 @@ title: Secrets
 description: Your jump-off point to the bundled Infisical admin console.
 ---
 
-**Secrets** is a short page that does one thing: hand you off to the Infisical admin console at `https://<your-host>:8443/`. Every provider credential AgentHub handles (Cloudflare tokens, DigitalOcean tokens, Docker host ssh keys, Dokploy API tokens, Backblaze B2 keys) lives in Infisical. The Secrets page is the portal to that console when you want to browse folders, environments, audit logs, or manage secret versions directly.
+**Secrets** is a short page that does one thing: hand you off to the Infisical admin console on the `:8443` entrypoint (`http://<your-host>:8443/` in lan mode, `https://<your-host>:8443/` in public mode — see [Access modes](/docs/operators/access-modes/)). Every provider credential AgentHub handles (Cloudflare tokens, DigitalOcean tokens, Docker host ssh keys, Dokploy API tokens, Backblaze B2 keys) lives in Infisical. The Secrets page is the portal to that console when you want to browse folders, environments, audit logs, or manage secret versions directly.
 
 ## What's on the page
 
@@ -76,9 +76,9 @@ Two different things, easy to confuse:
 
 ## Why :8443 and not a subdomain?
 
-The compose bundle exposes the Infisical console on its own Traefik entrypoint (`:8443`). This means `localhost` installs can reach it at `https://localhost:8443/` without needing a `/etc/hosts` entry for `secrets.localhost`. It's the same Traefik, the same TLS certificate stack, just a different port.
+The compose bundle exposes the Infisical console on its own Traefik entrypoint (`:8443`). This means `localhost` installs can reach it at `http://localhost:8443/` (lan mode) without needing a `/etc/hosts` entry for `secrets.localhost`. It's the same Traefik, just a different port.
 
-The first visit shows a self-signed-cert warning — click through. Traefik will use the same Let's Encrypt cert on `:8443` as on `:443` if you're on a real domain.
+In lan mode the entrypoint is plain HTTP — `https://` will not connect, so use `http://`. In public mode `:8443` serves HTTPS with Traefik's default **self-signed** cert (not your Let's Encrypt cert, which is bound to `:443`), so the first visit shows a cert warning — click through. See [Using the console](/docs/infisical/console/) for the per-mode details.
 
 ## The "Reveal" flow
 
