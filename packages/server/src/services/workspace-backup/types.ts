@@ -19,7 +19,7 @@
 
 export const WORKSPACE_BUNDLE_SCHEMA_VERSION = 1 as const;
 
-export type WorkspaceTrigger = "manual" | "cli" | "auto-restore-install";
+export type WorkspaceTrigger = "manual" | "cli" | "auto-update" | "auto-restore-install";
 
 export interface WorkspaceBundleManifest {
   schemaVersion: typeof WORKSPACE_BUNDLE_SCHEMA_VERSION;

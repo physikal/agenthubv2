@@ -67,6 +67,20 @@ describe("bundleFilename", () => {
   });
 });
 
+describe("parseWorkspaceManifest auto-update trigger", () => {
+  it("accepts the auto-update trigger", () => {
+    const json = serializeWorkspaceManifest({
+      schemaVersion: 1,
+      createdAt: "2026-05-20T00:00:00.000Z",
+      userId: "u1",
+      userEmail: null,
+      workspaceImageSha: null,
+      trigger: "auto-update",
+    });
+    expect(parseWorkspaceManifest(json).trigger).toBe("auto-update");
+  });
+});
+
 describe("parseBundleFilename", () => {
   it("round-trips with bundleFilename", () => {
     const ts = "2026-05-14T17:31:37.123Z";
