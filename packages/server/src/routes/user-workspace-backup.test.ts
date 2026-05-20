@@ -1,15 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { WorkspaceBackupRunInput } from "../services/workspace-backup/runner.js";
 
-const { runWorkspaceBackup } = vi.hoisted(() => ({
+const { runWorkspaceBackup, runWorkspaceRestore } = vi.hoisted(() => ({
   runWorkspaceBackup:
     vi.fn<
       (
         input: WorkspaceBackupRunInput,
       ) => Promise<{ bundlePath: string; bytes: number; b2Path: null; manifest: object }>
     >(),
+  runWorkspaceRestore: vi.fn(async () => ({ source: "x", extractedBytes: 1 })),
 }));
-vi.mock("../services/workspace-backup/runner.js", () => ({ runWorkspaceBackup, runWorkspaceRestore: vi.fn() }));
+vi.mock("../services/workspace-backup/runner.js", () => ({ runWorkspaceBackup, runWorkspaceRestore }));
 vi.mock("../services/install-backup/runner.js", () => ({ loadB2Config: vi.fn(async () => null) }));
 vi.mock("../services/workspace-backup/history.js", () => ({ listWorkspaceRuns: vi.fn(() => []) }));
 
@@ -27,6 +28,7 @@ function appAs(userId: string) {
 beforeEach(() => {
   runWorkspaceBackup.mockReset();
   runWorkspaceBackup.mockResolvedValue({ bundlePath: "/data/workspace-backups/me/workspace-me-2026-05-20T00-00-00-000Z.tar.zst", bytes: 5, b2Path: null, manifest: {} });
+  runWorkspaceRestore.mockClear();
 });
 
 describe("user-workspace-backup", () => {
@@ -36,5 +38,17 @@ describe("user-workspace-backup", () => {
     await res.text();
     expect(runWorkspaceBackup).toHaveBeenCalledOnce();
     expect(runWorkspaceBackup.mock.calls[0]?.[0]).toMatchObject({ userId: "me" });
+  });
+
+  it("POST /restore/run rejects a traversal filename with 400 and never runs the restore", async () => {
+    const res = await appAs("me").request("/restore/run", {
+      method: "POST",
+      headers: { "content-type": "application/json", "Confirm-Restore": "yes-i-know-what-this-does" },
+      body: JSON.stringify({
+        source: { kind: "local", filename: "workspace-../bob/workspace-bob-2026-05-20T00-00-00-000Z.tar.zst" },
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(runWorkspaceRestore).not.toHaveBeenCalled();
   });
 });

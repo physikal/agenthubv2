@@ -9,7 +9,7 @@ import { listWorkspaceRuns } from "../services/workspace-backup/history.js";
 import { loadB2Config } from "../services/install-backup/runner.js";
 
 const HOST_BACKUP_DIR = process.env["AGENTHUB_WORKSPACE_BACKUP_DIR"] ?? "/data/workspace-backups";
-const SAFE_FILE = /^workspace-.+\.tar\.zst$/;
+const SAFE_FILE = /^workspace-[A-Za-z0-9_-]+\.tar\.zst$/;
 
 export function userWorkspaceBackupRoutes() {
   const app = new Hono<{ Variables: { user: AuthUser } }>();
@@ -67,6 +67,9 @@ export function userWorkspaceBackupRoutes() {
     if (!body.source || (body.source.kind !== "b2-snapshot" && body.source.kind !== "local")) {
       return c.json({ error: "source must be { kind: 'b2-snapshot' | 'local', ... }" }, 400);
     }
+    if (body.source.kind === "local" && !SAFE_FILE.test(body.source.filename)) {
+      return c.json({ error: "bad filename" }, 400);
+    }
     return streamSSE(c, async (stream) => {
       const write = (event: string, data: string): void => {
         stream.writeSSE({ event, data }).catch(() => {});
@@ -81,10 +84,6 @@ export function userWorkspaceBackupRoutes() {
         };
         if (body.source.kind === "b2-snapshot") input.b2Snapshot = body.source.snapshot;
         else {
-          if (!SAFE_FILE.test(body.source.filename)) {
-            write("error", "bad filename");
-            return;
-          }
           input.localBundlePath = join(HOST_BACKUP_DIR, user.id, body.source.filename);
         }
         const r = await runWorkspaceRestore(input);
