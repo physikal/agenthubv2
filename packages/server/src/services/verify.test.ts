@@ -1,4 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+
+// The SSRF guard resolves hostnames via DNS before fetching. Stub it to a
+// public address so these probe tests stay offline and deterministic.
+vi.mock("node:dns/promises", () => ({
+  lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
+}));
+
 import {
   verifyAnthropicKey,
   verifyOpenAIKey,

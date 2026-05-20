@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// dokployRequest runs the SSRF guard, which resolves the host via DNS. Stub it
+// to a public address so these tests stay offline and deterministic.
+vi.mock("node:dns/promises", () => ({
+  lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
+}));
+
 import type { DokployConfig } from "./dokploy-api.js";
 import {
   createDokployDomain,

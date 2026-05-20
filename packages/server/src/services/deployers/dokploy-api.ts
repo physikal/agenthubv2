@@ -1,4 +1,5 @@
 import { DeployError } from "../deploy-error.js";
+import { assertSafeProviderUrl, BlockedOutboundHostError } from "../ssrf-guard.js";
 
 export interface DokployConfig {
   baseUrl: string;
@@ -33,7 +34,14 @@ export async function dokployRequest<T>(
   };
   if (body !== undefined) init.body = JSON.stringify(body);
 
-  const resp = await fetch(`${cfg.baseUrl.replace(/\/$/, "")}${path}`, init);
+  const url = `${cfg.baseUrl.replace(/\/$/, "")}${path}`;
+  try {
+    await assertSafeProviderUrl(url);
+  } catch (err) {
+    if (err instanceof BlockedOutboundHostError) throw new DeployError(err.message, 400);
+    throw err;
+  }
+  const resp = await fetch(url, init);
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
     throw new DeployError(
