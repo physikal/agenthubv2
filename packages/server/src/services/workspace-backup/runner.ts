@@ -1,6 +1,7 @@
 import { bundleWorkspace } from "./bundler.js";
 import { restoreWorkspace } from "./restorer.js";
 import { parseBundleFilename } from "./manifest.js";
+import { pruneWorkspaceLocal, pruneWorkspaceB2 } from "./retention.js";
 import type { B2Config } from "../install-backup/types.js";
 import { b2Push, b2Pull, b2List, b2RemotePath } from "../install-backup/b2-client.js";
 import { db, schema } from "../../db/index.js";
@@ -38,6 +39,9 @@ export interface WorkspaceBackupRunInput {
   trigger: WorkspaceTrigger;
   note?: string;
   b2: B2Config | null;
+  /** Bundles to keep per user; older ones are pruned after a successful
+   * backup. <=0 disables pruning. Default 10. */
+  keepLast?: number;
   onLog?: (line: string) => void;
 }
 
@@ -78,6 +82,24 @@ export async function runWorkspaceBackup(
     );
     b2Path = remote;
     input.onLog?.(`[ws-backup] pushed → ${remote}`);
+  }
+
+  const keepLast = input.keepLast ?? 10;
+  if (keepLast > 0) {
+    const localPruned = pruneWorkspaceLocal(dest, keepLast);
+    if (localPruned.length > 0) input.onLog?.(`[ws-backup] pruned ${localPruned.length} old local bundle(s)`);
+    if (input.b2) {
+      const cfgForUser: B2Config = {
+        ...input.b2,
+        pathPrefix: `${input.b2.pathPrefix.replace(/\/+$/, "")}/workspaces/${input.userId}`,
+      };
+      try {
+        const b2Pruned = await pruneWorkspaceB2(cfgForUser, keepLast);
+        if (b2Pruned.length > 0) input.onLog?.(`[ws-backup] pruned ${b2Pruned.length} old B2 bundle(s)`);
+      } catch (err) {
+        input.onLog?.(`[ws-backup] B2 prune skipped: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   return { ...bundle, b2Path };
