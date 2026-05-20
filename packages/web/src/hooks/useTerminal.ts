@@ -152,69 +152,75 @@ export function useTerminal(options: UseTerminalOptions) {
         }
       });
 
-      // Image paste: intercept Cmd+V, upload via separate channel
-      term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-        if (e.type === "keydown" && e.key === "v" && (e.metaKey || e.ctrlKey)) {
-          void navigator.clipboard.read().then((items) => {
-            for (const item of items) {
-              const imageType = item.types.find((t) => t.startsWith("image/"));
-              if (imageType) {
-                void item.getType(imageType).then((blob) => {
-                  const ext = imageType.split("/")[1] ?? "png";
-                  const name = `paste-${Date.now()}.${ext}`;
-                  term.write(`\r\n\x1b[36m[uploading image...]\x1b[0m`);
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                    const base64 = (reader.result as string).split(",")[1];
-                    if (!base64) return;
-                    fetch(`/api/sessions/${options.sessionId}/upload`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      credentials: "include",
-                      body: JSON.stringify({ name, data: base64 }),
-                    }).then((res) => {
-                      if (res.ok) {
-                        const path = `/tmp/uploads/${name}`;
-                        term.write(`\r\n\x1b[32m[saved: ${path}]\x1b[0m\r\n`);
-                        // Type the path into the terminal
-                        const ws = wsRef.current;
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                          const buf = new Uint8Array(path.length + 1);
-                          buf[0] = 0x30;
-                          for (let j = 0; j < path.length; j++) {
-                            buf[j + 1] = path.charCodeAt(j);
-                          }
-                          ws.send(buf.buffer);
-                        }
-                      } else {
-                        term.write(`\r\n\x1b[31m[upload failed]\x1b[0m\r\n`);
-                      }
-                    }).catch(() => {
-                      term.write(`\r\n\x1b[31m[upload failed]\x1b[0m\r\n`);
-                    });
-                  };
-                  reader.readAsDataURL(blob);
-                });
-                return;
+      // Type a string into the PTY (ttyd input frame: ASCII '0' prefix).
+      const sendInput = (text: string): void => {
+        const ws = wsRef.current;
+        if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+        const buf = new Uint8Array(text.length + 1);
+        buf[0] = 0x30; // ASCII '0' = input
+        for (let i = 0; i < text.length; i++) buf[i + 1] = text.charCodeAt(i);
+        ws.send(buf.buffer);
+      };
+
+      // Image paste: upload the bytes to the workspace and type the saved
+      // path so the agent (Claude Code etc.) can read it as a file.
+      const uploadImage = (blob: Blob): void => {
+        const ext = (blob.type.split("/")[1] ?? "png").replace(/[^a-z0-9]/gi, "") || "png";
+        const name = `paste-${Date.now()}.${ext}`;
+        term.write(`\r\n\x1b[36m[uploading image...]\x1b[0m`);
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = (reader.result as string).split(",")[1];
+          if (!base64) {
+            term.write(`\r\n\x1b[31m[upload failed]\x1b[0m\r\n`);
+            return;
+          }
+          fetch(`/api/sessions/${options.sessionId}/upload`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ name, data: base64 }),
+          })
+            .then((res) => {
+              if (res.ok) {
+                const path = `/tmp/uploads/${name}`;
+                term.write(`\r\n\x1b[32m[saved: ${path}]\x1b[0m\r\n`);
+                sendInput(path);
+              } else {
+                term.write(`\r\n\x1b[31m[upload failed]\x1b[0m\r\n`);
               }
-            }
-            // No image — paste text
-            void navigator.clipboard.readText().then((text) => {
-              const ws = wsRef.current;
-              if (text && ws && ws.readyState === WebSocket.OPEN) {
-                const buf = new Uint8Array(text.length + 1);
-                buf[0] = 0x30; // ASCII '0' = input
-                for (let i = 0; i < text.length; i++) {
-                  buf[i + 1] = text.charCodeAt(i);
-                }
-                ws.send(buf.buffer);
-              }
+            })
+            .catch(() => {
+              term.write(`\r\n\x1b[31m[upload failed]\x1b[0m\r\n`);
             });
-          }).catch(() => {});
-          return false;
+        };
+        reader.readAsDataURL(blob);
+      };
+
+      // Listen for the `paste` DOM event rather than the async Clipboard API
+      // (navigator.clipboard.read). The async API only works in a secure
+      // context (HTTPS / localhost), so it silently failed on plain-HTTP
+      // lan-mode installs. The paste event's clipboardData is available on
+      // HTTP too. Capture phase so we see the image before xterm's textarea
+      // handler; plain-text paste is left to xterm's built-in handler (which
+      // also reads clipboardData and works on HTTP).
+      const handlePaste = (e: ClipboardEvent): void => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item && item.kind === "file" && item.type.startsWith("image/")) {
+            const blob = item.getAsFile();
+            if (blob) {
+              e.preventDefault();
+              uploadImage(blob);
+              return;
+            }
+          }
         }
-        return true;
-      });
+        // No image — fall through to xterm's native text paste.
+      };
+      el.addEventListener("paste", handlePaste, true);
 
       const observer = new ResizeObserver(() => {
         requestAnimationFrame(() => {
@@ -249,6 +255,7 @@ export function useTerminal(options: UseTerminalOptions) {
       cleanupRef.current = () => {
         observer.disconnect();
         document.removeEventListener("visibilitychange", handleVisibility);
+        el.removeEventListener("paste", handlePaste, true);
       };
 
       connect();
