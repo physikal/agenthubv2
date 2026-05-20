@@ -137,6 +137,9 @@ export function adminWorkspaceBackupRoutes() {
     if (!body.userId || !SAFE_ID.test(body.userId)) {
       return c.json({ error: "userId required" }, 400);
     }
+    if (!body.source || (body.source.kind !== "b2-snapshot" && body.source.kind !== "local")) {
+      return c.json({ error: "source must be { kind: 'b2-snapshot' | 'local', ... }" }, 400);
+    }
 
     return streamSSE(c, async (stream) => {
       const write = (event: string, data: string): void => {

@@ -33,4 +33,14 @@ describe("admin-workspace-backup", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it("POST /restore/run rejects a missing source with 400", async () => {
+    const app = adminWorkspaceBackupRoutes();
+    const res = await app.request("/restore/run", {
+      method: "POST",
+      headers: { "content-type": "application/json", "Confirm-Restore": "yes-i-know-what-this-does" },
+      body: JSON.stringify({ userId: "u1" }),
+    });
+    expect(res.status).toBe(400);
+  });
 });
