@@ -119,6 +119,33 @@ export function detectContainerPort(dockerfilePath: string): number {
   return DEFAULT_CONTAINER_PORT;
 }
 
+/** Largest deploy-error blob we persist to `statusDetail`. The column is
+ *  unbounded SQLite TEXT, but a cap keeps the UI sane. We keep the TAIL —
+ *  `docker compose` / `docker build` print the actionable failure last,
+ *  after a wall of build output. */
+const MAX_DEPLOY_ERROR_CHARS = 4000;
+
+/**
+ * Turn an execFile rejection into a useful failure detail. `docker compose`
+ * writes the real error (port conflict, network clash, build failure) to
+ * stderr; the bare `err.message` is just "Command failed: docker compose …".
+ * Previously we stored `message.slice(0, 500)`, which clipped the actual
+ * cause — an in-workspace agent couldn't diagnose a failed deploy because of
+ * it. Prefer stderr, fall back to message, keep the tail.
+ */
+export function formatExecError(err: unknown): string {
+  let text: string;
+  if (err && typeof err === "object") {
+    const e = err as { message?: string; stderr?: string };
+    text = e.stderr?.trim() ? e.stderr.trim() : (e.message ?? String(err));
+  } else {
+    text = String(err);
+  }
+  return text.length > MAX_DEPLOY_ERROR_CHARS
+    ? `…${text.slice(-MAX_DEPLOY_ERROR_CHARS)}`
+    : text;
+}
+
 /** Write a Dockerfile-free compose that builds `./` and publishes one port. */
 function buildCompose(
   appName: string,
@@ -295,11 +322,11 @@ export async function localDockerDeploy(
           : `[deploy] ${input.name} running (no published port)`,
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[deploy] local ${input.name} failed: ${message}`);
+      const detail = formatExecError(err);
+      console.error(`[deploy] local ${input.name} failed: ${detail}`);
       updateStatus(deployId, {
         status: "failed",
-        statusDetail: message.slice(0, 500),
+        statusDetail: detail,
       });
       // Leave tmpDir in place for post-mortem; deleted on next attempt.
     }
