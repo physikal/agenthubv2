@@ -2,6 +2,7 @@ import { bundleWorkspace } from "./bundler.js";
 import { restoreWorkspace } from "./restorer.js";
 import { parseBundleFilename } from "./manifest.js";
 import { pruneWorkspaceLocal, pruneWorkspaceB2 } from "./retention.js";
+import { startWorkspaceRun, finishWorkspaceRun, toHistoryTrigger } from "./history.js";
 import type { B2Config } from "../install-backup/types.js";
 import { b2Push, b2Pull, b2List, b2RemotePath } from "../install-backup/b2-client.js";
 import { db, schema } from "../../db/index.js";
@@ -52,57 +53,88 @@ export interface WorkspaceBackupRunResult extends WorkspaceBackupResult {
 export async function runWorkspaceBackup(
   input: WorkspaceBackupRunInput,
 ): Promise<WorkspaceBackupRunResult> {
-  const dest = userDir(input.userId);
-  mkdirSync(dest, { recursive: true });
-  input.onLog?.(`[ws-backup] bundling /home/coder for ${input.userId}`);
-  const bundleArgs: Parameters<typeof bundleWorkspace>[0] = {
-    userId: input.userId,
-    userEmail: input.userEmail,
-    workspaceImageSha: input.workspaceImageSha,
-    trigger: input.trigger,
-    destDir: dest,
-  };
-  if (input.note !== undefined) bundleArgs.note = input.note;
-  const bundle = await bundleWorkspace(bundleArgs);
-  input.onLog?.(
-    `[ws-backup] bundle ${bundle.bundlePath} (${formatBytes(bundle.bytes)})`,
-  );
-
-  let b2Path: string | null = null;
-  if (input.b2) {
-    input.onLog?.(`[ws-backup] pushing to B2`);
-    const filename = bundle.bundlePath.split("/").pop() as string;
-    const remote = b2WorkspacesPath(input.b2, input.userId, filename);
-    const cfgForUser: B2Config = {
-      ...input.b2,
-      pathPrefix: `${input.b2.pathPrefix.replace(/\/+$/, "")}/workspaces/${input.userId}`,
-    };
-    await b2Push(cfgForUser, bundle.bundlePath, filename, (l) =>
-      input.onLog?.(`[rclone] ${l}`),
-    );
-    b2Path = remote;
-    input.onLog?.(`[ws-backup] pushed → ${remote}`);
+  let runId: string | null = null;
+  try {
+    runId = startWorkspaceRun(input.userId, "save", toHistoryTrigger(input.trigger));
+  } catch {
+    // history is best-effort
   }
 
-  const keepLast = input.keepLast ?? 10;
-  if (keepLast > 0) {
-    const localPruned = pruneWorkspaceLocal(dest, keepLast);
-    if (localPruned.length > 0) input.onLog?.(`[ws-backup] pruned ${localPruned.length} old local bundle(s)`);
+  try {
+    const dest = userDir(input.userId);
+    mkdirSync(dest, { recursive: true });
+    input.onLog?.(`[ws-backup] bundling /home/coder for ${input.userId}`);
+    const bundleArgs: Parameters<typeof bundleWorkspace>[0] = {
+      userId: input.userId,
+      userEmail: input.userEmail,
+      workspaceImageSha: input.workspaceImageSha,
+      trigger: input.trigger,
+      destDir: dest,
+    };
+    if (input.note !== undefined) bundleArgs.note = input.note;
+    const bundle = await bundleWorkspace(bundleArgs);
+    input.onLog?.(
+      `[ws-backup] bundle ${bundle.bundlePath} (${formatBytes(bundle.bytes)})`,
+    );
+
+    let b2Path: string | null = null;
     if (input.b2) {
+      input.onLog?.(`[ws-backup] pushing to B2`);
+      const filename = bundle.bundlePath.split("/").pop() as string;
+      const remote = b2WorkspacesPath(input.b2, input.userId, filename);
       const cfgForUser: B2Config = {
         ...input.b2,
         pathPrefix: `${input.b2.pathPrefix.replace(/\/+$/, "")}/workspaces/${input.userId}`,
       };
-      try {
-        const b2Pruned = await pruneWorkspaceB2(cfgForUser, keepLast);
-        if (b2Pruned.length > 0) input.onLog?.(`[ws-backup] pruned ${b2Pruned.length} old B2 bundle(s)`);
-      } catch (err) {
-        input.onLog?.(`[ws-backup] B2 prune skipped: ${err instanceof Error ? err.message : String(err)}`);
+      await b2Push(cfgForUser, bundle.bundlePath, filename, (l) =>
+        input.onLog?.(`[rclone] ${l}`),
+      );
+      b2Path = remote;
+      input.onLog?.(`[ws-backup] pushed → ${remote}`);
+    }
+
+    const keepLast = input.keepLast ?? 10;
+    if (keepLast > 0) {
+      const localPruned = pruneWorkspaceLocal(dest, keepLast);
+      if (localPruned.length > 0) input.onLog?.(`[ws-backup] pruned ${localPruned.length} old local bundle(s)`);
+      if (input.b2) {
+        const cfgForUser: B2Config = {
+          ...input.b2,
+          pathPrefix: `${input.b2.pathPrefix.replace(/\/+$/, "")}/workspaces/${input.userId}`,
+        };
+        try {
+          const b2Pruned = await pruneWorkspaceB2(cfgForUser, keepLast);
+          if (b2Pruned.length > 0) input.onLog?.(`[ws-backup] pruned ${b2Pruned.length} old B2 bundle(s)`);
+        } catch (err) {
+          input.onLog?.(`[ws-backup] B2 prune skipped: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     }
-  }
 
-  return { ...bundle, b2Path };
+    if (runId) {
+      try {
+        finishWorkspaceRun(runId, "success", {
+          bytes: bundle.bytes,
+          localPath: bundle.bundlePath,
+          b2Path,
+        });
+      } catch {
+        // history is best-effort
+      }
+    }
+    return { ...bundle, b2Path };
+  } catch (err) {
+    if (runId) {
+      try {
+        finishWorkspaceRun(runId, "failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      } catch {
+        // history is best-effort
+      }
+    }
+    throw err;
+  }
 }
 
 export interface WorkspaceRestoreRunInput {
@@ -124,6 +156,33 @@ export interface WorkspaceRestoreRunResult {
 
 export async function runWorkspaceRestore(
   input: WorkspaceRestoreRunInput,
+): Promise<WorkspaceRestoreRunResult> {
+  let runId: string | null = null;
+  try {
+    runId = startWorkspaceRun(input.userId, "restore", "manual");
+  } catch {
+    // history is best-effort
+  }
+
+  try {
+    return await runWorkspaceRestoreInner(input, runId);
+  } catch (err) {
+    if (runId) {
+      try {
+        finishWorkspaceRun(runId, "failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      } catch {
+        // history is best-effort
+      }
+    }
+    throw err;
+  }
+}
+
+async function runWorkspaceRestoreInner(
+  input: WorkspaceRestoreRunInput,
+  runId: string | null,
 ): Promise<WorkspaceRestoreRunResult> {
   let bundlePath = input.localBundlePath;
 
@@ -203,6 +262,13 @@ export async function runWorkspaceRestore(
   input.onLog?.(
     `[ws-restore] done — ${formatBytes(result.extractedBytes)} on-volume`,
   );
+  if (runId) {
+    try {
+      finishWorkspaceRun(runId, "success", { bytes: result.extractedBytes });
+    } catch {
+      // history is best-effort
+    }
+  }
   return { source: bundlePath, extractedBytes: result.extractedBytes };
 }
 
