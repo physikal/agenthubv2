@@ -256,9 +256,13 @@ export async function localDockerDeploy(
       }
 
       updateStatus(deployId, { statusDetail: "Building + starting..." });
+      // Explicit `-f docker-compose.yml` (not just cwd discovery) so a magic
+      // COMPOSE_FILE env var in this container's environment can never
+      // redirect us at the AgentHub stack's compose file. See the
+      // AGENTHUB_COMPOSE_FILE note in compose/docker-compose.yml.
       await execFileAsync(
         "docker",
-        ["compose", "-p", proj, "up", "-d", "--build"],
+        ["compose", "-p", proj, "-f", "docker-compose.yml", "up", "-d", "--build"],
         { cwd: tmpDir, timeout: 600_000 },
       );
 

@@ -179,7 +179,7 @@ app.route("/api/packages", packagesRoutes(packageManager));
 app.route("/api", deployRoutes());
 
 const envOverrides = new EnvOverrides({
-  envPath: process.env["COMPOSE_ENV_FILE"] ?? "compose/.env",
+  envPath: process.env["AGENTHUB_COMPOSE_ENV_FILE"] ?? "compose/.env",
 });
 
 // Periodically poll upstream registries for fresh CLI versions. Writes into
