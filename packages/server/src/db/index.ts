@@ -262,12 +262,29 @@ export function initDb(): void {
     }
   }
 
-  const deleted = sqlite
-    .prepare("DELETE FROM session_tokens WHERE expires_at < ?")
-    .run(Date.now());
-  if (deleted.changes > 0) {
-    console.log(`[db] cleaned up ${String(deleted.changes)} expired session token(s)`);
+  const deleted = cleanupExpiredSessionTokens();
+  if (deleted > 0) {
+    console.log(`[db] cleaned up ${String(deleted)} expired session token(s)`);
   }
+}
+
+/**
+ * Delete session tokens whose expiry is in the past. Returns the number
+ * removed.
+ *
+ * CRITICAL: `expires_at` is a Drizzle `mode: "timestamp"` column, which
+ * stores Unix **seconds** — not milliseconds. The comparison value MUST be
+ * `Date.now() / 1000`. Passing raw `Date.now()` (ms) compares ~1.76e9
+ * (seconds) against ~1.76e12 (ms), which is always true and silently wipes
+ * EVERY token on each run — i.e. logs everyone out hourly. (Regression
+ * fixed after users reported being logged out within an hour of activity.)
+ */
+export function cleanupExpiredSessionTokens(): number {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const res = sqlite
+    .prepare("DELETE FROM session_tokens WHERE expires_at < ?")
+    .run(nowSeconds);
+  return res.changes;
 }
 
 function addColumnIfMissing(table: string, column: string, type: string): void {
@@ -284,7 +301,7 @@ function addColumnIfMissing(table: string, column: string, type: string): void {
 
 setInterval(() => {
   try {
-    sqlite.prepare("DELETE FROM session_tokens WHERE expires_at < ?").run(Date.now());
+    cleanupExpiredSessionTokens();
   } catch {
     // DB may be closed during shutdown
   }
