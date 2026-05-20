@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitSecrets, infraSecretPath } from "./helpers.js";
+import { splitSecrets, infraSecretPath, ALL_SECRET_FIELDS } from "./helpers.js";
 
 describe("splitSecrets", () => {
   it("moves Cloudflare apiToken to secrets and keeps zoneId as metadata", () => {
@@ -53,6 +53,14 @@ describe("splitSecrets", () => {
       const { metadata, secrets } = splitSecrets(provider, { apiKey: "k" });
       expect(secrets).toEqual({ apiKey: "k" });
       expect(metadata).toEqual({});
+    }
+  });
+});
+
+describe("ALL_SECRET_FIELDS", () => {
+  it("covers every provider secret field so API masking can't drift", () => {
+    for (const field of ["pat", "apiToken", "sshPrivateKey", "b2AppKey", "apiKey"]) {
+      expect(ALL_SECRET_FIELDS.has(field)).toBe(true);
     }
   });
 });

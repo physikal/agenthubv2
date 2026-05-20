@@ -8,6 +8,7 @@ import {
   resolveInfraConfig,
   storeInfraSecrets,
   deleteInfraSecrets,
+  ALL_SECRET_FIELDS,
 } from "../services/secrets/helpers.js";
 import {
   getSecretStore,
@@ -22,13 +23,6 @@ import { verifyNonHostingCredentials } from "../services/verify.js";
  * land in Phase 5 with their own provision/verify/destroy flows.
  */
 
-const MASKED_FIELDS = new Set([
-  "tokenSecret",
-  "apiToken",
-  "sshPrivateKey",
-  "b2AppKey",
-  "apiKey",
-]);
 type Provider = (typeof schema.infrastructureConfigs.$inferSelect)["provider"];
 const KNOWN_PROVIDERS: Provider[] = [
   "docker",
@@ -59,7 +53,7 @@ function maskConfig(configJson: string): Record<string, unknown> {
   const parsed = JSON.parse(configJson) as Record<string, unknown>;
   const masked: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(parsed)) {
-    if (MASKED_FIELDS.has(key) && typeof value === "string" && value.length > 4) {
+    if (ALL_SECRET_FIELDS.has(key) && typeof value === "string" && value.length > 4) {
       masked[key] = "•".repeat(8) + value.slice(-4);
     } else {
       masked[key] = value;

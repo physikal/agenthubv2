@@ -42,6 +42,14 @@ export function splitSecrets(
   return { metadata, secrets };
 }
 
+/**
+ * Union of every provider's secret field names. Drives API-response masking so
+ * the mask list can never drift from the set of fields split into Infisical.
+ */
+export const ALL_SECRET_FIELDS: ReadonlySet<string> = new Set(
+  Object.values(SECRET_FIELDS).flat(),
+);
+
 export function infraSecretPath(userId: string, infraId: string): string {
   return `/users/${userId}/infra/${infraId}`;
 }

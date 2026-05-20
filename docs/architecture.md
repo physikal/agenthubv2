@@ -160,6 +160,14 @@ Transitions come from agent WS messages (`type: "status"`) or from driver `statu
 - Agent-to-server: `Authorization: AgentToken {per-session-agentToken}`. One workspace → one session → one token.
 - Admin role gates `/api/admin/*`. Single-tenant platform; no tenant isolation in code, just user isolation.
 
+## Trust model
+
+AgentHub is built for self-hosted LAN installs, not as a hardened public multi-tenant service. Account creation is admin-only — there is no open signup.
+
+- **Authenticated users are semi-trusted.** Every session gets a workspace container on the shared `agenthub` Docker network alongside the internal services (Infisical, Postgres, Redis, the server), and the user has a root shell in that container. So an authenticated user can already reach those services and the rest of the LAN directly. Don't hand accounts to people you wouldn't give LAN access.
+- **User isolation, not tenant isolation.** A user can't read another user's sessions, secrets (Infisical `/users/{userId}/...`), or infra configs — every route scopes to the server-derived `user.id`. But there is no network or kernel sandbox between a user's workspace and the platform's internals.
+- **Outbound fetches of user-supplied URLs** (AI provider `baseUrl`, Dokploy `baseUrl`) run through `services/ssrf-guard.ts`, which blocks loopback and link-local targets — notably the cloud metadata endpoint `169.254.169.254` — before connecting. RFC 1918 private addresses stay allowed so LAN-hosted Dokploy/AI endpoints keep working. This is defense-in-depth for cloud deploys; it does not (and is not meant to) sandbox an already-LAN-resident user.
+
 ## Terminal protocol
 
 ttyd uses ASCII type bytes for framing. Server → browser:

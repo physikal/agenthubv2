@@ -13,6 +13,7 @@
  * UI shows the issues list directly. The route never sees an exception.
  */
 import type { ProviderConfigCheck } from "./providers/types.js";
+import { assertSafeProviderUrl } from "./ssrf-guard.js";
 
 const ANTHROPIC_DEFAULT_BASE = "https://api.anthropic.com";
 const OPENAI_DEFAULT_BASE = "https://api.openai.com";
@@ -30,6 +31,7 @@ async function fetchWithTimeout(
   init: RequestInit = {},
   timeoutMs = VERIFY_TIMEOUT_MS,
 ): Promise<Response> {
+  await assertSafeProviderUrl(url);
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -67,8 +69,7 @@ export async function verifyAnthropicKey(
       return { ok: true, issues: [] };
     }
     if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      return { ok: false, issues: [`Anthropic API ${resp.status}: ${body.slice(0, 200)}`] };
+      return { ok: false, issues: [`Anthropic API returned ${resp.status}`] };
     }
     return { ok: true, issues: [] };
   } catch (err) {
@@ -90,8 +91,7 @@ export async function verifyOpenAIKey(
       return { ok: false, issues: ["apiKey rejected (401/403) — check the value"] };
     }
     if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      return { ok: false, issues: [`OpenAI API ${resp.status}: ${body.slice(0, 200)}`] };
+      return { ok: false, issues: [`OpenAI API returned ${resp.status}`] };
     }
     return { ok: true, issues: [] };
   } catch (err) {
@@ -128,8 +128,7 @@ export async function verifyMinimaxKey(
       return { ok: true, issues: [] };
     }
     if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      return { ok: false, issues: [`MiniMax API ${resp.status}: ${body.slice(0, 200)}`] };
+      return { ok: false, issues: [`MiniMax API returned ${resp.status}`] };
     }
     return { ok: true, issues: [] };
   } catch (err) {
