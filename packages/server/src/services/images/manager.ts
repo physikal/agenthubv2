@@ -42,7 +42,10 @@ export type ApplyPhase =
 
 export type RunningDigestResolver = (composeService: string) => Promise<string | null>;
 
-const COMPOSE_PATH = process.env["COMPOSE_FILE"] ?? "compose/docker-compose.yml";
+// Non-magic env var (NOT COMPOSE_FILE — that would override the compose file
+// for every `docker compose` call this container makes, breaking the
+// local-docker deployer). Read here and passed via explicit `-f`.
+const COMPOSE_PATH = process.env["AGENTHUB_COMPOSE_FILE"] ?? "compose/docker-compose.yml";
 
 export class ImagesManager {
   constructor(
@@ -190,7 +193,7 @@ export function dockerRunningDigest(): RunningDigestResolver {
     return new Promise((resolve) => {
       const child = spawn("docker", [
         "compose",
-        "-f", process.env["COMPOSE_FILE"] ?? "compose/docker-compose.yml",
+        "-f", process.env["AGENTHUB_COMPOSE_FILE"] ?? "compose/docker-compose.yml",
         "images", "--quiet", service,
       ], { stdio: ["ignore", "pipe", "pipe"] });
       let buf = "";

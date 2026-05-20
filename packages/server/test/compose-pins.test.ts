@@ -34,4 +34,17 @@ describe("compose pin env-overrides", () => {
     expect(CATALOG.redis.defaultPin).toBe("redis:7-alpine");
     expect(CATALOG.infisical.defaultPin).toBe("infisical/infisical:latest-postgres");
   });
+
+  it("does NOT set the magic COMPOSE_FILE/COMPOSE_ENV_FILE env vars on the server", () => {
+    // These are docker-compose magic vars. Setting them in the server
+    // container's environment silently redirects EVERY `docker compose`
+    // call the server makes (e.g. the local-docker deployer) at the
+    // AgentHub stack's compose file. We use AGENTHUB_-prefixed names
+    // instead, read via explicit `-f`. Guard against re-introducing the bug.
+    const compose = readFileSync(composePath, "utf8");
+    expect(compose).not.toMatch(/^\s+COMPOSE_FILE:/m);
+    expect(compose).not.toMatch(/^\s+COMPOSE_ENV_FILE:/m);
+    expect(compose).toMatch(/^\s+AGENTHUB_COMPOSE_FILE:/m);
+    expect(compose).toMatch(/^\s+AGENTHUB_COMPOSE_ENV_FILE:/m);
+  });
 });

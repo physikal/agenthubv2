@@ -195,18 +195,27 @@ services:
       # trap restores ownership consistently across web-UI and CLI paths.
       AGENTHUB_OWNER: ${AGENTHUB_OWNER:-}
 
-      # Both COMPOSE_FILE and COMPOSE_ENV_FILE point at the HOST path of the
-      # repo (mounted at the same path inside this container — see the
-      # second ${AGENTHUB_REPO_DIR} bind below). Why not /repo? Because
-      # `docker compose up` shelled out from the server traverses the host
-      # docker.sock and the daemon resolves bind-mount sources on the host
-      # filesystem. If we pass `-f /repo/compose/docker-compose.yml`, the
-      # daemon tries to mount `/repo/compose/traefik.yml` from the host —
-      # which doesn't exist, so docker bind-creates it as an empty dir and
-      # traefik crashes with "is a directory". Using the host path on both
-      # sides makes the path resolve identically in both views.
-      COMPOSE_FILE: ${AGENTHUB_REPO_DIR}/compose/docker-compose.yml
-      COMPOSE_ENV_FILE: ${AGENTHUB_REPO_DIR}/compose/.env
+      # AGENTHUB_COMPOSE_FILE / _ENV_FILE point at the HOST path of the repo
+      # (mounted at the same path inside this container — see the second
+      # ${AGENTHUB_REPO_DIR} bind below). Why the host path and not /repo?
+      # Because `docker compose up` shelled from this container traverses the
+      # host docker.sock and the daemon resolves bind-mount sources on the
+      # HOST filesystem. Passing `-f /repo/compose/docker-compose.yml` makes
+      # the daemon look for `/repo/compose/traefik.yml` on the host — which
+      # doesn't exist — so docker bind-creates an empty dir and traefik
+      # crashes with "is a directory". The host path resolves identically in
+      # both views.
+      #
+      # IMPORTANT: these are deliberately NOT named COMPOSE_FILE /
+      # COMPOSE_ENV_FILE. Those are *magic* docker-compose env vars — setting
+      # them here would silently override the compose file for EVERY
+      # `docker compose` call this container makes, including the local-docker
+      # deployer (which writes its own compose to a tmpdir and expects cwd
+      # discovery). That bug shipped briefly and made local deploys try to
+      # bring up the whole AgentHub stack. Read these via explicit `-f` /
+      # readPin only — see services/images/manager.ts.
+      AGENTHUB_COMPOSE_FILE: ${AGENTHUB_REPO_DIR}/compose/docker-compose.yml
+      AGENTHUB_COMPOSE_ENV_FILE: ${AGENTHUB_REPO_DIR}/compose/.env
     volumes:
       - agenthub-data:/data
       # Required for PROVISIONER_MODE=docker. If you're running dokploy-remote,
