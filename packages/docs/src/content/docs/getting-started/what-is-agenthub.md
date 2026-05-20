@@ -3,7 +3,7 @@ title: What is AgentHub?
 description: A one-page orientation for a user who just landed on AgentHub after install.
 ---
 
-AgentHub is a self-hosted platform that lets you drive a coding agent from your browser. Log in, click **+ New session**, and a fresh Linux container boots with Claude Code (and friends) pre-installed. You type into a real terminal in the browser; the agent has a persistent home directory, network access, and a dedicated API endpoint for deploying its own apps.
+AgentHub is a self-hosted platform that lets you drive a coding agent from your browser. Log in, click **+ New session**, and a fresh Linux container boots with Claude Code (and friends) installed automatically. You type into a real terminal in the browser; the agent has a persistent home directory, network access, and a dedicated API endpoint for deploying its own apps.
 
 ## What's running on your host
 

@@ -1,32 +1,34 @@
 ---
 title: Agent CLIs — overview
-description: Which CLIs ship in every workspace, which are installable on demand, and how to choose.
+description: Which CLIs auto-install in every workspace, which are opt-in, and how to choose.
 ---
 
-Every AgentHub workspace is a Debian 12 container with Node 22 and a handful of coding-agent CLIs pre-installed. Anything not pre-installed is one click away on the [Packages page](/docs/web-ui/packages/).
+Every AgentHub workspace is a Debian 12 container with Node 22. The coding-agent CLIs are **not** baked into the image — they're managed through the [Packages page](/docs/web-ui/packages/) and installed into your home volume. Three "essential" CLIs install themselves on every session; the rest are one click away.
 
-## Pre-installed in the workspace image
+## Auto-installed every session (essentials)
 
-These are baked into `agenthubv2-workspace:local` (the image built during install). They're on `$PATH` immediately when you open the terminal.
+These are flagged **essential** in the catalog. On every session-active, the agent daemon installs any that aren't already present into `/home/coder/.local/bin` (idempotent — already-installed ones are skipped). They're on `$PATH` once that finishes, a second or two after the terminal opens.
 
 | Command | What it is | Page |
 |---|---|---|
 | `claude` | Anthropic's Claude Code CLI | [Claude Code](/docs/clis/claude-code/) |
 | `opencode` | Open-source multi-model coding agent | [OpenCode](/docs/clis/opencode/) |
-| `mmx` | MiniMax's official agent CLI | [MiniMax](/docs/clis/minimax/) |
-| `claude-minimax` | Shim: `claude` with the MiniMax model preset | [MiniMax](/docs/clis/minimax/) |
+| `codex` | OpenAI's official Codex CLI | — |
 
-Supporting tools also baked in: `rclone`, `gh`, `preview`, `tmux`, `dtach`, `ripgrep`, `fzf`. See [Supporting tools](/docs/clis/supporting-tools/).
+Because they install to your home volume, they persist across session ends and image upgrades — the auto-install only does real work the first time.
 
-## Installable on demand (via Packages)
+Supporting tools **are** baked into the workspace image: `rclone`, `gh`, `preview`, `tmux`, `dtach`, `ripgrep`, `fzf`. See [Supporting tools](/docs/clis/supporting-tools/).
 
-The [Packages page](/docs/web-ui/packages/) in the web UI lists additional CLIs you can install into `/home/coder/.local/bin` in the active session. Because they install into your home volume, they persist across session ends.
+## Opt-in (via Packages)
+
+The [Packages page](/docs/web-ui/packages/) lists the rest. These install into `/home/coder/.local/bin` only when you click **Install**, and persist across session ends the same way.
 
 | Command | What it is | Page |
 |---|---|---|
+| `mmx` / `claude-minimax` | MiniMax's agent CLI + a `claude` shim with the MiniMax preset | [MiniMax](/docs/clis/minimax/) |
 | `droid` | Factory AI's autonomous coding agent | [Droid](/docs/clis/droid/) |
 
-More entries will appear on the Packages page as we add manifests. A package is defined by a single entry in [`packages/server/src/services/packages/catalog.ts`](https://github.com/physikal/agenthubv2/blob/main/packages/server/src/services/packages/catalog.ts).
+More entries appear on the Packages page as we add manifests. A package is defined by a single entry in [`packages/server/src/services/packages/catalog.ts`](https://github.com/physikal/agenthubv2/blob/main/packages/server/src/services/packages/catalog.ts); set `essential: true` to make it auto-install.
 
 ## Which one should I use?
 
@@ -41,7 +43,7 @@ You can switch between them inside one session. They all read and write the same
 
 ## What every agent sees
 
-All four CLIs inherit the workspace's environment. Notable pre-set env vars:
+Every agent CLI inherits the workspace's environment. Notable pre-set env vars:
 
 - `AGENTHUB_URL` — the public URL of your AgentHub install
 - `AGENTHUB_SESSION_ID` — the current session id (used by `preview`)

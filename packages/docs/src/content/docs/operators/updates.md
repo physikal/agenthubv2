@@ -5,6 +5,8 @@ description: How AgentHub upgrades itself — one code path, two triggers.
 
 AgentHub has two ways to trigger an update. They share the same code.
 
+This page covers the **AgentHub application** update — the server, agent, and updater `:local` images, plus DB migrations. Upgrading the bundled stack images (Traefik, Postgres, Redis, Infisical) is a separate, admin-only flow on the [Updates page](/docs/web-ui/updates/). A shared lock means only one of the two can run at a time; the second returns HTTP 409.
+
 ## Trigger 1 — web UI
 
 **Settings → Version panel → Update now** (admin only).

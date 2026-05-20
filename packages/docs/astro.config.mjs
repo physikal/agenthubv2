@@ -52,6 +52,7 @@ export default defineConfig({
           items: [
             { label: "Sessions", slug: "web-ui/sessions" },
             { label: "Packages", slug: "web-ui/packages" },
+            { label: "Updates (admin)", slug: "web-ui/updates" },
             { label: "Integrations", slug: "web-ui/integrations" },
             { label: "Backups", slug: "web-ui/backups" },
             { label: "Secrets", slug: "web-ui/secrets" },

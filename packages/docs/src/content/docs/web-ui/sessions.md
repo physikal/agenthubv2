@@ -32,6 +32,7 @@ Click an active session row. The right pane opens an xterm.js terminal wired to 
 - **Closing the tab** does not kill the shell. The agent daemon keeps the shell attached to a `dtach` socket; reopening the session re-attaches to the same session. Scrollback is preserved.
 - **Resizing the browser** resends a resize event through ttyd so the `$COLUMNS/$LINES` stay correct.
 - **Copy/paste** works with the usual host shortcuts (Cmd+C / Ctrl+C, etc.). Ctrl+C sends SIGINT to the foreground process as you'd expect.
+- **Pasting an image** (screenshot from the clipboard) uploads the bytes to the workspace at `/tmp/uploads/paste-<ts>.png` and types that path into your prompt, so the agent (Claude Code, etc.) can read it as a file. A small chip in the web UI shows upload progress. This works in lan mode over plain HTTP — it listens for the browser `paste` event rather than the Clipboard API, which browsers gate to HTTPS.
 
 The terminal is ttyd speaking WebSocket to the server, which proxies to ttyd inside the container. Protocol details are in [`docs/architecture.md`](https://github.com/physikal/agenthubv2/blob/main/docs/architecture.md#terminal-protocol) — you don't need them unless you're debugging the pipeline.
 

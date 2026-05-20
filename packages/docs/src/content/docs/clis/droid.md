@@ -3,7 +3,7 @@ title: Droid (Factory AI)
 description: Factory AI's autonomous coding agent — installable on demand from the Packages page.
 ---
 
-[Droid](https://app.factory.ai) is Factory AI's coding agent CLI. Unlike Claude Code, OpenCode, and MiniMax, Droid is **not pre-installed** — it lives on the [Packages page](/docs/web-ui/packages/), one click away.
+[Droid](https://app.factory.ai) is Factory AI's coding agent CLI. Like MiniMax, Droid is **opt-in** — it isn't one of the auto-installed essentials (Claude Code, OpenCode, Codex). Install it from the [Packages page](/docs/web-ui/packages/), one click away.
 
 ## Install it
 
