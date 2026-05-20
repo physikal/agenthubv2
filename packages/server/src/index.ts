@@ -25,6 +25,7 @@ import {
   githubWebhookRoutes,
 } from "./routes/github-integration.js";
 import { installBackupRoutes } from "./routes/admin-install-backup.js";
+import { adminWorkspaceBackupRoutes } from "./routes/admin-workspace-backup.js";
 import { adminAgentAuthRoutes } from "./routes/admin-agent-auth.js";
 import { adminUpdatesRoutes } from "./routes/admin-updates.js";
 import { workspaceEnvRoutes } from "./routes/workspace-env.js";
@@ -197,6 +198,7 @@ app.use("/api/admin/*", adminMiddleware);
 app.route("/api/admin", adminRoutes(sessionManager));
 app.route("/api/admin/github-app", githubAppManifestRoutes());
 app.route("/api/admin/install-backup", installBackupRoutes());
+app.route("/api/admin/workspace-backup", adminWorkspaceBackupRoutes());
 app.route("/api/admin/agent-auth", adminAgentAuthRoutes());
 app.route("/api/admin/updates", adminUpdatesRoutes({
   env: envOverrides,
