@@ -165,6 +165,9 @@ export const backupRuns = sqliteTable("backup_runs", {
   fileCount: integer("file_count"),
   snapshotAt: integer("snapshot_at", { mode: "timestamp" }),
   error: text("error"),
+  localPath: text("local_path"),
+  b2Path: text("b2_path"),
+  trigger: text("trigger", { enum: ["manual", "cli", "auto-update"] }),
 });
 
 /**

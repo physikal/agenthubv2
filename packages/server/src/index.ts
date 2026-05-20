@@ -11,7 +11,6 @@ import { createProvisioner } from "./services/provisioner/index.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { authRoutes } from "./routes/auth.js";
 import { adminRoutes } from "./routes/admin.js";
-import { userRoutes } from "./routes/user.js";
 import { infraRoutes } from "./routes/infra.js";
 import { deployRoutes } from "./routes/deploy.js";
 import { agentGithubRoutes } from "./routes/agent-github.js";
@@ -25,9 +24,11 @@ import {
   githubWebhookRoutes,
 } from "./routes/github-integration.js";
 import { installBackupRoutes } from "./routes/admin-install-backup.js";
+import { adminWorkspaceBackupRoutes } from "./routes/admin-workspace-backup.js";
 import { adminAgentAuthRoutes } from "./routes/admin-agent-auth.js";
 import { adminUpdatesRoutes } from "./routes/admin-updates.js";
 import { workspaceEnvRoutes } from "./routes/workspace-env.js";
+import { userWorkspaceBackupRoutes } from "./routes/user-workspace-backup.js";
 import { EnvOverrides } from "./services/images/env-overrides.js";
 import { dockerRunningDigest } from "./services/images/manager.js";
 import { ImagePoller } from "./services/images/poller.js";
@@ -170,8 +171,8 @@ app.use("/api/*", async (c, next) => {
 });
 app.route("/api/sessions", sessionsRoutes(sessionManager));
 app.route("/api/sessions", previewRoutes(sessionManager));
-app.route("/api/user", userRoutes(sessionManager));
 app.route("/api/user/workspace-env", workspaceEnvRoutes());
+app.route("/api/user/workspace-backup", userWorkspaceBackupRoutes());
 app.route("/api/infra", infraRoutes());
 app.route("/api/integrations/github", githubIntegrationRoutes());
 app.route("/api/integrations/agents", integrationsAgentsRoutes(sessionManager));
@@ -197,6 +198,7 @@ app.use("/api/admin/*", adminMiddleware);
 app.route("/api/admin", adminRoutes(sessionManager));
 app.route("/api/admin/github-app", githubAppManifestRoutes());
 app.route("/api/admin/install-backup", installBackupRoutes());
+app.route("/api/admin/workspace-backup", adminWorkspaceBackupRoutes());
 app.route("/api/admin/agent-auth", adminAgentAuthRoutes());
 app.route("/api/admin/updates", adminUpdatesRoutes({
   env: envOverrides,

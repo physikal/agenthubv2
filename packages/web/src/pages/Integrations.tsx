@@ -11,7 +11,6 @@ type Provider =
   | "digitalocean-apps"
   | "docker"
   | "dokploy"
-  | "b2"
   | "github"
   | "ai-anthropic"
   | "ai-minimax"
@@ -23,7 +22,6 @@ const PROVIDER_LABEL: Record<Provider, string> = {
   "digitalocean-apps": "DigitalOcean App Platform",
   docker: "Docker host",
   dokploy: "Dokploy",
-  b2: "Backblaze B2",
   github: "GitHub",
   "ai-anthropic": "Anthropic API",
   "ai-minimax": "MiniMax",
@@ -337,14 +335,6 @@ function renderFields(
           )}
         </>
       );
-    case "b2":
-      return (
-        <>
-          {input("b2KeyId", "Application Key ID", "00abc1234def")}
-          {input("b2Bucket", "Bucket Name", "my-backup-bucket")}
-          {input("b2AppKey", "Application Key", "K001xxxx...", "password", 2)}
-        </>
-      );
     case "digitalocean-apps":
       return (
         <>
@@ -479,7 +469,6 @@ function AddConfigForm({ onCreated }: { onCreated: () => void }) {
             <optgroup label="DNS / VCS / Storage">
               <option value="cloudflare">Cloudflare DNS</option>
               <option value="github">GitHub</option>
-              <option value="b2">Backblaze B2 (backups)</option>
             </optgroup>
             <optgroup label="AI Providers">
               <option value="ai-anthropic">Anthropic API</option>
@@ -947,7 +936,7 @@ export function Integrations() {
         {configs.length === 0 && !showAdd ? (
           <div className="text-center py-12">
             <p className="text-zinc-500 text-sm mb-2">No integrations configured</p>
-            <p className="text-zinc-600 text-xs">Add Cloudflare DNS, a Docker host, DigitalOcean, Dokploy, or Backblaze B2.</p>
+            <p className="text-zinc-600 text-xs">Add Cloudflare DNS, a Docker host, DigitalOcean, or Dokploy.</p>
           </div>
         ) : (
           configs.map((c) => (

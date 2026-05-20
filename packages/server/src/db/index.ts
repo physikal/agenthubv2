@@ -111,7 +111,10 @@ export function initDb(): void {
       bytes INTEGER,
       file_count INTEGER,
       snapshot_at INTEGER,
-      error TEXT
+      error TEXT,
+      local_path TEXT,
+      b2_path TEXT,
+      trigger TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_backup_runs_user_started ON backup_runs(user_id, started_at);
@@ -235,6 +238,9 @@ export function initDb(): void {
   addColumnIfMissing("install_backup_config", "endpoint", "TEXT");
   addColumnIfMissing("install_backup_config", "region", "TEXT");
   addColumnIfMissing("sessions", "purpose", "TEXT NOT NULL DEFAULT 'user'");
+  addColumnIfMissing("backup_runs", "local_path", "TEXT");
+  addColumnIfMissing("backup_runs", "b2_path", "TEXT");
+  addColumnIfMissing("backup_runs", "trigger", "TEXT");
 
   // Seed default admin account. Password priority:
   //   1. AGENTHUB_ADMIN_PASSWORD env var (installer writes this into .env)

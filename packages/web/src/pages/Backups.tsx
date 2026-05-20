@@ -1,35 +1,7 @@
-import { Fragment, useEffect, useState, useCallback } from "react";
-import { Link } from "react-router-dom";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { api } from "../lib/api.ts";
-
-interface BackupConfig {
-  configured: boolean;
-  b2KeyId?: string;
-  b2AppKey?: string;
-  b2Bucket?: string;
-}
-
-interface BackupSize {
-  count: number;
-  bytes: number;
-}
-
-interface BackupRun {
-  id: string;
-  kind: "save" | "restore";
-  status: "running" | "success" | "failed";
-  startedAt: number;
-  endedAt: number | null;
-  bytes: number | null;
-  fileCount: number | null;
-  snapshotAt: number | null;
-  error: string | null;
-}
-
-interface VersioningStatus {
-  status: "enabled" | "limited" | "disabled" | "unknown";
-  retentionDays: number | null;
-}
+import { streamRun } from "../lib/sse.ts";
+import type { WorkspaceRun } from "../components/workspace-backup/HistoryTable.tsx";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -38,102 +10,24 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
 }
 
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${String(ms)}ms`;
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${String(s)}s`;
-  const m = Math.floor(s / 60);
-  return `${String(m)}m ${String(s % 60)}s`;
-}
-
-function formatTimestamp(ts: number): string {
-  const d = new Date(ts);
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function formatRelative(ts: number): string {
-  const diff = Date.now() - ts;
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${String(minutes)}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${String(hours)}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${String(days)}d ago`;
-  return formatTimestamp(ts);
-}
-
 export function Backups() {
-  // Config state — credentials themselves are managed on the Integrations page.
-  const [config, setConfig] = useState<BackupConfig | null>(null);
+  const [runs, setRuns] = useState<WorkspaceRun[]>([]);
+  const [running, setRunning] = useState(false);
+  const [log, setLog] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState<string | null>(null);
 
-  // Status state
-  const [size, setSize] = useState<BackupSize | null>(null);
-  const [loadingSize, setLoadingSize] = useState(false);
+  // Restore flow state: the snapshot the user picked, plus its confirm/log.
+  const [restoreTarget, setRestoreTarget] = useState<WorkspaceRun | null>(null);
+  const [restoreConfirm, setRestoreConfirm] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreLog, setRestoreLog] = useState<string[]>([]);
 
-  // Runs state
-  const [runs, setRuns] = useState<BackupRun[]>([]);
-  const [loadingRuns, setLoadingRuns] = useState(false);
-
-  // Versioning probe
-  const [versioning, setVersioning] = useState<VersioningStatus | null>(null);
-
-  // Operation state
-  const [operating, setOperating] = useState<"save" | "restore" | null>(null);
-  const [opMessage, setOpMessage] = useState<{ text: string; error: boolean } | null>(null);
-
-  // Details panel: id of the run whose error is being inspected
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
-
-  const fetchConfig = useCallback(async () => {
+  const reloadRuns = useCallback(async () => {
     try {
-      const res = await api("/api/user/backup");
+      const res = await api("/api/user/workspace-backup");
       if (res.ok) {
-        setConfig((await res.json()) as BackupConfig);
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const fetchSize = useCallback(async () => {
-    setLoadingSize(true);
-    try {
-      const res = await api("/api/user/backup/status");
-      if (res.ok) {
-        setSize((await res.json()) as BackupSize);
-      }
-    } catch {
-      // ignore
-    } finally {
-      setLoadingSize(false);
-    }
-  }, []);
-
-  const fetchRuns = useCallback(async () => {
-    setLoadingRuns(true);
-    try {
-      const res = await api("/api/user/backup/runs");
-      if (res.ok) {
-        setRuns((await res.json()) as BackupRun[]);
-      }
-    } catch {
-      // ignore
-    } finally {
-      setLoadingRuns(false);
-    }
-  }, []);
-
-  const fetchVersioning = useCallback(async () => {
-    try {
-      const res = await api("/api/user/backup/versioning");
-      if (res.ok) {
-        setVersioning((await res.json()) as VersioningStatus);
+        const j = (await res.json()) as { runs: WorkspaceRun[] };
+        setRuns(j.runs);
       }
     } catch {
       // ignore
@@ -141,364 +35,263 @@ export function Backups() {
   }, []);
 
   useEffect(() => {
-    void fetchConfig();
-  }, [fetchConfig]);
+    void reloadRuns();
+  }, [reloadRuns]);
 
-  useEffect(() => {
-    if (config?.configured) {
-      void fetchSize();
-      void fetchRuns();
-      void fetchVersioning();
-    }
-  }, [config?.configured, fetchSize, fetchRuns, fetchVersioning]);
+  function runBackup() {
+    setRunning(true);
+    setLog([]);
+    void streamRun(
+      "/api/user/workspace-backup/run",
+      {},
+      {
+        onLog: (l) => setLog((p) => [...p, l]),
+        onDone: () => {
+          setRunning(false);
+          void reloadRuns();
+        },
+        onError: (e) => {
+          setLog((p) => [...p, `ERROR: ${e}`]);
+          setRunning(false);
+        },
+      },
+    );
+  }
 
-  const handleBackup = async () => {
-    setOperating("save");
-    setOpMessage(null);
-    try {
-      const res = await api("/api/user/backup/save", { method: "POST" });
-      if (res.ok) {
-        setOpMessage({ text: "Backup complete", error: false });
-        void fetchSize();
-      } else {
-        const body = (await res.json()) as { error?: string };
-        setOpMessage({ text: body.error ?? "Backup failed", error: true });
-      }
-    } catch {
-      setOpMessage({ text: "Backup failed", error: true });
-    } finally {
-      setOperating(null);
-      void fetchRuns();
-    }
-  };
+  function openRestore(run: WorkspaceRun) {
+    setRestoreTarget(run);
+    setRestoreConfirm(false);
+    setRestoreLog([]);
+  }
 
-  const handleRestore = async (snapshotAt?: { iso: string; label: string }) => {
-    const label = snapshotAt
-      ? `Restore files as they were on ${snapshotAt.label}? This will overwrite current local files.\n\nNote: requires B2 version history to be preserved — if it isn't, the restore will fetch only files still present at that timestamp.`
-      : "Restore will overwrite local files with the latest backup contents. Continue?";
-    if (!confirm(label)) return;
+  function closeRestore() {
+    setRestoreTarget(null);
+    setRestoreConfirm(false);
+    setRestoreLog([]);
+  }
 
-    setOperating("restore");
-    setOpMessage(null);
-    try {
-      const res = await api("/api/user/backup/restore", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(snapshotAt ? { snapshotAt: snapshotAt.iso } : {}),
-      });
-      if (res.ok) {
-        setOpMessage({
-          text: snapshotAt ? `Restored from ${snapshotAt.label}` : "Restore complete",
-          error: false,
-        });
-      } else {
-        const body = (await res.json()) as { error?: string };
-        setOpMessage({ text: body.error ?? "Restore failed", error: true });
-      }
-    } catch {
-      setOpMessage({ text: "Restore failed", error: true });
-    } finally {
-      setOperating(null);
-      void fetchRuns();
-    }
-  };
-
-  const successfulSaves = runs.filter((r) => r.kind === "save" && r.status === "success");
+  function runRestore() {
+    if (!restoreTarget) return;
+    const filename = restoreTarget.localPath?.split("/").pop();
+    if (!filename) return;
+    setRestoring(true);
+    setRestoreLog([]);
+    void streamRun(
+      "/api/user/workspace-backup/restore/run",
+      { source: { kind: "local", filename }, force: true },
+      {
+        onLog: (l) => setRestoreLog((p) => [...p, l]),
+        onDone: () => {
+          setRestoring(false);
+          void reloadRuns();
+        },
+        onError: (e) => {
+          setRestoreLog((p) => [...p, `ERROR: ${e}`]);
+          setRestoring(false);
+        },
+      },
+      { "Confirm-Restore": "yes-i-know-what-this-does" },
+    );
+  }
 
   return (
     <div className="flex-1 overflow-auto p-6">
-      <h2 className="text-2xl font-semibold mb-6">Backups</h2>
+      <h2 className="text-2xl font-semibold mb-2">Backups</h2>
+      <p className="text-sm text-zinc-500 mb-6 max-w-3xl">
+        Back up everything under your workspace home, except{" "}
+        <code className="text-zinc-400">node_modules</code>,{" "}
+        <code className="text-zinc-400">.cache</code>, and reinstallable CLI tools.
+      </p>
 
       <div className="max-w-3xl space-y-6">
-
-        {/* Versioning Banner */}
-        {config?.configured && versioning && (
-          <VersioningBanner status={versioning} onRecheck={() => void fetchVersioning()} />
-        )}
-
-        {/* Status Card */}
-        {config?.configured && (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 bg-green-400 rounded-full" />
-                <span className="text-sm text-zinc-300">Connected to B2</span>
-                <span className="text-xs text-zinc-500">· {config.b2Bucket}</span>
-              </div>
-              <Link
-                to="/integrations"
-                className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-              >
-                manage in Integrations →
-              </Link>
-            </div>
-
-            <div className="flex items-baseline gap-2 mb-4">
-              {loadingSize ? (
-                <span className="text-sm text-zinc-500">Checking...</span>
-              ) : size ? (
-                <>
-                  <span className="text-2xl font-semibold text-zinc-100">
-                    {formatBytes(size.bytes)}
-                  </span>
-                  <span className="text-sm text-zinc-500">
-                    {String(size.count)} files
-                  </span>
-                </>
-              ) : (
-                <span className="text-sm text-zinc-500">No backups yet</span>
-              )}
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                onClick={() => void handleBackup()}
-                disabled={operating !== null}
-                className="flex-1 py-2.5 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {operating === "save" ? "Backing up..." : "Backup now"}
-              </button>
-              <button
-                onClick={() => void handleRestore()}
-                disabled={operating !== null}
-                className="flex-1 py-2.5 text-sm font-medium bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-lg hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {operating === "restore" ? "Restoring..." : "Restore latest"}
-              </button>
-              <button
-                onClick={() => {
-                  void fetchSize();
-                  void fetchRuns();
-                }}
-                disabled={loadingSize || loadingRuns}
-                className="px-3 py-2.5 text-sm text-zinc-400 border border-zinc-700 rounded-lg hover:text-zinc-200 transition-colors"
-                title="Refresh"
-              >
-                {loadingSize || loadingRuns ? "..." : "↻"}
-              </button>
-            </div>
-
-            {opMessage && (
-              <p className={`mt-3 text-sm ${opMessage.error ? "text-red-400" : "text-green-400"}`}>
-                {opMessage.text}
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* Runs / History */}
-        {config?.configured && (
-          <div>
-            <div className="flex items-baseline justify-between mb-3">
-              <h3 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">
-                Previous runs
-              </h3>
-              <span className="text-xs text-zinc-600">
-                {runs.length > 0 ? `${String(runs.length)} runs` : ""}
-              </span>
-            </div>
-
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-              {loadingRuns && runs.length === 0 ? (
-                <div className="p-6 text-center text-sm text-zinc-500">Loading...</div>
-              ) : runs.length === 0 ? (
-                <div className="p-6 text-center text-sm text-zinc-500">
-                  No runs yet. Click "Backup now" to create the first one.
-                </div>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-xs text-zinc-500 border-b border-zinc-800">
-                      <th className="text-left font-medium px-4 py-2">When</th>
-                      <th className="text-left font-medium px-4 py-2">Kind</th>
-                      <th className="text-left font-medium px-4 py-2">Status</th>
-                      <th className="text-right font-medium px-4 py-2">Duration</th>
-                      <th className="text-right font-medium px-4 py-2">Size</th>
-                      <th className="text-right font-medium px-4 py-2"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {runs.map((run) => {
-                      const duration = run.endedAt ? run.endedAt - run.startedAt : null;
-                      const isRestoreFromSnapshot = run.kind === "restore" && run.snapshotAt;
-                      const canRestoreFromHere =
-                        run.kind === "save" && run.status === "success";
-                      const expanded = expandedRunId === run.id;
-
-                      return (
-                        <Fragment key={run.id}>
-                          <tr className="border-t border-zinc-800/60 hover:bg-zinc-800/30 transition-colors">
-                            <td className="px-4 py-2.5">
-                              <div className="text-zinc-200">{formatRelative(run.startedAt)}</div>
-                              <div className="text-xs text-zinc-500">{formatTimestamp(run.startedAt)}</div>
-                            </td>
-                            <td className="px-4 py-2.5">
-                              <span className={`text-xs font-medium ${run.kind === "save" ? "text-purple-300" : "text-blue-300"}`}>
-                                {run.kind}
-                              </span>
-                              {isRestoreFromSnapshot && run.snapshotAt && (
-                                <div className="text-[10px] text-zinc-500 mt-0.5">
-                                  from {formatTimestamp(run.snapshotAt)}
-                                </div>
-                              )}
-                            </td>
-                            <td className="px-4 py-2.5">
-                              <StatusBadge status={run.status} />
-                            </td>
-                            <td className="px-4 py-2.5 text-right text-zinc-400 tabular-nums">
-                              {duration !== null ? formatDuration(duration) : "—"}
-                            </td>
-                            <td className="px-4 py-2.5 text-right text-zinc-400 tabular-nums">
-                              {run.bytes !== null ? formatBytes(run.bytes) : "—"}
-                            </td>
-                            <td className="px-4 py-2.5 text-right">
-                              <div className="flex gap-1.5 justify-end">
-                                {run.status === "failed" && (
-                                  <button
-                                    onClick={() =>
-                                      setExpandedRunId(expanded ? null : run.id)
-                                    }
-                                    className="px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
-                                  >
-                                    {expanded ? "Hide" : "Details"}
-                                  </button>
-                                )}
-                                {canRestoreFromHere && run.endedAt && (
-                                  <button
-                                    onClick={() =>
-                                      void handleRestore({
-                                        iso: new Date(run.endedAt as number).toISOString(),
-                                        label: formatTimestamp(run.endedAt as number),
-                                      })
-                                    }
-                                    disabled={operating !== null}
-                                    className="px-2.5 py-1 text-xs font-medium text-zinc-300 border border-zinc-700 rounded hover:bg-zinc-700 hover:text-zinc-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                                    title="Restore files as they were at this point in time (requires B2 version history)"
-                                  >
-                                    Restore from here
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                          {expanded && run.error && (
-                            <tr className="border-t border-zinc-800/60 bg-zinc-950/60">
-                              <td colSpan={6} className="px-4 py-3">
-                                <pre className="text-xs text-red-300 whitespace-pre-wrap break-all font-mono">
-                                  {run.error}
-                                </pre>
-                              </td>
-                            </tr>
-                          )}
-                        </Fragment>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
-
-            {successfulSaves.length > 0 && versioning?.status === "enabled" && (
-              <p className="text-xs text-zinc-600 mt-3">
-                Point-in-time restore uses B2 file versioning.
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* Not-configured CTA */}
-        {config && !config.configured && (
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
-            <h3 className="text-sm font-medium text-zinc-200 mb-2">Backblaze B2 not configured</h3>
-            <p className="text-sm text-zinc-400 mb-4">
-              Backups save <code className="text-zinc-300">/home/coder</code> to a Backblaze B2 bucket via rclone. Add B2 credentials on the Integrations page to enable backups.
-            </p>
-            <Link
-              to="/integrations"
-              className="inline-block px-4 py-2 text-sm font-medium bg-purple-600 text-white rounded-lg hover:bg-purple-500 transition-colors"
+        {/* Run a backup */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-zinc-200">Back up my workspace now</h3>
+            <button
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium
+                hover:bg-purple-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={running}
+              onClick={runBackup}
             >
-              Go to Integrations
-            </Link>
+              {running ? "Backing up..." : "Back up now"}
+            </button>
+          </div>
+
+          {log.length > 0 && (
+            <pre className="text-xs bg-zinc-950 border border-zinc-800 p-3 rounded-lg
+              max-h-48 overflow-auto text-zinc-300 font-mono">
+              {log.join("\n")}
+            </pre>
+          )}
+        </div>
+
+        {/* My snapshots */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-zinc-800">
+            <h3 className="text-sm font-semibold text-zinc-200">My snapshots</h3>
+          </div>
+
+          {runs.length === 0 ? (
+            <p className="px-5 py-4 text-sm text-zinc-500">
+              No snapshots yet. Click &quot;Back up now&quot; to create one.
+            </p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-800">
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase">
+                    Kind
+                  </th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase">
+                    Status
+                  </th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase">
+                    Started
+                  </th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase">
+                    Size
+                  </th>
+                  <th className="px-4 py-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {runs.map((run) => {
+                  const filename = run.localPath?.split("/").pop();
+                  const isExpanded = expanded === run.id;
+                  const canRestore = run.kind === "save" && run.localPath != null;
+                  return (
+                    <Fragment key={run.id}>
+                      <tr className="border-b border-zinc-800/50 last:border-0">
+                        <td className="px-4 py-3 text-zinc-400">{run.kind}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded ${
+                              run.status === "success"
+                                ? "bg-green-500/10 text-green-400"
+                                : run.status === "running"
+                                  ? "bg-blue-500/10 text-blue-400"
+                                  : "bg-red-500/10 text-red-400"
+                            }`}
+                          >
+                            {run.status}
+                          </span>
+                          {run.status === "failed" && run.error && (
+                            <button
+                              onClick={() =>
+                                setExpanded((prev) => (prev === run.id ? null : run.id))
+                              }
+                              className="ml-2 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                            >
+                              {isExpanded ? "hide" : "details"}
+                            </button>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-zinc-300">
+                          {new Date(run.startedAt).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-zinc-400">
+                          {run.bytes != null ? formatBytes(run.bytes) : "—"}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex justify-end gap-3">
+                            {canRestore && filename && (
+                              <a
+                                href={`/api/user/workspace-backup/download/${filename}`}
+                                className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                              >
+                                Download
+                              </a>
+                            )}
+                            {canRestore && (
+                              <button
+                                onClick={() => openRestore(run)}
+                                className="text-xs text-amber-400 hover:text-amber-300 transition-colors"
+                              >
+                                Restore
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {isExpanded && run.error && (
+                        <tr className="border-b border-zinc-800/50 last:border-0">
+                          <td colSpan={5} className="px-4 py-3">
+                            <pre className="text-xs bg-zinc-950 border border-red-800/40 p-3 rounded-lg
+                              overflow-auto text-red-300 font-mono">
+                              {run.error}
+                            </pre>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Restore confirm */}
+        {restoreTarget && (
+          <div className="bg-zinc-900 border border-amber-600/40 rounded-xl p-5 space-y-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-amber-400">
+                  Restore this snapshot
+                </h3>
+                <p className="text-xs text-zinc-400 mt-1">
+                  {new Date(restoreTarget.startedAt).toLocaleString()}
+                  {restoreTarget.bytes != null
+                    ? ` · ${formatBytes(restoreTarget.bytes)}`
+                    : ""}
+                </p>
+              </div>
+              <button
+                onClick={closeRestore}
+                disabled={restoring}
+                className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors disabled:opacity-50"
+              >
+                cancel
+              </button>
+            </div>
+
+            <p className="text-xs text-amber-200 bg-amber-950/40 border border-amber-800/60 rounded-lg p-3">
+              This <strong>replaces</strong> your workspace home with this snapshot. You must
+              end your active sessions first — the restore will refuse otherwise.
+            </p>
+
+            <label className="flex items-start gap-2 cursor-pointer text-zinc-300">
+              <input
+                type="checkbox"
+                className="accent-red-500 mt-0.5"
+                checked={restoreConfirm}
+                onChange={(e) => setRestoreConfirm(e.target.checked)}
+              />
+              <span className="text-xs">
+                I understand this replaces my workspace home, and I have ended my active
+                sessions.
+              </span>
+            </label>
+
+            <button
+              className="px-4 py-2 bg-red-700 text-white rounded-lg text-sm font-medium
+                hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!restoreConfirm || restoring}
+              onClick={runRestore}
+            >
+              {restoring ? "Restoring..." : "Restore this snapshot"}
+            </button>
+
+            {restoreLog.length > 0 && (
+              <pre className="text-xs bg-zinc-950 border border-zinc-800 p-3 rounded-lg
+                max-h-64 overflow-auto text-zinc-300 font-mono">
+                {restoreLog.join("\n")}
+              </pre>
+            )}
           </div>
         )}
-
-        {config?.configured && (
-          <p className="text-xs text-zinc-600">
-            You can also run <code className="text-zinc-400">backup save</code> or <code className="text-zinc-400">backup restore</code> directly in your terminal session.
-          </p>
-        )}
       </div>
     </div>
-  );
-}
-
-function VersioningBanner({
-  status,
-  onRecheck,
-}: {
-  status: VersioningStatus;
-  onRecheck: () => void;
-}) {
-  if (status.status === "enabled") return null;
-
-  const variants = {
-    limited: {
-      icon: "⚠",
-      title: `Point-in-time restore limited to ~${String(status.retentionDays ?? "?")} days`,
-      body:
-        "Your B2 bucket's lifecycle rules delete old file versions after this window. Backups older than this can't be fully restored — only files that still exist at that timestamp will come back.",
-      cls: "border-amber-800/60 bg-amber-950/40 text-amber-200",
-      iconCls: "text-amber-400",
-    },
-    disabled: {
-      icon: "⛔",
-      title: "Point-in-time restore unavailable",
-      body:
-        "Your B2 bucket deletes old file versions almost immediately, so restoring from an older backup won't work. To enable it, relax or remove the lifecycle rule on your bucket so old versions are retained.",
-      cls: "border-red-900/60 bg-red-950/40 text-red-200",
-      iconCls: "text-red-400",
-    },
-    unknown: {
-      icon: "?",
-      title: "Couldn't verify bucket versioning",
-      body:
-        "We couldn't read your B2 bucket's lifecycle settings. Point-in-time restore may or may not work — the API key needs permission to read bucket config, or the bucket may be unreachable.",
-      cls: "border-zinc-700 bg-zinc-900 text-zinc-300",
-      iconCls: "text-zinc-400",
-    },
-  } as const;
-
-  const v = variants[status.status];
-
-  return (
-    <div className={`border rounded-xl p-4 ${v.cls}`}>
-      <div className="flex items-start gap-3">
-        <span className={`text-lg leading-none mt-0.5 ${v.iconCls}`}>{v.icon}</span>
-        <div className="flex-1 min-w-0">
-          <div className="text-sm font-medium">{v.title}</div>
-          <p className="text-xs mt-1 opacity-90">{v.body}</p>
-        </div>
-        <button
-          onClick={onRecheck}
-          className="text-xs px-2 py-1 border border-current opacity-70 hover:opacity-100 rounded transition-opacity"
-        >
-          Re-check
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function StatusBadge({ status }: { status: BackupRun["status"] }) {
-  const map = {
-    running: { label: "Running", cls: "bg-blue-900/40 text-blue-300 border-blue-800" },
-    success: { label: "Success", cls: "bg-green-900/30 text-green-300 border-green-900/60" },
-    failed: { label: "Failed", cls: "bg-red-900/30 text-red-300 border-red-900/60" },
-  };
-  const s = map[status];
-  return (
-    <span className={`inline-block px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider rounded border ${s.cls}`}>
-      {s.label}
-    </span>
   );
 }

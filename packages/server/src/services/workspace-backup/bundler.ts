@@ -15,6 +15,28 @@ const execFileAsync = promisify(execFile);
 const SIDECAR_IMAGE = process.env["AGENTHUB_SERVER_IMAGE"] ?? "agenthubv2-server:local";
 
 /**
+ * Regenerable dirs excluded from workspace snapshots. `node_modules` is
+ * unanchored (matches the dir anywhere in the tree); `.cache`/`.local` are
+ * anchored to the volume root (`/home/coder`). `.local` is the agenthub CLI
+ * tree, auto-reinstalled by the agent on session boot.
+ */
+export const WORKSPACE_EXCLUDES = ["node_modules", "./.cache", "./.local"] as const;
+
+/** The sidecar `sh -c` body. Pulled out as a pure function so the exclude
+ * wiring is unit-testable without spawning Docker. */
+export function buildBundleShellCommand(): string {
+  const excludeFlags = WORKSPACE_EXCLUDES.map((e) => `--exclude=${e}`).join(" ");
+  return [
+    "set -eu",
+    'mkdir -p "$SIDECAR_DEST" /work',
+    "printf '%s' \"$MANIFEST_JSON\" > /work/agenthub-workspace-manifest.json",
+    "(cd /work && tar c --warning=no-file-changed agenthub-workspace-manifest.json) > /tmp/header.tar",
+    `tar -rf /tmp/header.tar -C /src --warning=no-file-changed ${excludeFlags} .`,
+    'zstd -T0 -19 < /tmp/header.tar > "$SIDECAR_DEST/$BUNDLE_FILENAME"',
+  ].join(" && ");
+}
+
+/**
  * Resolve the docker-named data volume that this server container has
  * mounted at /data. The sidecar mounts it by name so its `/dst` is the
  * same filesystem the server sees at `/data` — no host-path translation
@@ -116,18 +138,7 @@ export async function bundleWorkspace(input: BundleInput): Promise<WorkspaceBack
         SIDECAR_IMAGE,
         "sh",
         "-c",
-        [
-          "set -eu",
-          'mkdir -p "$SIDECAR_DEST" /work',
-          "printf '%s' \"$MANIFEST_JSON\" > /work/agenthub-workspace-manifest.json",
-          // tar streams stdout → zstd → $SIDECAR_DEST/$BUNDLE_FILENAME
-          // --warning=no-file-changed lets the user's session write to the
-          // volume mid-snapshot without aborting tar.
-          "(cd /work && tar c --warning=no-file-changed agenthub-workspace-manifest.json) > /tmp/header.tar",
-          // Now append the volume contents to the manifest header tar.
-          "tar -rf /tmp/header.tar -C /src --warning=no-file-changed .",
-          'zstd -T0 -19 < /tmp/header.tar > "$SIDECAR_DEST/$BUNDLE_FILENAME"',
-        ].join(" && "),
+        buildBundleShellCommand(),
       ],
       { timeout: 1800_000, maxBuffer: 16 * 1024 * 1024 },
     );

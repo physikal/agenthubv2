@@ -7,6 +7,7 @@ import {
 const VALID_TRIGGERS = new Set<WorkspaceTrigger>([
   "manual",
   "cli",
+  "auto-update",
   "auto-restore-install",
 ]);
 
