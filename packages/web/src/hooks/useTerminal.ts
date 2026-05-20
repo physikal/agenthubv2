@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -6,6 +6,14 @@ import "@xterm/xterm/css/xterm.css";
 
 interface UseTerminalOptions {
   sessionId: string;
+}
+
+/** A pasted-image upload, surfaced as a transient chip in the web UI
+ *  (outside the terminal) instead of writing status into the PTY scrollback. */
+export interface UploadChip {
+  id: string;
+  label: string;
+  status: "uploading" | "done" | "error";
 }
 
 export function useTerminal(options: UseTerminalOptions) {
@@ -17,6 +25,8 @@ export function useTerminal(options: UseTerminalOptions) {
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
   const userClosedRef = useRef(false);
+  const imageCountRef = useRef(0);
+  const [uploads, setUploads] = useState<UploadChip[]>([]);
 
   const attach = useCallback(
     (el: HTMLDivElement | null) => {
@@ -162,17 +172,36 @@ export function useTerminal(options: UseTerminalOptions) {
         ws.send(buf.buffer);
       };
 
+      // Surface upload progress as a transient chip in the web UI (rendered
+      // by TerminalView) rather than writing [uploading…]/[saved:…] into the
+      // PTY scrollback, which cluttered the terminal and interleaved with the
+      // prompt. The terminal only ever receives the final path.
+      const setChip = (id: string, patch: Partial<UploadChip>): void => {
+        setUploads((list) => list.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+      };
+      const dropChip = (id: string, afterMs: number): void => {
+        window.setTimeout(() => {
+          setUploads((list) => list.filter((c) => c.id !== id));
+        }, afterMs);
+      };
+
       // Image paste: upload the bytes to the workspace and type the saved
-      // path so the agent (Claude Code etc.) can read it as a file.
+      // path so the agent (Claude Code etc.) can read it as a file. A
+      // trailing space keeps consecutive pastes — and any text typed after —
+      // from concatenating into one unparseable token.
       const uploadImage = (blob: Blob): void => {
         const ext = (blob.type.split("/")[1] ?? "png").replace(/[^a-z0-9]/gi, "") || "png";
         const name = `paste-${Date.now()}.${ext}`;
-        term.write(`\r\n\x1b[36m[uploading image...]\x1b[0m`);
+        const id = name;
+        imageCountRef.current += 1;
+        const label = `Image ${String(imageCountRef.current)}`;
+        setUploads((list) => [...list, { id, label, status: "uploading" }]);
         const reader = new FileReader();
         reader.onload = () => {
           const base64 = (reader.result as string).split(",")[1];
           if (!base64) {
-            term.write(`\r\n\x1b[31m[upload failed]\x1b[0m\r\n`);
+            setChip(id, { status: "error" });
+            dropChip(id, 4000);
             return;
           }
           fetch(`/api/sessions/${options.sessionId}/upload`, {
@@ -183,15 +212,17 @@ export function useTerminal(options: UseTerminalOptions) {
           })
             .then((res) => {
               if (res.ok) {
-                const path = `/tmp/uploads/${name}`;
-                term.write(`\r\n\x1b[32m[saved: ${path}]\x1b[0m\r\n`);
-                sendInput(path);
+                sendInput(`/tmp/uploads/${name} `);
+                setChip(id, { status: "done" });
+                dropChip(id, 2500);
               } else {
-                term.write(`\r\n\x1b[31m[upload failed]\x1b[0m\r\n`);
+                setChip(id, { status: "error" });
+                dropChip(id, 4000);
               }
             })
             .catch(() => {
-              term.write(`\r\n\x1b[31m[upload failed]\x1b[0m\r\n`);
+              setChip(id, { status: "error" });
+              dropChip(id, 4000);
             });
         };
         reader.readAsDataURL(blob);
@@ -283,5 +314,5 @@ export function useTerminal(options: UseTerminalOptions) {
     };
   }, [options.sessionId]);
 
-  return { attach };
+  return { attach, uploads };
 }
