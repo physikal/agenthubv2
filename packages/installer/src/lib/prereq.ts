@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createServer } from "node:net";
+import { connect, createServer } from "node:net";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -52,13 +52,40 @@ export async function checkPrereqs(opts: {
   return { ok: checks.every((c) => c.ok), checks };
 }
 
-function portIsFree(port: number): Promise<boolean> {
+export function portIsFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const s = createServer();
-    s.once("error", () => resolve(false));
+    s.once("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EADDRINUSE") {
+        resolve(false);
+        return;
+      }
+      // EACCES: the installer runs as a non-root user, which can't bind a
+      // privileged port (<1024) — but the stack binds 80/443 via Docker
+      // (root), so a bind failure here is NOT a real conflict. Fall back to a
+      // connect probe: the port is free unless something already answers on it.
+      // (Any other unexpected error → also fall back rather than false-fail.)
+      portHasListener(port).then((listening) => resolve(!listening));
+    });
     s.once("listening", () => {
       s.close(() => resolve(true));
     });
     s.listen(port, "0.0.0.0");
+  });
+}
+
+/** True when something is already accepting connections on the port. Used as a
+ * privilege-free fallback when we can't bind-test (EACCES on privileged ports
+ * as non-root). */
+function portHasListener(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const c = connect({ port, host: "127.0.0.1" });
+    const finish = (listening: boolean): void => {
+      c.destroy();
+      resolve(listening);
+    };
+    c.once("connect", () => finish(true));
+    c.once("error", () => finish(false)); // ECONNREFUSED → nothing listening
+    c.setTimeout(1000, () => finish(false));
   });
 }
