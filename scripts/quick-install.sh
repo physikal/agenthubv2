@@ -16,10 +16,8 @@
 #   - Detects the Linux distro (debian/ubuntu, rhel/fedora/rocky/alma, arch, alpine)
 #   - For each prereq (git, docker, docker compose plugin, node 22+, pnpm):
 #       • Checks it
-#       • If missing: prompts for consent on the controlling terminal (works
-#         even under `curl | bash`, via /dev/tty). With no terminal at all
-#         (CI/agent) it auto-installs; AGENTHUB_AUTO_INSTALL=true forces that,
-#         AGENTHUB_AUTO_INSTALL=false refuses it.
+#       • If missing: installs it (running the one-liner is consent). Set
+#         AGENTHUB_AUTO_INSTALL=false to refuse and provide prereqs yourself.
 #       • Installs via the distro's canonical path
 #       • Re-verifies
 #   - Starts the Docker daemon if it's installed but not running
@@ -71,30 +69,15 @@ detect_tty() {
 
 confirm() {
   local what="$1"
-  # Explicit opt-in — install everything without asking.
-  if [[ "$AUTO" == "true" ]]; then
-    msg "AGENTHUB_AUTO_INSTALL=true → installing ${what} without prompting"
-    return 0
-  fi
-  # Explicit opt-out — never auto-install.
+  # Running the one-liner is itself consent to install prereqs, so we don't
+  # prompt — we just install (and narrate each step via `step`/`ok`). The only
+  # opt-out is AGENTHUB_AUTO_INSTALL=false, for locked-down automation that
+  # wants to provide prereqs itself.
   if [[ "$AUTO" == "false" ]]; then
     die "${what} is required but missing, and AGENTHUB_AUTO_INSTALL=false. \
 Install ${what} manually and re-run (or drop the flag to auto-install)."
   fi
-  # No terminal to prompt on (CI / agent / fully headless). The user ran an
-  # installer, so provisioning its prereqs is the expected default — proceed.
-  # Opt out with AGENTHUB_AUTO_INSTALL=false.
-  if [[ -z "$TTY_DEV" ]]; then
-    msg "no terminal for a prompt → auto-installing ${what} (set AGENTHUB_AUTO_INSTALL=false to disable)"
-    return 0
-  fi
-  # Interactive prompt on the controlling terminal — works even under
-  # `curl | bash`, where stdin is the pipe but /dev/tty is the keyboard.
-  local reply=""
-  printf '%s[?]%s Install %s now? [Y/n] ' "$c_yel" "$c_reset" "$what" >"$TTY_DEV"
-  read -r reply <"$TTY_DEV" || reply="Y"
-  reply="${reply:-Y}"
-  [[ "$reply" =~ ^[Yy] ]]
+  return 0
 }
 
 # ---------------------------------------------------------------- sudo + distro
